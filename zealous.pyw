@@ -71,6 +71,9 @@ def main():
     app = App()
     single_instance.serve(lock, app.bring_to_front)
     app.mainloop()
+    # 画面を閉じた後に裏の処理(マイク・キー監視など)が残ると、ファイルが使用中のままになり
+    # アップデートのインストールが失敗するので、確実にプロセスを終える
+    os._exit(0)
 
 
 if __name__ == "__main__":

@@ -57,3 +57,4 @@ class AgentWorker:
 
     def close(self):
         self._proc.kill()
+        self._proc.join(2)

@@ -1244,7 +1244,10 @@ class App(ctk.CTk):
         self.after(50, self._pump)
 
     def quit_app(self):
-        self.worker.close()
+        try:
+            self.worker.close()  # 裏方のプロセスも確実に止める(残るとアップデートで上書きできない)
+        except Exception:
+            pass
         runtime.stop_services()
         self.destroy()
 

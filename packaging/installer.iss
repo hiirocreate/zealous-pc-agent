@@ -54,3 +54,18 @@ Filename: "{app}\Zealous.exe"; Parameters: "--uninstall"; RunOnceId: "ZealousCle
 Type: filesandordirs; Name: "{app}"
 ; 自動起動を設定画面から作った場合のショートカット
 Type: files; Name: "{userstartup}\Zealous.lnk"
+
+[Code]
+// 動いている Zealous(会話のための裏方のプロセスも含む)を止めてから入れ替える。
+// 止まらずにファイルが使用中のままだと、途中で「変更を元に戻しています」となりインストールが中止される。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code, I: Integer;
+begin
+  for I := 1 to 3 do
+  begin
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    Sleep(700);
+  end;
+  Result := '';
+end;
