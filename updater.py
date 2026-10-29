@@ -54,9 +54,13 @@ def install(info, progress):
     # 終わったら自動で起動し直す(installer.iss の [Run] 参照)。記録は設定フォルダの update.log に残す。
     log = os.path.join(config.APP_DIR, "update.log")
     q = lambda p: "'" + p.replace("'", "''") + "'"
+    app_dir = os.path.dirname(sys.executable)
     log_arg = q('/LOG="' + log + '"')
     script = (f"Wait-Process -Id {os.getpid()} -Timeout 30 -ErrorAction SilentlyContinue; "
               "Get-Process -Name Zealous -ErrorAction SilentlyContinue | Stop-Process -Force; "
+              # 部品(Ollama・VOICEVOX)も止める(Zealous のフォルダのファイルを使っていると上書きできない)
+              f"Get-Process | Where-Object {{ cat.Path -and (cat.Path -like {q(app_dir + os.sep + '*')} "
+              f"-or cat.Path -like {q(runtime.DATA_DIR + os.sep + '*')}) }} | Stop-Process -Force; "
               "Start-Sleep -Milliseconds 800; "
               f"Start-Process -FilePath {q(dest)} -ArgumentList "
               f"'/SILENT','/NORESTART','/NOCLOSEAPPLICATIONS',{log_arg}")

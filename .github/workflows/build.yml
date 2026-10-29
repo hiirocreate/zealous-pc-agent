@@ -83,6 +83,28 @@ jobs:
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" packaging\installer.iss
 
+      - name: "更新の確認(Zealous が動いたまま、もう一度インストールできるか)"
+        shell: pwsh
+        run: |
+          $setup = "$PWD\dist\ZealousSetup.exe"
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install1.log" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { Get-Content install1.log -Tail 30; throw "初回インストールに失敗 ($($p.ExitCode))" }
+          # 動いている状態を作る: 本体と、本体のフォルダの部品を使う別のプロセス(部品の代わり)
+          $app = "$env:LOCALAPPDATA\Programs\Zealous"
+          Start-Process "$app\Zealous.exe"
+          $fake = "$env:LOCALAPPDATA\Zealous\fake"
+          New-Item -ItemType Directory -Force $fake | Out-Null
+          Copy-Item "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" "$fake\run.exe"
+          Start-Process "$fake\run.exe" -ArgumentList "-NoProfile", "-Command", "`$f=[IO.File]::Open('$app\_internal\msvcp140.dll','Open','Read','Read'); Start-Sleep 600" -WindowStyle Hidden
+          Start-Sleep 10
+          Get-Process | Where-Object { $_.Path -like "$app\*" -or $_.Path -like "$fake\*" } | Format-Table Id, Path
+          $t = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install2.log" -PassThru -Wait
+          Write-Host "更新にかかった時間: $($t.Elapsed.TotalSeconds) 秒 / 終了コード $($p.ExitCode)"
+          Select-String -Path install2.log -Pattern "taskkill|残り確認|Error|エラー|DeleteFile" | Select-Object -First 20
+          Get-Process | Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { Get-Content install2.log -Tail 40; throw "Zealous が動いたままでは更新できませんでした" }
+
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && steps.ver.outputs.version == ''
         continue-on-error: true  # 保存容量の上限に達していてもビルド自体は成功扱い

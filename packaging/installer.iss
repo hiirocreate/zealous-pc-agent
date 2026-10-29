@@ -75,31 +75,37 @@ begin
     Result := -1;
 end;
 
+// Zealous 本体と、Zealous が動かす部品(Ollama・VOICEVOX)の場所で動いているもの
+function OurProcesses(): String;
+begin
+  Result := 'Get-Process | Where-Object { $_.Path -and ($_.Path -like ''' + ExpandConstant('{app}') + '\*'' -or $_.Path -like '''
+    + ExpandConstant('{localappdata}') + '\Zealous\*'') }';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code, I: Integer;
 begin
   Result := '';
-  // 動いている Zealous を止め、本当に終わる(ファイルが手放される)まで待つ。
-  // taskkill は対象がいなくなると 128 を返すので、それまで繰り返す(最大で約10秒)。
+  // Zealous と部品を止め、本当に終わる(ファイルが手放される)まで待つ。
+  // 部品(Ollama・VOICEVOX)も止める: Zealous のフォルダの部品(msvcp140.dll など)を使っていることがあり、
+  // 動いたままだと上書きできない(「DeleteFile エラー: コード5」になる)。
+  PowerShell(OurProcesses() + ' | Stop-Process -Force');
   for I := 1 to 30 do
   begin
     if not Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) then
-    begin
-      Log('taskkill を実行できませんでした');
       Break;
-    end;
     Log('taskkill: ' + IntToStr(Code));
     if Code = 128 then
       Break;
     Sleep(300);
   end;
-  // 念のため別の方法でも止め、残っていないか確かめる(残っていれば、上書きに失敗する前に知らせる)
-  PowerShell('Get-Process -Name Zealous -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500');
-  Code := PowerShell('if (Get-Process -Name Zealous -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }');
-  Log('Zealous の残り確認: ' + IntToStr(Code));
+  // 念のためもう一度止め、残っていないか確かめる(残っていれば、上書きに失敗する前に知らせる)
+  Code := PowerShell(OurProcesses() + ' | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue; '
+    + 'Start-Sleep -Milliseconds 300; if (' + OurProcesses() + ') { exit 1 } else { exit 0 }');
+  Log('Zealous と部品の残り確認: ' + IntToStr(Code));
   if Code = 1 then
     Result := 'Zealous を終了できませんでした。' + #13#10 +
-              'タスクマネージャー（Ctrl+Shift+Esc）で「Zealous」をすべて終了してから、' +
+              'タスクマネージャー（Ctrl+Shift+Esc）で「Zealous」「ollama」「run」をすべて終了してから、' +
               'もう一度インストールしてください。終了できない場合は、PCを再起動してからインストールしてください。';
 end;
