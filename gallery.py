@@ -65,6 +65,9 @@ class Preview(ctk.CTkToplevel):
         self.title(item.get("title", "画像"))
         self.geometry("720x620")
         self.attributes("-topmost", True)
+        self.transient(master)  # 一覧の窓の「持ち物」にして、常に一覧より手前に出す
+        for ms in (10, 250):  # 開いた直後(画面の部品が窓を出し直した後)にも、いちばん手前へ
+            self.after(ms, self._front)
         self.pic = ctk.CTkLabel(self, text="読み込み中…", text_color=T.SUB)
         self.pic.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         ctk.CTkLabel(self, text=item.get("title", ""), font=T.font(11), text_color=T.TEXT, wraplength=680).pack(
@@ -81,6 +84,11 @@ class Preview(ctk.CTkToplevel):
         self.full = None
         load_async(self.pic, [item.get("full", ""), item.get("mid", ""), item["thumb"]], (696, 500),
                    self._shown, fit=True)
+
+    def _front(self):
+        if self.winfo_exists():
+            self.lift()
+            self.focus_force()
 
     def _shown(self, image, raw):
         self.full = raw

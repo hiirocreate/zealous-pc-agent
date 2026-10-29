@@ -88,14 +88,19 @@ class DotSpinner(ctk.CTkLabel):
     """3つのドットが波打つローディング表示(なめらかに描いたコマ画像を順に切り替える)。
     tick() を一定間隔で呼んで動かす。"""
 
+    PERIOD = 0.9  # 1周の秒数
+
     def __init__(self, master, dot=5, gap=4):
-        self._frames = icons.dot_frames(dot, gap)
+        self._frames = icons.dot_frames(dot, gap, count=54)
         super().__init__(master, text="", image=self._frames[0], fg_color="transparent")
-        self._t = 0
+        self._t = -1
 
     def tick(self):
-        self._t = (self._t + 1) % len(self._frames)
-        self.configure(image=self._frames[self._t])
+        """時刻に合わせたコマを出す(処理が重くて呼ばれるのが遅れても、動きの速さは変わらない)。"""
+        t = int((time.monotonic() % self.PERIOD) / self.PERIOD * len(self._frames))
+        if t != self._t:
+            self._t = t
+            self.configure(image=self._frames[t])
 
 
 class App(ctk.CTk):
@@ -938,10 +943,20 @@ class App(ctk.CTk):
             self.dot.pack(side="left", padx=(0, 5), before=self.status)
             self.typing.grid_remove()
 
-    def _animate(self):
-        if self._state in BUSY:
-            for sp in (self.pill_spin, self.head_spin, self.typing_spin):
+    def _spin(self):
+        """ローディングのドットを 60 コマ/秒 で動かす(処理中だけ)。"""
+        if self._state not in BUSY:
+            self._spinning = False
+            return
+        for sp in (self.pill_spin, self.head_spin, self.typing_spin):
+            if sp.winfo_ismapped():
                 sp.tick()
+        self.after(16, self._spin)
+
+    def _animate(self):
+        if self._state in BUSY and not getattr(self, "_spinning", False):
+            self._spinning = True
+            self._spin()
         _, color, blink = STATES[self._state]
         self._blink = (self._blink + 1) % 16
         if blink:

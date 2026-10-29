@@ -110,7 +110,7 @@ def test_voice_command():
 
 def test_search_summary(monkeypatch):
     import websearch
-    monkeypatch.setattr(websearch, "search", lambda q: [{"title": "A", "url": "https://a", "snippet": "a"},
+    monkeypatch.setattr(websearch, "search", lambda q, limit=5: [{"title": "A", "url": "https://a", "snippet": "a"},
                                                         {"title": "B", "url": "https://b", "snippet": "b"}])
     monkeypatch.setattr(websearch, "read_pages", lambda r, count=3, limit=1500: ["本文A", "本文B"])
     monkeypatch.setattr(websearch, "images", lambda q, limit=30: [{"thumb": "t"}])
@@ -316,3 +316,16 @@ def test_wake_only_opens_chat():
     assert strip_wake_word("ウェイク、ゼラス。") == ""
     assert strip_wake_word("ウェーク ゼラス、天気を教えて") == "天気を教えて"
     assert strip_wake_word("今日はいい天気") is None
+
+
+def test_safe_only_and_chunks(monkeypatch):
+    import websearch
+    monkeypatch.setattr(websearch, "host_is_safe", lambda h: h != "bad.example")
+    items = [{"url": "https://ok.example/a"}, {"url": "https://bad.example/x"}, {"url": "http://1.2.3.4/"}]
+    assert websearch.safe_only(items, "url") == [items[0]]
+    a = [{"full": f"https://ok.example/a{i}", "page": "https://ok.example"} for i in range(8)]
+    b = [{"full": f"https://ok.example/b{i}", "page": "https://ok.example"} for i in range(8)]
+    monkeypatch.setattr(websearch, "image_queries", lambda q: ["x", "y"])
+    monkeypatch.setattr(websearch, "_images_one", lambda q, n: a if q == "x" else b)
+    got = [it["full"].rsplit("/", 1)[1] for it in websearch.images("q", 10)]
+    assert got == ["a0", "a1", "a2", "a3", "b0", "b1", "b2", "b3", "a4", "a5"]

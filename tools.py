@@ -103,18 +103,19 @@ def web_search(query):
 def search_summary(query):
     import llm
     import websearch
-    results = websearch.search(query)
+    results = websearch.search(query, max(5, config.SOURCE_COUNT))
     if not results:
         return f"「{query}」の検索結果を取得できませんでした"
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(1) as ex:
-        pics = ex.submit(lambda: _safe(websearch.images, query, 8))  # 関連画像も同時に探す
+        pics = ex.submit(lambda: _safe(websearch.images, query, config.SEARCH_IMAGE_COUNT))  # 関連画像も同時に探す
         # AIに渡す量が多いほど遅くなるため、検索結果の説明文5件 + 上位2ページの冒頭だけにする
         docs = websearch.read_pages(results, count=2, limit=600)
         material = "\n".join(f"・{r['title']}: {r['snippet']}" for r in results[:5])
         material += "\n\n" + "\n\n".join(f"[{r['title']}]\n{d}" for r, d in zip(results, docs))
         summary = llm.summarize(query, material) or results[0]["snippet"]
-    links = "\n".join(f"[{i}] {r['title']}\n{r['url']}" for i, r in enumerate(results[:3], 1))
+    links = "\n".join(f"[{i}] {r['title']}\n{r['url']}"
+                      for i, r in enumerate(results[:config.SOURCE_COUNT], 1))
     return summary + llm.SOURCES + links + _images_part(query, pics.result())
 
 

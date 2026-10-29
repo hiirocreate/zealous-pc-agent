@@ -87,7 +87,9 @@ jobs:
         shell: pwsh
         run: |
           $setup = "$PWD\dist\ZealousSetup.exe"
-          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install1.log" -PassThru -Wait
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install1.log" -PassThru
+          # -Wait はインストーラーが起動し直した Zealous の終了まで待ってしまうので、インストーラーだけを待つ
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "インストーラーが終わりませんでした" }
           if ($p.ExitCode -ne 0) { Get-Content install1.log -Tail 30; throw "初回インストールに失敗 ($($p.ExitCode))" }
           # 動いている状態を作る: 本体と、本体のフォルダの部品を使う別のプロセス(部品の代わり)
           $app = "$env:LOCALAPPDATA\Programs\Zealous"
@@ -99,7 +101,9 @@ jobs:
           Start-Sleep 10
           Get-Process | Where-Object { $_.Path -like "$app\*" -or $_.Path -like "$fake\*" } | Format-Table Id, Path
           $t = [Diagnostics.Stopwatch]::StartNew()
-          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install2.log" -PassThru -Wait
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$PWD\install2.log" -PassThru
+          # -Wait はインストーラーが起動し直した Zealous の終了まで待ってしまうので、インストーラーだけを待つ
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "インストーラーが終わりませんでした" }
           Write-Host "更新にかかった時間: $($t.Elapsed.TotalSeconds) 秒 / 終了コード $($p.ExitCode)"
           Select-String -Path install2.log -Pattern "taskkill|残り確認|Error|エラー|DeleteFile" | Select-Object -First 20
           Get-Process | Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force -ErrorAction SilentlyContinue

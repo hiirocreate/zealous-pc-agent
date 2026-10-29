@@ -25,6 +25,10 @@ DEFAULTS = {
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
     "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)
+    "IMAGE_COUNT": 30,               # 画像を探したときの枚数
+    "SEARCH_IMAGE_COUNT": 8,         # 調べものの返事に添える画像の枚数
+    "SOURCE_COUNT": 3,               # 調べものの返事に添える参考リンクの数
+    "SAFE_SITES_ONLY": True,         # 危険と判定されたサイトは表示・案内しない
     "IME_INLINE": True,              # 日本語の変換中の文字を入力欄の中に表示する(OFF で Windows 標準の表示)
     "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----

@@ -100,6 +100,61 @@ def is_relevant(query, result):
     return all(_norm(w) in body for w in _words(query))
 
 
+# ---------------- 危険なサイトの確認 ----------------
+# Cloudflare の「マルウェア・フィッシングを止める DNS」(無料・登録不要)に問い合わせ、
+# 危険と判定されたサイト(0.0.0.0 が返る)は表示・案内しない。
+_SAFE_DNS = "https://security.cloudflare-dns.com/dns-query?name={}&type=A"
+_verdicts = {}  # サイト名 → True(安全) / False(危険)
+
+
+def _host(url):
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _looks_bad(url, host):
+    """問い合わせなくても怪しいと分かるもの(数字だけのアドレス、http(s) 以外、ID付きのアドレスなど)。"""
+    if not host or not url.lower().startswith(("http://", "https://")):
+        return True
+    if re.fullmatch(r"[\d.]+|\[[0-9a-f:]+\]", host) or "@" in url.split("/")[2]:
+        return True
+    return False
+
+
+def host_is_safe(host):
+    if host in _verdicts:
+        return _verdicts[host]
+    import json
+    try:
+        req = urllib.request.Request(_SAFE_DNS.format(urllib.parse.quote(host)),
+                                     headers={"accept": "application/dns-json", "User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read())
+        safe = not any(a.get("data") in ("0.0.0.0", "::") for a in data.get("Answer", []))
+    except Exception:
+        return True  # 確かめられないとき(通信の問題)は止めない。記録もしない(次に確かめ直す)
+    _verdicts[host] = safe
+    return safe
+
+
+def safe_only(items, *keys):
+    """items のうち、keys に入っている URL がすべて安全なものだけを返す(同時に確かめるので速い)。"""
+    import config
+    if not getattr(config, "SAFE_SITES_ONLY", True):
+        return list(items)
+    hosts = {_host(it[k]) for it in items for k in keys if it.get(k)}
+    with ThreadPoolExecutor(8) as ex:
+        verdict = dict(zip(hosts, ex.map(host_is_safe, hosts)))
+    out = []
+    for it in items:
+        urls = [it[k] for k in keys if it.get(k)]
+        if all(not _looks_bad(u, _host(u)) and verdict.get(_host(u), True) for u in urls):
+            out.append(it)
+    return out
+
+
 def search(query, limit=5):
     """複数の検索サイトから集め、検索した言葉を含む結果を上位にする(言葉が一般的な語に分解されて、
     関係ない結果が混ざるのを防ぐ)。十分に関係する結果がそろったら、残りの検索サイトは使わない。"""
@@ -118,7 +173,7 @@ def search(query, limit=5):
         if sum(1 for r in found if is_relevant(query, r)) >= limit:
             break
     found.sort(key=lambda r: -relevance(query, r))  # 同じ点数なら検索サイトの順のまま
-    return found[:limit]
+    return safe_only(found, "url")[:limit]  # 危険なサイトは案内しない
 
 
 def page_text(page, limit=1500):
@@ -208,19 +263,26 @@ def _images_one(query, limit):
     return []
 
 
-def images(query, limit=30):
+def images(query, limit=None):
     """画像を検索して [{"thumb", "mid", "full", "title", "page"}] を返す。Yahoo!画像検索、だめなら Bing。
-    頼み方を検索しやすい言葉に組み直し、複数の言い方で同時に探して交互に並べる。"""
+    頼み方を検索しやすい言葉に組み直し、複数の言い方で同時に探して4枚ずつ交互に並べる。
+    危険なサイトの画像は除く。limit を省くと設定の枚数。"""
+    import config
+    limit = limit or config.IMAGE_COUNT
     queries = image_queries(query)
     with ThreadPoolExecutor(len(queries)) as ex:
-        lists = list(ex.map(lambda q: _images_one(q, limit), queries))
+        lists = list(ex.map(lambda q: _images_one(q, limit + 10), queries))  # 除く分を見込んで多めに
     out, seen = [], set()
-    for i in range(max(map(len, lists), default=0)):
+    for start in range(0, max(map(len, lists), default=0), CHUNK):
         for lst in lists:
-            if i < len(lst) and lst[i]["full"] not in seen:
-                seen.add(lst[i]["full"])
-                out.append(lst[i])
-    return out[:limit]
+            for item in lst[start:start + CHUNK]:
+                if item["full"] not in seen:
+                    seen.add(item["full"])
+                    out.append(item)
+    return safe_only(out, "page", "full")[:limit]
+
+
+CHUNK = 4  # 言い方ごとに何枚ずつ交互に並べるか
 
 
 def fetch_image(url, timeout=10):
