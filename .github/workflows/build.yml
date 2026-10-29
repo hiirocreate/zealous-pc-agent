@@ -72,8 +72,9 @@ jobs:
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          repository: ${{ vars.RELEASE_REPO }}
-          token: ${{ secrets.RELEASE_TOKEN }}
+          # 未設定ならこのリポジトリの Releases に置く
+          repository: ${{ vars.RELEASE_REPO || github.repository }}
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ github.ref_name }}
           name: Zealous ${{ github.ref_name }}
           files: dist/ZealousSetup.exe
