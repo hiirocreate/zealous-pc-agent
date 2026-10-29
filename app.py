@@ -864,6 +864,14 @@ class App(ctk.CTk):
         self._add_widget(w, None)
         return w
 
+    def _remove_widget(self, w):
+        """チャット欄から部品を取り除き、行を詰め直す。"""
+        if w in self._bubbles:
+            self._bubbles.remove(w)
+        w.destroy()
+        for i, b in enumerate(self._bubbles):
+            b.grid_configure(row=i)
+
     def _add_widget(self, w, sticky):
         """チャット欄の末尾に部品を追加する(sticky 指定時はここで配置)。"""
         if sticky:
@@ -1309,6 +1317,12 @@ class App(ctk.CTk):
         self._update_info = info
         if not self._expanded:
             self.badge.place(relx=1.0, x=-12, y=6, anchor="ne")
+        # 更新のお知らせはチャット欄に1つだけ(何度確認しても増やさない。新しい版なら差し替える)
+        old_card = getattr(self, "_upd_card", None)
+        if old_card is not None and old_card.winfo_exists():
+            if getattr(old_card, "_version", None) == info["version"]:
+                return
+            self._remove_widget(old_card)
         card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.ACCENT)
         ctk.CTkLabel(card, text=f"新しいバージョン v{info['version']} があります", font=T.font(11, "bold"),
                      text_color=T.TEXT).pack(anchor="w", padx=12, pady=(8, 0))
@@ -1322,6 +1336,8 @@ class App(ctk.CTk):
                                       fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, font=T.font(11, "bold"),
                                       command=self.install_update)
         self._upd_btn.pack(fill="x", padx=12, pady=(6, 10))
+        card._version = info["version"]
+        self._upd_card = card
         self._add_widget(card, "w")
 
     def install_update(self):
