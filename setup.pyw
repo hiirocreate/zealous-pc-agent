@@ -22,7 +22,7 @@ class Setup(tk.Tk):
         self.geometry("520x420")
         self.desktop = tk.BooleanVar(value=True)
         self.autostart = tk.BooleanVar(value=config.AUTOSTART)
-        tk.Label(self, text="ゼラス（Zealous）のセットアップ", font=("", 13, "bold")).pack(pady=(10, 2))
+        tk.Label(self, text="Zealous のセットアップ", font=("", 13, "bold")).pack(pady=(10, 2))
         tk.Label(self, text="事前に Ollama と VOICEVOX をインストールして起動しておいてください").pack()
         tk.Checkbutton(self, text="デスクトップにショートカットを作る", variable=self.desktop).pack(anchor="w", padx=12)
         tk.Checkbutton(self, text="PC起動時に自動で起動する", variable=self.autostart).pack(anchor="w", padx=12)
@@ -32,7 +32,7 @@ class Setup(tk.Tk):
         row.pack(pady=(0, 10))
         self.btn = tk.Button(row, text="セットアップ開始", width=16, command=self.start)
         self.btn.pack(side="left", padx=4)
-        self.run_btn = tk.Button(row, text="ゼラスを起動", width=16, state="disabled", command=self.launch)
+        self.run_btn = tk.Button(row, text="Zealous を起動", width=16, state="disabled", command=self.launch)
         self.run_btn.pack(side="left", padx=4)
 
     def write(self, text):
@@ -75,7 +75,7 @@ class Setup(tk.Tk):
                 services.pull_model(prog)
             elif not running:
                 ok = False
-                self.write("   → Ollama を起動後、ゼラスの⚙設定画面から「モデル取得」を押してください")
+                self.write("   → Ollama を起動後、Zealous の⚙設定画面から「モデル取得」を押してください")
 
             self.write("③ VOICEVOX を確認中…")
             self.write("   " + services.check_voicevox()[1] + "(未起動でも読み上げ以外は動きます)")
