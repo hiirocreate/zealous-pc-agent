@@ -18,6 +18,8 @@ import config
 _END = re.compile(r"[。！？!?\n]|[、,](?=.{12,})")
 _SENTENCE = re.compile(r"[。！？!?\n]")
 _COMMA = re.compile(r"[、,]")
+# 助詞の後で、次が漢字・カタカナ・英数字になるところ(言葉の途中では切らない)
+_PARTICLE = re.compile(r"(?<=[\u4e00-\u9fff\u30a0-\u30ffA-Za-z0-9])(?:は|が|を|に|で|も|と|へ|から|まで)(?=[\u4e00-\u9fff\u30a0-\u30ffA-Za-z0-9「])")
 FIRST_MIN, NEXT_COMMA, FORCE = 4, 24, 60  # 最初の区切りの最小文字数 / 読点で切る長さ / 強制的に切る長さ
 
 
@@ -33,6 +35,12 @@ def cut_point(buf, first):
             m = _COMMA.search(buf, m.end())
         if m:
             return m.end()
+        if len(buf) >= 10:  # 読点が来ないときは、助詞の後(「〜は」「〜を」など)の切れ目で早めに話し始める
+            m = None
+            for m in _PARTICLE.finditer(buf, 4):
+                pass
+            if m:
+                return m.end()
     if len(buf) >= NEXT_COMMA:
         commas = list(_COMMA.finditer(buf))
         if commas:
@@ -127,6 +135,7 @@ class Speaker:
         query = q.json()
         query["speedScale"] = config.TTS_SPEED
         # 区切りの前後の無音を短くして、区切りをまたいでも途切れて聞こえないようにする
+        query["outputSamplingRate"] = 24000
         query["prePhonemeLength"] = 0.05
         query["postPhonemeLength"] = 0.08
         w = requests.post(f"{config.VOICEVOX_URL}/synthesis", params={"speaker": config.VOICEVOX_SPEAKER},

@@ -155,11 +155,27 @@ def quick_route(text):
     return None
 
 
+# PC操作や調べものが要りそうな言い方(当てはまらない普通の会話では、関数を渡さずにすぐ答え始める)
+_NEEDS_TOOLS = re.compile(
+    r"開い|ひらい|起動|立ち上げ|閉じ|検索|調べ|探し|さがし|見つけ|ファイル|フォルダ|作成|作って|保存|削除|消して|"
+    r"移動|コピー|名前を変え|リネーム|一覧|ブラウザ|サイト|ページ|URL|画像|写真|ロック|音量|ニュース|天気|最新|"
+    r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード")
+
+
+def needs_tools(text):
+    return bool(_NEEDS_TOOLS.search(text))
+
+
 def _ask(text):
     route = quick_route(text)
     if route:
         return tools.run_tool(*route)
     messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]
+    if not needs_tools(text):
+        # ふつうの会話: 関数の一覧を渡すと、返事を最後まで書き終えるまで届かないことがある(読み上げが遅れる)ので、
+        # 渡さずに、書けた分からすぐ画面と読み上げへ流す
+        reply = (_chat(messages, use_tools=False, stream_out=True).get("content") or "").strip()
+        return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
     results = []
     for _ in range(config.MAX_TOOL_STEPS):
         msg = _chat(messages, stream_out=True)

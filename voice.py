@@ -84,6 +84,7 @@ class VoiceInput:
         self.should_listen = lambda: True  # 待機中の聞き取りをしてよいか(考え中・読み上げ中は休む)
         self.command_mode = lambda: False  # 待機中に拾った声を、命令として正確に聞き取るべきか
         self.context = ""  # 直前の会話(聞き取りの手がかりにする)
+        self.on_nothing = lambda: None  # ボタンで話したのに、文字にするものが無かったとき
         self.conversation = False  # 音声会話画面: 合図の言葉なしで、話すたびに聞き取る
         self.level = 0.0  # いまのマイクの音の大きさ(0〜1。音声会話画面の球の動きに使う)
         threading.Thread(target=self._transcriber, daemon=True).start()
@@ -98,6 +99,7 @@ class VoiceInput:
     def stop_manual(self):
         """離した直後の音も少しだけ録ってから文字起こしへ回す。"""
         if not self._manual:
+            self.on_nothing()  # 録音が始まっていなかった(マイクを開けなかったなど)
             return
         threading.Timer(POST_SEC, self._finish_manual, args=(self._gen,)).start()
 
@@ -109,6 +111,8 @@ class VoiceInput:
             buf, self._buf = self._buf, []
         if buf:
             self._jobs.put((gen, self._to_16k(np.concatenate(buf)), True))
+        else:
+            self.on_nothing()
 
     def set_wake(self, enabled):
         self._seg = None
@@ -242,6 +246,7 @@ class VoiceInput:
             if text:
                 self._on_text(text, from_button)
             elif from_button:
+                self.on_nothing()
                 self._on_status("聞き取れませんでした。マイクに近づいて、もう一度話してください")
 
     def preload(self):

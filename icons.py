@@ -69,6 +69,15 @@ def mic(size=18, color="white"):
 
 
 @functools.lru_cache(maxsize=None)
+def waves(size=18, color="white"):
+    """音声会話のボタン: 高さの違う縦の棒(声の波)。"""
+    img, d = _canvas()
+    for x, h in ((56, 50), (92, 110), (128, 160), (164, 110), (200, 50)):
+        d.rounded_rectangle((x - 13, 128 - h / 2, x + 13, 128 + h / 2), radius=13, fill=color)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
 def mic_live(size=18, color="white"):
     """聞き取り中のマイク: マイクの両側に音の波を描き、「いま聞いている」ことを示す。"""
     img, d = _canvas()

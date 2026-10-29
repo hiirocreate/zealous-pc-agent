@@ -158,6 +158,9 @@ class App(ctk.CTk):
         self.speaker = Speaker(on_error=self._post_log)
         self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
+        # ボタンで話したのに何も聞き取れなかったとき(何も言わずに止めたときなど)は、「認識中」から待機中へ戻す
+        self.voice.on_nothing = lambda: self._events.put(
+            lambda: self._state == "recog" and self._set_state("idle"))
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
         self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
         self.voice.command_mode = lambda: self._following() or self._voice_win is not None  # 合図の後の会話は命令として正確に聞き取る
@@ -350,8 +353,11 @@ class App(ctk.CTk):
             for c in w.winfo_children():
                 bind_all(c)
         bind_all(box)
+        # 音声会話画面へ切り替えるボタン(声の波の印)
+        self._round(box, 34, icons.waves(17), self.open_voice_mode, fg=T.BORDER, hover="#3a4150").grid(
+            row=0, column=2, padx=(3, 0), pady=3, sticky="s")
         self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
-            row=0, column=2, padx=3, pady=3, sticky="s")
+            row=0, column=3, padx=3, pady=3, sticky="s")
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
         self.tip.grid(row=3, column=0, sticky="w", padx=22)
 
@@ -1081,6 +1087,8 @@ class App(ctk.CTk):
             self._voice_win.lift()
             return
         import voice_mode
+        if self._expanded:  # チャットから切り替えたとき: チャットは閉じて、待機表示の近くに会話画面を出す
+            self._show_pill(animate=False)
         self._end_follow(idle=False)
         self.speaker.stop()
         x, y, w, h, _ = self._current_rect()
@@ -1164,11 +1172,10 @@ class App(ctk.CTk):
             self._stop_rec()
 
     def _paint_mic(self, active):
-        """マイクの見た目: 止まっている=紫(乗せると明るい紫)、聞き取り中=赤+止める印(乗せると明るい赤)。
+        """マイクの見た目(印は変えず、色だけ): 止まっている=紫(乗せると明るい紫)、聞き取り中=赤(乗せると明るい赤)。
         どの状態でも、乗せたときの色がほかの状態の色と重ならないようにする。"""
         for b, size in ((self.mic, 32), (self.pill_mic, PILL_H - 12)):
-            b.configure(fg_color=T.LIVE if active else T.ACCENT, hover_color=T.LIVE_HOVER if active else T.ACCENT_LIGHT,
-                        image=icons.mic_live(size * 9 // 20) if active else icons.mic(size * 9 // 20))
+            b.configure(fg_color=T.LIVE if active else T.ACCENT, hover_color=T.LIVE_HOVER if active else T.ACCENT_LIGHT)
 
     def _start_rec(self):
         self.speaker.stop()

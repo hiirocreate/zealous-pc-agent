@@ -127,11 +127,12 @@ class VoiceMode(ctk.CTkToplevel):
         self._paint_mute()
 
     def _paint_mute(self):
-        """マイクボタン: 聞き取り中=水色(球と同じ色)、止めている=灰色に斜線。乗せたときは少し明るく。"""
+        """マイクボタン: 聞き取り中=水色(球と同じ色)、止めている=灰色。乗せたときは少し明るく。"""
+        # 印は変えず、色だけで分かるようにする
         if self.muted:
-            self.mute_btn.configure(image=icons.mic_off(22, (203, 213, 225)), fg_color="#3a4150", hover_color="#4b5466")
+            self.mute_btn.configure(image=icons.mic(22, "#cbd5e1"), fg_color="#3a4150", hover_color="#4b5466")
         else:
-            self.mute_btn.configure(image=icons.mic_live(24), fg_color="#0e7490", hover_color="#1597b5")
+            self.mute_btn.configure(image=icons.mic(22), fg_color="#0e7490", hover_color="#1597b5")
 
     def interrupt(self):
         if self.app.speaker.busy:
