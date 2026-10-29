@@ -13,6 +13,7 @@ import customtkinter as ctk
 import config
 import icons
 import runtime
+import updater
 import shortcut
 import theme as T
 from agent_worker import AgentWorker
@@ -100,6 +101,9 @@ class App(ctk.CTk):
             self._log(f"ショートカット登録エラー: {e}")
         self._apply_settings()
         self._set_state("idle")
+        self._update_info = None
+        if config.AUTO_UPDATE and updater.FROZEN:
+            self.after(5000, self.check_update)
         self.after(50, self._pump)
 
     # ================= 画面 =================
@@ -133,8 +137,12 @@ class App(ctk.CTk):
         self.pill.grid_rowconfigure(0, weight=1)
         self.pill_mic = self._mic(self.pill, PILL_H - 12)
         self.pill_mic.grid(row=0, column=0, padx=(6, 0))
-        self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
-                    hover=T.BORDER).grid(row=0, column=2, padx=(0, 6))
+        chat_btn = self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
+                               hover=T.BORDER)
+        chat_btn.grid(row=0, column=2, padx=(0, 6))
+        # アップデートがあるときに会話ボタンの右上に出す印
+        self.badge = ctk.CTkLabel(self.pill, text="●", font=T.font(10), text_color=T.CYAN,
+                                  fg_color="transparent", width=10, height=10)
 
         self.center = ctk.CTkFrame(self.pill, fg_color="transparent")
         self.center.grid(row=0, column=1)
@@ -258,6 +266,7 @@ class App(ctk.CTk):
 
     def _show_panel(self):
         self._expanded = True
+        self.badge.place_forget()  # 更新のお知らせはパネル内のカードで確認できる
         self.pill.pack_forget()
         self.panel.pack(fill="both", expand=True)
         x, y = self._panel_origin()
@@ -292,6 +301,12 @@ class App(ctk.CTk):
                              fg_color=T.ACCENT if user else T.SURFACE, text_color="white" if user else T.TEXT,
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
+        self._add_widget(w, None)
+
+    def _add_widget(self, w, sticky):
+        """チャット欄の末尾に部品を追加する(sticky 指定時はここで配置)。"""
+        if sticky:
+            w.grid(row=len(self._bubbles), column=0, sticky=sticky, padx=4, pady=3)
         self._bubbles.append(w)
         if len(self._bubbles) > MAX_BUBBLES:  # 古いものを消し、行を詰め直す
             self._bubbles.pop(0).destroy()
@@ -412,7 +427,8 @@ class App(ctk.CTk):
         if getattr(self, "_settings", None) and self._settings.winfo_exists():
             self._settings.focus()
             return
-        self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app)
+        self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app,
+                                        on_check_update=lambda report: self.check_update(True, report))
 
     def _settings_saved(self):
         self.worker.restart()  # 推論プロセスに新しい設定を読ませる
@@ -428,6 +444,63 @@ class App(ctk.CTk):
         if self._recording:
             self._stop_rec()
         self.voice.set_wake(config.WAKE_ENABLED)
+
+    # ================= アップデート =================
+    def check_update(self, manual=False, report=None):
+        """裏で最新版を確認する。自動確認は1日ごとに繰り返す。report(文字列) は設定画面への結果表示。"""
+        def run():
+            try:
+                info = updater.check()
+            except Exception as e:
+                info, msg = None, f"確認できませんでした: {e}"
+            else:
+                msg = f"v{info['version']} があります" if info else f"最新版です (v{updater.VERSION})"
+            self._events.put(lambda: self._update_found(info, manual))
+            if report:
+                report(msg)
+        threading.Thread(target=run, daemon=True).start()
+        if not manual:
+            self.after(24 * 3600 * 1000, self.check_update)
+
+    def _update_found(self, info, manual):
+        if not info or (self._update_info and self._update_info["version"] == info["version"] and not manual):
+            return
+        self._update_info = info
+        self.badge.place(relx=1.0, x=-12, y=6, anchor="ne")
+        card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.ACCENT)
+        ctk.CTkLabel(card, text=f"新しいバージョン v{info['version']} があります", font=T.font(11, "bold"),
+                     text_color=T.TEXT).pack(anchor="w", padx=12, pady=(8, 0))
+        if info["notes"]:
+            ctk.CTkLabel(card, text=info["notes"][:160], font=T.font(10), text_color=T.SUB, wraplength=220,
+                         justify="left").pack(anchor="w", padx=12)
+        self._upd_note = ctk.CTkLabel(card, text="設定とAIモデルはそのまま引き継がれます", font=T.font(9),
+                                      text_color=T.SUB)
+        self._upd_note.pack(anchor="w", padx=12)
+        self._upd_btn = ctk.CTkButton(card, text="今すぐアップデート", height=28, corner_radius=14,
+                                      fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, font=T.font(11, "bold"),
+                                      command=self.install_update)
+        self._upd_btn.pack(fill="x", padx=12, pady=(6, 10))
+        self._add_widget(card, "w")
+
+    def install_update(self):
+        info = self._update_info
+        if not info:
+            return
+        self._upd_btn.configure(state="disabled", text="ダウンロード中…")
+
+        def progress(ratio, text):
+            self._events.put(lambda: self._upd_note.configure(text=text))
+
+        def run():
+            try:
+                updater.install(info, progress)
+            except Exception as e:
+                err = f"失敗: {e}"
+                self._events.put(lambda: (self._upd_note.configure(text=err),
+                                          self._upd_btn.configure(state="normal", text="もう一度")))
+                return
+            self._events.put(self.quit_app)  # インストーラーが入れ替えて再起動する
+        threading.Thread(target=run, daemon=True).start()
 
     # ================= 緊急停止 =================
     def emergency_stop(self):

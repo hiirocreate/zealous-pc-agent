@@ -14,6 +14,11 @@
 4. 設定は本体の **⚙** から（AIモデルを変えたら「部品を準備」で再取得）
    - Bluetooth操作を使う場合は「管理者として実行」
 
+## アップデート
+新しい版が出ると、待機表示の会話ボタンに水色の印が付き、会話パネルに「今すぐアップデート」が表示されます。押すだけで裏でダウンロード・入れ替え・再起動まで行います（設定・AIモデルはそのまま）。
+⚙ の「更新を確認」で手動確認もできます。起動時の自動確認は ⚙ でオン/オフ可能です。
+> 更新の確認は GitHub Releases の最新版を見ます。配布元（⚙ の「配布元」）は**公開リポジトリ**である必要があります。
+
 ## アンインストール
 Windows の「設定 > アプリ > インストールされているアプリ」→ Zealous →「アンインストール」（⚙ の「アンインストール」からも可）。
 ダウンロードした部品と設定も消すかは確認画面で選べます。
@@ -27,7 +32,8 @@ Windows の「設定 > アプリ > インストールされているアプリ」
 
 ## 開発者向け
 - ソースから実行: `pip install -r requirements.txt` → `python zealous.pyw`
-- インストーラーは GitHub Actions（`.github/workflows/build.yml`）が PyInstaller + Inno Setup で自動作成。`v1.0.0` のようなタグを push すると Releases に公開
+- インストーラーは GitHub Actions（`.github/workflows/build.yml`）が PyInstaller + Inno Setup で自動作成
+- リリース手順: `v1.1.0` のようなタグを push するだけ。バージョン番号はタグから自動設定され、Releases に公開されて各PCに更新が届きます
 
 ## 構成
 | ファイル | 役割 |
@@ -44,6 +50,7 @@ Windows の「設定 > アプリ > インストールされているアプリ」
 | `settings_window.py` | 設定の管理画面（⚙ボタン） |
 | `zealous.pyw` | 起動口（初回セットアップ → 本体、`--uninstall` で後片付け） |
 | `setup_wizard.py` | 初回セットアップ画面 |
+| `updater.py` / `version.py` | 更新の確認・適用 / バージョン番号 |
 | `runtime.py` | Ollama・VOICEVOX・Whisper の自動ダウンロードと裏での起動/停止 |
 | `packaging/installer.iss` | インストーラー（Inno Setup）定義 |
 | `services.py` | Ollama/VOICEVOX 接続確認・モデル取得 |

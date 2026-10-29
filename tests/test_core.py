@@ -65,3 +65,9 @@ def test_folder_ops(tmp_path, monkeypatch):
     assert "エラー" in tools.run_tool("rename_item", {"name": os.path.expanduser("~"), "new_name": "x"})
     monkeypatch.setattr(config, "FOLDER_OPS_ENABLED", False)
     assert "無効" in tools.run_tool("create_folder", {"name": "C"})
+
+
+def test_version_compare():
+    import updater
+    assert updater._ver("v1.10.0") > updater._ver("1.9.9")
+    assert updater._ver("1.0") == updater._ver("v1.0.0")

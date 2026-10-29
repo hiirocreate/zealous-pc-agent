@@ -29,7 +29,7 @@ def uninstall():
 def selftest(out):
     import importlib
     import traceback
-    mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime",
+    mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime", "updater",
             "faster_whisper", "ctranslate2", "sounddevice", "keyboard", "pyautogui", "customtkinter"]
     errors = []
     for m in mods:

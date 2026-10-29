@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 import config
 import services
+from version import VERSION
 import shortcut
 
 # (キー, 表示名, 種類[, 選択肢])  種類: str / int / float / bool / list / choice
@@ -20,6 +21,9 @@ FIELDS = [
     ("—", "権限"),
     ("FOLDER_OPS_ENABLED", "ファイル・フォルダ操作を許可", "bool"),
     ("FOLDER_DELETE_ENABLED", "削除(ごみ箱へ)を許可", "bool"),
+    ("—", "アップデート"),
+    ("AUTO_UPDATE", "起動時に新しい版を確認", "bool"),
+    ("UPDATE_REPO", "配布元 (GitHub owner/repo)", "str"),
     ("—", "ブラウザ"),
     ("BROWSER", "使用ブラウザ", "choice", ["chrome", "edge", "firefox", "default"]),
     ("SEARCH_URL", "検索URL ({} に語句)", "str"),
@@ -59,7 +63,7 @@ def parse(kind, raw):
 
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_saved, on_quit):
+    def __init__(self, master, on_saved, on_quit, on_check_update):
         super().__init__(master)
         self._on_saved = on_saved
         self._vars = {}
@@ -79,6 +83,11 @@ class SettingsWindow(ctk.CTkToplevel):
             row=0, column=1, padx=4)
         self.svc = ctk.CTkLabel(bar, text="", anchor="w", wraplength=250, justify="left")
         self.svc.grid(row=0, column=2, sticky="ew")
+        ctk.CTkLabel(bar, text=f"バージョン {VERSION}", text_color="gray60").grid(row=1, column=0, sticky="w",
+                                                                                  pady=(6, 0))
+        ctk.CTkButton(bar, text="更新を確認", width=80,
+                      command=lambda: (self._show("確認中…"), on_check_update(self._show))).grid(
+            row=1, column=1, padx=4, pady=(6, 0))
 
         body = ctk.CTkScrollableFrame(self)
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)

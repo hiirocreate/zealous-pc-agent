@@ -43,6 +43,8 @@ Name: "{userstartup}\Zealous"; Filename: "{app}\Zealous.exe"; Tasks: autostart
 [Run]
 ; 初回はセットアップ画面(Ollama・VOICEVOX・AIモデル・音声認識の自動準備)が開き、終わると本体が起動する
 Filename: "{app}\Zealous.exe"; Description: "Zealous を起動する"; Flags: postinstall nowait skipifsilent
+; アップデート(静かなインストール)の後は自動で起動し直す
+Filename: "{app}\Zealous.exe"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 ; 動作中の Zealous / Ollama / VOICEVOX を止め、部品と設定を消すか確認する
