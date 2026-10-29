@@ -64,7 +64,7 @@ jobs:
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { throw "読み込みに失敗した部品があります" }
 
-      - name: 動作確認(実際に画面を動かす: 表示・文字入力・端のドラッグ・音声認識・送信)
+      - name: "動作確認(実際に画面を動かす: 表示・文字入力・端のドラッグ・音声認識・送信)"
         shell: pwsh
         run: |
           $out = "$PWD\smoke"
@@ -73,10 +73,7 @@ jobs:
           if (Test-Path "$out\results.txt") { Get-Content "$out\results.txt" } else { Write-Host "results.txt がありません(強制終了した可能性)" }
           if (Test-Path "$env:APPDATA\Zealous\crash.log") { Write-Host "--- crash.log"; Get-Content "$env:APPDATA\Zealous\crash.log" }
           if (Test-Path "$env:APPDATA\Zealous\error.log") { Write-Host "--- error.log"; Get-Content "$env:APPDATA\Zealous\error.log" }
-          python -c "import glob,base64,io;from PIL import Image
-          for f in sorted(glob.glob(r'$out\*.png')):
-              im=Image.open(f).convert('RGB');b=io.BytesIO();im.save(b,'JPEG',quality=70)
-              print('IMG',f.split(chr(92))[-1],base64.b64encode(b.getvalue()).decode())"
+          python packaging\show_shots.py $out
           if (-not (Select-String -Path "$out\results.txt" -Pattern "ALL DONE" -Quiet -ErrorAction SilentlyContinue)) { throw "動作確認が最後まで終わりませんでした" }
 
       - name: インストーラーを作る
