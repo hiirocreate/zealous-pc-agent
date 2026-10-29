@@ -3,13 +3,13 @@ import io
 import os
 import re
 import threading
-import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
 import customtkinter as ctk
 from PIL import Image, ImageOps
 
 import theme as T
+import tools
 import websearch
 
 THUMB = 150
@@ -87,7 +87,7 @@ class Preview(ctk.CTkToplevel):
         self.pic.configure(image=image, text="")
 
     def _open(self):
-        webbrowser.open(self.item.get("page") or self.item.get("full"))
+        tools.open_in_browser(self.item.get("page") or self.item.get("full"))
 
     def _save(self):
         """ピクチャフォルダの Zealous フォルダに保存する。"""

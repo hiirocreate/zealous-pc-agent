@@ -74,7 +74,8 @@ def _browser_path():
     return None
 
 
-def _open(url):
+def open_in_browser(url):
+    """設定で選んだブラウザで開く(検索結果のリンクや画像の元ページもこれで開く)。"""
     path = _browser_path()
     if path:
         subprocess.Popen([path, url])
@@ -86,14 +87,14 @@ def _open(url):
 def open_url(url):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    _open(url)
+    open_in_browser(url)
     return f"{url} を開きました"
 
 
 @tool("ブラウザで検索結果のページを開く(「ブラウザで検索して」など画面で見たいとき)",
       query=("string", "検索キーワード", True))
 def web_search(query):
-    _open(config.SEARCH_URL.format(urllib.parse.quote_plus(query)))
+    open_in_browser(config.SEARCH_URL.format(urllib.parse.quote_plus(query)))
     return f"「{query}」を検索しました"
 
 

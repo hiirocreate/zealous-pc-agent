@@ -18,6 +18,7 @@ import updater
 import voicevox
 import shortcut
 import theme as T
+import tools
 from agent_worker import AgentWorker
 from llm import split_reply
 from settings_window import SettingsWindow
@@ -321,14 +322,13 @@ class App(ctk.CTk):
 
     def _log_sources(self, sources):
         """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
-        import webbrowser
         box = ctk.CTkFrame(self.chat, fg_color="transparent")
         lines = sources.strip().split("\n")
         for title, url in zip(lines[0::2], lines[1::2]):
             link = ctk.CTkLabel(box, text=f"↗ {title}", font=T.font(10, "underline"), text_color=T.CYAN,
                                 anchor="w", justify="left", wraplength=230, cursor="hand2")
             link.pack(anchor="w", padx=8, pady=1)
-            link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+            link.bind("<Button-1>", lambda e, u=url: tools.open_in_browser(u))
         self._add_widget(box, "w")
 
     def _log_images(self, images):
