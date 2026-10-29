@@ -53,5 +53,5 @@ def install(info, progress):
     # 失敗したときは理由が画面に出るよう、メッセージは隠さない。記録は設定フォルダの update.log に残す。
     # 作業フォルダは一時フォルダにする(インストール先を作業フォルダのまま掴んでいると、入れ替えの邪魔になる)
     log = os.path.join(config.APP_DIR, "update.log")
-    subprocess.Popen([dest, "/SILENT", "/NORESTART", "/CLOSEAPPLICATIONS", f"/LOG={log}"],
+    subprocess.Popen([dest, "/SILENT", "/NORESTART", "/NOCLOSEAPPLICATIONS", f"/LOG={log}"],
                      cwd=tempfile.gettempdir(), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))

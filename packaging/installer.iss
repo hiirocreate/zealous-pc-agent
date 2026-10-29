@@ -23,7 +23,9 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-CloseApplications=force
+; 使用中ファイルの自動検出(Restart Manager)は、ファイル数が多いと準備に時間がかかるので使わず、
+; [Code] の PrepareToInstall で Zealous を止める
+CloseApplications=no
 ; インストールの記録を %TEMP% の「Setup Log ～.txt」に残す(失敗したときの原因調べ用)
 SetupLogging=yes
 
@@ -60,21 +62,21 @@ Type: files; Name: "{userstartup}\Zealous.lnk"
 [Code]
 // 動いている Zealous(会話のための裏方のプロセスも含む)を止めてから入れ替える。
 // (/T は付けない: アップデートではこのインストーラー自身が Zealous から起動されており、一緒に止めてしまうため)
-// 止まらずにファイルが使用中のままだと、途中で「変更を元に戻しています」となりインストールが中止される。
+// 止まらずにファイルが使用中のままだと「DeleteFile エラー: コード5」や「変更を元に戻しています」となる。
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code, I: Integer;
-  Cmd: String;
 begin
-  // Zealous と、Zealous が動かしている部品(Ollama・VOICEVOX)をすべて止める
-  Cmd := '-NoProfile -WindowStyle Hidden -Command "Get-Process | Where-Object { $_.Path -and ($_.Path -like '''
-    + ExpandConstant('{app}') + '\*'' -or $_.Path -like '''
-    + ExpandConstant('{localappdata}') + '\Zealous\*'') } | Stop-Process -Force"';
-  for I := 1 to 3 do
+  // 動いている Zealous を止め、本当に終わる(ファイルが手放される)まで待つ。
+  // taskkill は対象がいなくなると 128 を返すので、それまで繰り返す(最大で約10秒)。
+  for I := 1 to 30 do
   begin
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
-    Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, Code);
-    Sleep(700);
+    if not Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Break;
+    if Code = 128 then
+      Break;
+    Sleep(300);
   end;
+  Sleep(300);
   Result := '';
 end;
