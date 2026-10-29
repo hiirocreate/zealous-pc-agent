@@ -71,3 +71,22 @@ def test_version_compare():
     import updater
     assert updater._ver("v1.10.0") > updater._ver("1.9.9")
     assert updater._ver("1.0") == updater._ver("v1.0.0")
+
+
+def test_voice_models(tmp_path, monkeypatch):
+    import json
+    import voicevox
+    cat = tmp_path / "cat.json"
+    cat.write_text(json.dumps([{"id": 3, "speaker": "ずんだもん", "style": "ノーマル", "vvm": "0.vvm", "mb": 56},
+                               {"id": 8, "speaker": "春日部つむぎ", "style": "ノーマル", "vvm": "0.vvm", "mb": 56},
+                               {"id": 13, "speaker": "青山龍星", "style": "ノーマル", "vvm": "15.vvm", "mb": 63}]),
+                   encoding="utf-8")
+    monkeypatch.setattr(voicevox, "CATALOG", str(cat))
+    monkeypatch.setattr(voicevox, "BUNDLED", str(cat))
+    monkeypatch.setattr(voicevox, "MODEL_DIR", str(tmp_path / "model"))
+    assert voicevox.needs_change(3)                     # まだ何も入っていない
+    (tmp_path / "model").mkdir()
+    (tmp_path / "model" / "0.vvm").write_bytes(b"")
+    assert not voicevox.needs_change(8)                 # 同じモデルに入っている声
+    assert voicevox.needs_change(13)                    # 別のモデルが必要
+    assert voicevox.install_voice(8, lambda *a: None) is False

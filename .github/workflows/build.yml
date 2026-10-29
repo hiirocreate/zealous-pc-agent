@@ -1,6 +1,9 @@
 # Windows 用インストーラー ZealousSetup.exe を作る。
-# main への push / 手動実行でビルドし、成果物(Artifacts)に置く。
-# v から始まるタグ(例: v1.0.0)を push すると Releases にも公開する。
+# main への push: ビルドできるかの確認のみ / 手動実行: 成果物(Artifacts)に置く
+# v から始まるタグ(例: v1.0.0)を push: 配信用の公開リポジトリの Releases に公開する
+#   必要な設定(リポジトリの Settings > Secrets and variables > Actions):
+#     変数   RELEASE_REPO  … 配信用リポジトリ(例: hiirocreate/zealous-releases)
+#     秘密   RELEASE_TOKEN … そのリポジトリに書き込めるトークン(Contents: Read and write)
 name: build-installer
 
 on:
@@ -59,12 +62,18 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" packaging\installer.iss
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: ZealousSetup
           path: dist/ZealousSetup.exe
+          retention-days: 3
 
-      - name: Releases に公開
+      - name: 配信用リポジトリの Releases に公開
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          repository: ${{ vars.RELEASE_REPO }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Zealous ${{ github.ref_name }}
           files: dist/ZealousSetup.exe

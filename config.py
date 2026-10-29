@@ -18,7 +18,7 @@ DEFAULTS = {
     "SETUP_DONE": False,
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
-    "UPDATE_REPO": "hiirocreate/zealous-pc-agent",  # 配布元(GitHub の owner/repo、公開リポジトリ)             # 初回セットアップ画面を表示済みか              # 常駐位置 [x, y](ドラッグで更新)
+    "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)             # 初回セットアップ画面を表示済みか              # 常駐位置 [x, y](ドラッグで更新)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可

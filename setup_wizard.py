@@ -26,7 +26,7 @@ class SetupWizard(ctk.CTk):
         head.grid(row=0, column=0, pady=(22, 4))
         ctk.CTkLabel(head, text="", image=icons.emblem(44)).pack(side="left", padx=(0, 10))
         ctk.CTkLabel(head, text="", image=icons.wordmark("Zealous", 20)).pack(side="left")
-        ctk.CTkLabel(self, text="AIと音声の部品を準備します（初回のみ・合計 約4〜5GB）\n"
+        ctk.CTkLabel(self, text="AIと音声の部品を準備します（初回のみ・合計 約1.5GB）\n"
                                 "回線によっては数十分かかります。途中で閉じても続きから再開できます。",
                      font=T.font(11), text_color=T.SUB, justify="center").grid(row=1, column=0, pady=(0, 12))
 

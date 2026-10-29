@@ -4,9 +4,9 @@ import os
 import shutil
 import subprocess
 import urllib.request
-import zipfile
 
 import config
+import remotezip
 import services
 
 DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Zealous")
@@ -14,12 +14,16 @@ OLLAMA_DIR = os.path.join(DATA_DIR, "ollama")
 OLLAMA_MODELS = os.path.join(DATA_DIR, "models")
 VOICEVOX_DIR = os.path.join(DATA_DIR, "voicevox")
 WHISPER_DIR = os.path.join(DATA_DIR, "whisper")
-DL_DIR = os.path.join(DATA_DIR, "downloads")
 
 VOICEVOX_VERSION = "0.26.0"
 OLLAMA_ZIP = "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip"
 VOICEVOX_PKG = ("https://github.com/VOICEVOX/voicevox_engine/releases/download/"
                 f"{VOICEVOX_VERSION}/voicevox_engine-windows-cpu-{VOICEVOX_VERSION}.vvpp")  # 中身は zip
+
+
+def has_nvidia():
+    """NVIDIA の GPU ドライバーがあるか(無ければ GPU 用の大きなライブラリを入れない)。"""
+    return os.path.exists(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32", "nvcuda.dll"))
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _procs = []
@@ -79,20 +83,6 @@ def download(url, dest, progress):
     os.replace(part, dest)
 
 
-def extract(archive, folder, progress):
-    tmp = folder + ".tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    with zipfile.ZipFile(archive) as z:
-        items = z.infolist()
-        for i, m in enumerate(items, 1):
-            z.extract(m, tmp)
-            if i % 50 == 0 or i == len(items):
-                progress(i / len(items), f"展開中 {i} / {len(items)}")
-    shutil.rmtree(folder, ignore_errors=True)
-    os.replace(tmp, folder)
-    os.remove(archive)
-
-
 # ---------------- 起動・停止 ----------------
 def _spawn(args, env=None):
     p = subprocess.Popen(args, cwd=os.path.dirname(args[0]), env=env, creationflags=_NO_WINDOW,
@@ -118,6 +108,16 @@ def start_services():
         _spawn([voicevox_exe(), "--host", "127.0.0.1", "--port", "50021"])
 
 
+def restart_voicevox():
+    """声を変えたときに読み込み直す(Zealous が起動したエンジンのみ)。"""
+    for p in list(_procs):
+        if str(p.args[0]).endswith("run.exe") and p.poll() is None:
+            p.kill()
+            p.wait(10)
+            _procs.remove(p)
+            _spawn([voicevox_exe(), "--host", "127.0.0.1", "--port", "50021"])
+
+
 def stop_services():
     for p in _procs:
         if p.poll() is None:
@@ -141,9 +141,13 @@ def step_ollama(progress):
     if services.check_ollama()[0]:
         return "起動済みの Ollama を使います"
     if not ollama_exe():
-        archive = os.path.join(DL_DIR, "ollama.zip")
-        download(OLLAMA_ZIP, archive, progress)
-        extract(archive, OLLAMA_DIR, progress)
+        # NVIDIA の GPU が無ければ CUDA 用ライブラリ(約1.5GB)は取り出さない
+        zf, _ = remotezip.open_zip(OLLAMA_ZIP)
+        cuda = has_nvidia()
+        tmp = OLLAMA_DIR + ".tmp"
+        remotezip.extract(zf, [m for m in zf.infolist() if cuda or "/cuda_" not in m.filename], tmp, progress)
+        shutil.rmtree(OLLAMA_DIR, ignore_errors=True)
+        os.replace(tmp, OLLAMA_DIR)
     progress(None, "起動中…")
     start_services()
     if not _wait(lambda: services.check_ollama()[0]):
@@ -166,10 +170,11 @@ def step_model(progress):
 def step_voicevox(progress):
     if services.check_voicevox()[0]:
         return "起動済みの VOICEVOX を使います"
-    if not voicevox_exe():
-        archive = os.path.join(DL_DIR, "voicevox.zip")
-        download(VOICEVOX_PKG, archive, progress)
-        extract(archive, VOICEVOX_DIR, progress)
+    import voicevox
+    progress(None, "声の一覧を取得中…")
+    voicevox.catalog()
+    voicevox.install_engine(progress)
+    voicevox.install_voice(config.VOICEVOX_SPEAKER, progress)
     progress(None, "起動中…")
     start_services()
     if not _wait(lambda: services.check_voicevox()[0], seconds=180):

@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 import config
 import services
+import voicevox
 from version import VERSION
 import shortcut
 
@@ -37,7 +38,7 @@ FIELDS = [
     ("—", "音声合成 (VOICEVOX)"),
     ("TTS_ENABLED", "読み上げ", "bool"),
     ("VOICEVOX_URL", "API URL", "str"),
-    ("VOICEVOX_SPEAKER", "話者ID", "int"),
+    ("VOICEVOX_SPEAKER", "声 (⬇は保存時にダウンロード)", "voice"),
     ("—", "音声認識 (再起動後に反映)"),
     ("WHISPER_MODEL", "Whisperモデル", "choice", ["tiny", "base"]),
     ("WHISPER_DEVICE", "デバイス", "choice", ["cpu", "cuda"]),
@@ -79,7 +80,7 @@ class SettingsWindow(ctk.CTkToplevel):
         bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
         bar.grid_columnconfigure(2, weight=1)
         ctk.CTkButton(bar, text="接続確認", width=80, command=self._check).grid(row=0, column=0)
-        ctk.CTkButton(bar, text="部品を準備", width=80, command=lambda: self._setup(on_quit)).grid(
+        ctk.CTkButton(bar, text="部品を準備", width=80, command=lambda: self._open_setup(on_quit)).grid(
             row=0, column=1, padx=4)
         self.svc = ctk.CTkLabel(bar, text="", anchor="w", wraplength=250, justify="left")
         self.svc.grid(row=0, column=2, sticky="ew")
@@ -105,9 +106,15 @@ class SettingsWindow(ctk.CTkToplevel):
             elif kind == "choice":
                 var = ctk.StringVar()
                 ctk.CTkOptionMenu(body, values=f[3], variable=var).grid(row=r, column=1, sticky="ew")
+            elif kind == "voice" and voicevox.cached_catalog():
+                var = ctk.StringVar()
+                ctk.CTkOptionMenu(body, values=self._voice_choices(), variable=var, dynamic_resizing=False).grid(
+                    row=r, column=1, sticky="ew")
             else:
                 var = ctk.StringVar()
                 ctk.CTkEntry(body, textvariable=var).grid(row=r, column=1, sticky="ew")
+            if kind == "voice" and not voicevox.cached_catalog():
+                kind = "int"  # 声の一覧が未取得なら話者IDを直接入力
             self._vars[key] = (kind, var)
 
         foot = ctk.CTkFrame(self, fg_color="transparent")
@@ -141,7 +148,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._show("確認中…")
         self._bg(lambda: self._show(services.check_ollama()[2] + "\n" + services.check_voicevox()[1]))
 
-    def _setup(self, on_quit):
+    def _open_setup(self, on_quit):
         """セットアップ画面(AIモデル変更時の再取得なども)を開き、終わったら本体を再起動する。"""
         import subprocess
         subprocess.Popen(shortcut.command("--setup"), cwd=shortcut.HERE)
@@ -156,9 +163,21 @@ class SettingsWindow(ctk.CTkToplevel):
         subprocess.Popen([exe], cwd=shortcut.HERE)
         on_quit()
 
+    def _voice_choices(self):
+        """声の選択肢。未ダウンロードのものにはサイズを付ける。"""
+        have = voicevox.installed_models()
+        self._voice_ids, self._voice_labels = {}, {}
+        for v in voicevox.cached_catalog():
+            text = voicevox.label(v) + ("" if v["vvm"] in have else f"  ⬇{v['mb']}MB")
+            self._voice_ids[text], self._voice_labels[v["id"]] = v["id"], text
+        return list(self._voice_ids)
+
     def _fill(self, values):
         for key, (kind, var) in self._vars.items():
             v = values[key]
+            if kind == "voice":
+                var.set(self._voice_labels.get(v, ""))
+                continue
             var.set(", ".join(v) if kind == "list" else v if kind in ("bool", "choice") else str(v))
 
     def _reset(self):
@@ -169,8 +188,8 @@ class SettingsWindow(ctk.CTkToplevel):
         changes = {}
         for key, (kind, var) in self._vars.items():
             try:
-                changes[key] = parse(kind, var.get())
-            except ValueError:
+                changes[key] = self._voice_ids[var.get()] if kind == "voice" else parse(kind, var.get())
+            except (ValueError, KeyError):
                 self.msg.configure(text=f"入力値が不正です: {key}", text_color="#e76f51")
                 return
         if not changes["AI_NAME"] or not changes["WAKE_WORDS"]:

@@ -14,6 +14,7 @@ import config
 import icons
 import runtime
 import updater
+import voicevox
 import shortcut
 import theme as T
 from agent_worker import AgentWorker
@@ -435,6 +436,27 @@ class App(ctk.CTk):
         self._apply_settings()
         self._log("設定を保存しました")
         self._set_state("idle")
+        if runtime.voicevox_exe() and voicevox.needs_change(config.VOICEVOX_SPEAKER):
+            self._download_voice()
+
+    def _download_voice(self):
+        """選んだ声のモデルだけを取得し(使わない声は削除)、VOICEVOX を読み込み直す。"""
+        note = ctk.CTkLabel(self.chat, text="声を準備中…", font=T.font(10), text_color=T.SUB)
+        self._add_widget(note, None)
+        note.grid(row=len(self._bubbles) - 1, column=0, pady=2)
+
+        def progress(ratio, text):
+            self._events.put(lambda: note.winfo_exists() and note.configure(text=f"声: {text}"))
+
+        def run():
+            try:
+                voicevox.install_voice(config.VOICEVOX_SPEAKER, progress)
+                runtime.restart_voicevox()
+                progress(1, "準備できました")
+            except Exception as e:
+                err = f"取得に失敗: {e}"
+                progress(0, err)
+        threading.Thread(target=run, daemon=True).start()
 
     def _apply_settings(self):
         self.pill_logo.configure(image=icons.wordmark(config.AI_NAME, 9))

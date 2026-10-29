@@ -5,9 +5,12 @@
 | ![待機](docs/standby.png) | ![応答待ち](docs/busy.png) | ![パネル](docs/panel.png) |
 
 ## インストール（Windows 11）
-1. [Releases](../../releases) または [Actions](../../actions) の成果物から **`ZealousSetup.exe`** をダウンロードして実行
+1. 配信用リポジトリ [zealous-releases](https://github.com/hiirocreate/zealous-releases/releases/latest) から **`ZealousSetup.exe`** をダウンロードして実行
 2. 初回起動時のセットアップ画面で「準備を開始」を押す
-   - AIエンジン（Ollama）・AIモデル・音声合成（VOICEVOX エンジン）・音声認識（Whisper）を自動でダウンロードして準備します（合計 約4〜5GB、初回のみ）
+   - AIエンジン（Ollama）・AIモデル・音声合成（VOICEVOX エンジン）・音声認識（Whisper）を自動でダウンロードして準備します（合計 約1.5GB、初回のみ）
+   - 容量を抑えるため、必要なものだけを取り出します
+     - VOICEVOX: エンジン本体と**選んだ声のモデルだけ**（全部入り約1.9GB → 約0.3GB）。声は ⚙ の「声」で変更すると、その声のモデルだけ後からダウンロードし、使わなくなったモデルは削除します
+     - Ollama: NVIDIA の GPU が無いPCでは GPU 用ライブラリを省略（約2.1GB → 約0.1GB）
    - Python・Ollama・VOICEVOX を別途インストールする必要はありません（Python は Zealous.exe に同梱）
    - すでに Ollama / VOICEVOX を起動している場合はそれを使います
 3. 以後はデスクトップ・スタートメニューの **Zealous** から起動。Ollama と VOICEVOX は Zealous が裏で自動起動・終了します
@@ -33,7 +36,8 @@ Windows の「設定 > アプリ > インストールされているアプリ」
 ## 開発者向け
 - ソースから実行: `pip install -r requirements.txt` → `python zealous.pyw`
 - インストーラーは GitHub Actions（`.github/workflows/build.yml`）が PyInstaller + Inno Setup で自動作成
-- リリース手順: `v1.1.0` のようなタグを push するだけ。バージョン番号はタグから自動設定され、Releases に公開されて各PCに更新が届きます
+- リリース手順: `v1.1.0` のようなタグを push するだけ。バージョン番号はタグから自動設定され、配信用リポジトリの Releases に公開されて各PCに更新が届きます
+  - 初回のみ、このリポジトリの Settings > Secrets and variables > Actions に、変数 `RELEASE_REPO`（例: `hiirocreate/zealous-releases`）と秘密 `RELEASE_TOKEN`（配信用リポジトリへの書き込み権限付きトークン）を登録
 
 ## 構成
 | ファイル | 役割 |
@@ -51,6 +55,7 @@ Windows の「設定 > アプリ > インストールされているアプリ」
 | `zealous.pyw` | 起動口（初回セットアップ → 本体、`--uninstall` で後片付け） |
 | `setup_wizard.py` | 初回セットアップ画面 |
 | `updater.py` / `version.py` | 更新の確認・適用 / バージョン番号 |
+| `remotezip.py` / `voicevox.py` | 配布 zip から必要なファイルだけ取り出す / VOICEVOX の声を選んで後から取得 |
 | `runtime.py` | Ollama・VOICEVOX・Whisper の自動ダウンロードと裏での起動/停止 |
 | `packaging/installer.iss` | インストーラー（Inno Setup）定義 |
 | `services.py` | Ollama/VOICEVOX 接続確認・モデル取得 |
