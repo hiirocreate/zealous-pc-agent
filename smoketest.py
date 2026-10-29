@@ -83,6 +83,21 @@ def run(out):
                 time.sleep(0.5)
                 typed = on_main(lambda: app.entry.get("1.0", "end").strip())
                 note(f"日本語入力(模擬): {'OK' if typed == 'hello zealous愛上尾' else 'NG'} ({typed!r})")
+                # 再変換(「愛上尾」を選んで変換し直し →「藍上緒」で確定)
+                for op in (("reconv", 1, 13, 16, True), ("pre", "愛上尾", 3), ("pre", "藍上緒", 3),
+                           ("result", "藍上緒"), ("end",)):
+                    ops.put(op)
+                    time.sleep(0.1)
+                time.sleep(0.5)
+                typed = on_main(lambda: app.entry.get("1.0", "end").strip())
+                note(f"再変換(模擬): {'OK' if typed == 'hello zealous藍上緒' else 'NG'} ({typed!r})")
+                # 再変換を取り消したら元に戻る
+                for op in (("reconv", 1, 13, 16, True), ("pre", "藍上緒", 3), ("end",)):
+                    ops.put(op)
+                    time.sleep(0.1)
+                time.sleep(0.5)
+                typed = on_main(lambda: app.entry.get("1.0", "end").strip())
+                note(f"再変換の取り消し(模擬): {'OK' if typed == 'hello zealous藍上緒' else 'NG'} ({typed!r})")
 
             # 左辺をつかんで左へ広げる: 右辺は動かないこと
             x, y, w, h = rect()

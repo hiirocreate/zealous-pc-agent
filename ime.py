@@ -20,6 +20,7 @@ CFS_POINT, CFS_CANDIDATEPOS, CFS_EXCLUDE = 0x0002, 0x0040, 0x0080
 WM_IME_NOTIFY, WM_IME_REQUEST = 0x0282, 0x0288
 IMN_OPENCANDIDATE, IMN_CHANGECANDIDATE = 0x0005, 0x0003
 IMR_COMPOSITIONWINDOW, IMR_CANDIDATEWINDOW, IMR_QUERYCHARPOSITION = 0x0001, 0x0002, 0x0006
+IMR_RECONVERTSTRING, IMR_CONFIRMRECONVERTSTRING = 0x0004, 0x0005
 GWLP_WNDPROC = -4
 TAG = "ime_preedit"
 
@@ -42,6 +43,12 @@ def attach(text, font_family, font_px):
 
     class COMPOSITIONFORM(ctypes.Structure):
         _fields_ = [("dwStyle", wintypes.DWORD), ("ptCurrentPos", wintypes.POINT), ("rcArea", wintypes.RECT)]
+
+    class RECONVERTSTRING(ctypes.Structure):  # 再変換: 対象の行と、変換し直す範囲を伝える
+        _fields_ = [("dwSize", wintypes.DWORD), ("dwVersion", wintypes.DWORD),
+                    ("dwStrLen", wintypes.DWORD), ("dwStrOffset", wintypes.DWORD),
+                    ("dwCompStrLen", wintypes.DWORD), ("dwCompStrOffset", wintypes.DWORD),
+                    ("dwTargetStrLen", wintypes.DWORD), ("dwTargetStrOffset", wintypes.DWORD)]
 
     class IMECHARPOSITION(ctypes.Structure):
         _fields_ = [("dwSize", wintypes.DWORD), ("dwCharPos", wintypes.DWORD), ("pt", wintypes.POINT),
@@ -99,7 +106,7 @@ def attach(text, font_family, font_px):
     # 日本語入力からの「文字はどこ？」という問い合わせは、Tk が入力欄を描いている最中にも届く。
     # その最中に入力欄を調べると Tk が壊れて強制終了するので、位置は普段のうちに調べて覚えておき、
     # 問い合わせには覚えた値だけで答える。
-    cache = {"caret": None, "chars": [], "doc": None}
+    cache = {"caret": None, "chars": [], "doc": None, "line": None}
 
     def remember(_=None):
         try:
@@ -116,6 +123,16 @@ def attach(text, font_family, font_px):
                     if b:
                         chars.append((x0 + b[0], y0 + b[1], b[3]))
             cache["chars"] = chars
+            # 再変換用: いまの行の文字と、選択範囲(なければカーソルの位置)
+            if not ranges:
+                line, col = map(int, text.index("insert").split("."))
+                sel = text.tag_ranges("sel")
+                start = end = col
+                if sel:
+                    (l1, c1), (l2, c2) = (map(int, str(i).split(".")) for i in sel[:2])
+                    if l1 == l2 == line:
+                        start, end = c1, c2
+                cache["line"] = (line, text.get(f"{line}.0", f"{line}.end"), start, end)
         except Exception:
             pass
 
@@ -153,9 +170,53 @@ def attach(text, font_family, font_px):
         finally:
             imm.ImmReleaseContext(hwnd, himc)
 
+    def u16(t):
+        return len(t.encode("utf-16-le")) // 2
+
+    def from_u16(t, n):
+        """UTF-16 での位置 n を、文字の位置に直す。"""
+        count = 0
+        for i, ch in enumerate(t):
+            if count >= n:
+                return i
+            count += 2 if ord(ch) > 0xFFFF else 1
+        return len(t)
+
+    def reconvert(kind, lparam):
+        """確定した文字の再変換(変換キーなど)。日本語入力に、いまの行の文字と変換し直す範囲を渡す。
+        入れ替えは Tk の側(pump)で、変換中の文字が届いたときに行う。"""
+        if not cache["line"]:
+            return 0
+        line, s, start, end = cache["line"]
+        head = ctypes.sizeof(RECONVERTSTRING)
+        size = head + (u16(s) + 1) * 2
+        if kind == IMR_RECONVERTSTRING:
+            if not lparam:
+                return size  # 1回目は必要な大きさだけを答える
+            info = RECONVERTSTRING.from_address(lparam)
+            if info.dwSize < size:
+                return 0
+            a, b = u16(s[:start]), u16(s[:end])
+            info.dwVersion, info.dwStrLen, info.dwStrOffset = 0, u16(s), head
+            info.dwCompStrOffset = info.dwTargetStrOffset = a * 2
+            info.dwCompStrLen = info.dwTargetStrLen = b - a
+            buf = ctypes.create_unicode_buffer(s, u16(s) + 1)
+            ctypes.memmove(lparam + head, buf, (u16(s) + 1) * 2)
+            ops.put(("reconv", line, start, end, False))
+            return size
+        if kind == IMR_CONFIRMRECONVERTSTRING and lparam:
+            info = RECONVERTSTRING.from_address(lparam)
+            a = from_u16(s, info.dwCompStrOffset // 2)
+            b = from_u16(s, info.dwCompStrOffset // 2 + info.dwCompStrLen)
+            ops.put(("reconv", line, a, b, True))  # 日本語入力が選び直した範囲
+            return 1
+        return 0
+
     def answer_request(hwnd, kind, lparam):
         """新しい日本語入力(Windows 10/11 の Microsoft IME など)からの「文字はどこ？」に答える
         (答えないと、予測候補が入力欄の上に重なる)。入力欄には触らず、覚えた位置だけを使う。"""
+        if kind in (IMR_RECONVERTSTRING, IMR_CONFIRMRECONVERTSTRING):
+            return reconvert(kind, lparam)
         if not lparam:
             return 0
         if kind == IMR_QUERYCHARPOSITION:
@@ -234,15 +295,36 @@ def attach(text, font_family, font_px):
                 break
             changed = True
             try:
+                if op[0] == "reconv":  # 再変換する範囲(変換中の文字が届いたら入れ替える)
+                    state["reconv"] = op[1:]
+                    continue
+                target = state.pop("reconv", None) if op[0] in ("pre", "result") else None
+                if target:
+                    # 再変換が始まった: 元の文字を消し、そこに変換中の文字を出す(取り消したら戻す)。
+                    # 日本語入力が周りの文字を確かめただけのときは消さないよう、日本語入力が範囲を
+                    # 確定したとき(confirmed)か、変換中の文字が元の文字と同じときだけ入れ替える
+                    line, a, b, confirmed = target
+                    original = text.get(f"{line}.{a}", f"{line}.{b}")
+                    if original and (confirmed or original == op[1]):
+                        state["restore"] = (f"{line}.{a}", original)
+                        text.tag_remove("sel", "1.0", "end")
+                        text.delete(f"{line}.{a}", f"{line}.{b}")
+                        text.mark_set("insert", f"{line}.{a}")
                 if op[0] == "pre":
                     show_preedit(op[1], op[2])
                 elif op[0] == "result":
                     clear_preedit()
                     text.insert("insert", op[1])
                     text.see("insert")
+                    state["restore"] = None
                     zlog.note(f"日本語入力 確定 {len(op[1])}文字")
-                else:
+                else:  # 変換の終わり
                     clear_preedit()
+                    state["reconv"] = None
+                    if state.get("restore"):  # 再変換を取り消した: 元の文字に戻す
+                        index, original = state.pop("restore")
+                        text.insert(index, original)
+                        text.mark_set("insert", f"{index}+{len(original)}c")
             except Exception:
                 pass
         if changed:
