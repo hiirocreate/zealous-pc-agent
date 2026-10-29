@@ -35,7 +35,7 @@ def schemas():
 
 def run_tool(name, args):
     if name not in TOOLS:
-        return f"エラー: 不明な関数 {name}"
+        return "すみません、その操作にはまだ対応していません。"
     func, schema = TOOLS[name]
     props = schema["function"]["parameters"]["properties"]
     args = {k: v for k, v in (args or {}).items() if k in props}
@@ -43,8 +43,14 @@ def run_tool(name, args):
         return f"[DRY] {name}({args})"
     try:
         return func(**args)
-    except Exception as e:  # 関数の失敗はAIへの返答として扱う
-        return f"エラー: {name}: {e}"
+    except Exception as e:  # 関数の失敗は、自然な言い方で返す(中身は記録へ)
+        import zlog
+        zlog.error(f"{name}: {e!r}")
+        if isinstance(e, PermissionError):
+            return f"ごめんなさい、それは設定で許可されていないのでできませんでした（{e}）。"
+        if isinstance(e, (OSError, ConnectionError)) and "http" in str(e).lower():
+            return "インターネットにうまくつながらなかったようです。少し時間をおいて、もう一度お願いできますか？"
+        return "すみません、うまくいきませんでした。もう一度お願いできますか？"
 
 
 def _powershell(script, timeout=30):
@@ -105,7 +111,8 @@ def search_summary(query):
     import websearch
     results = websearch.search(query, max(5, config.SOURCE_COUNT))
     if not results:
-        return f"「{query}」の検索結果を取得できませんでした"
+        return (f"「{query}」について調べてみましたが、はっきりした情報が見つかりませんでした。"
+                "言い方を変えて、もう一度聞いてもらえますか？")
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(1) as ex:
         pics = ex.submit(lambda: _safe(websearch.images, query, config.SEARCH_IMAGE_COUNT))  # 関連画像も同時に探す
@@ -140,7 +147,7 @@ def image_search(query):
     import websearch
     found = websearch.images(query)
     if not found:
-        return f"「{query}」の画像が見つかりませんでした"
+        return f"「{query}」の画像はうまく見つかりませんでした。別の言い方で探してみましょうか？"
     return f"「{query}」の画像を{len(found)}枚見つけました。一覧を表示します。" + _images_part(query, found, True)
 
 

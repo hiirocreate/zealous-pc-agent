@@ -14,6 +14,18 @@ SOURCES = "\n\n出典:\n"  # 返答のうち、これより後ろは画面表示
 IMAGES = "\n\n画像:\n"   # この後ろは画像一覧(JSON)。画面に表示し、読み上げない
 
 
+def friendly(error):
+    """うまく答えられなかったときの、自然な言い方(技術的な中身は記録だけに残す)。"""
+    e = str(error)
+    if any(k in e for k in ("11434", "Connection refused", "Max retries", "ConnectionError", "10061")):
+        return "ごめんなさい、いま考える準備（AI）が整っていないみたいです。少し待ってから、もう一度話しかけてもらえますか？"
+    if "timed out" in e.lower() or "timeout" in e.lower():
+        return "考えるのに時間がかかりすぎてしまいました。すみませんが、もう一度お願いできますか？"
+    if "not found" in e and "model" in e:
+        return "使うAIモデルがまだ準備できていないようです。設定の「更新・情報」にある「部品を準備」から準備してください。"
+    return "すみません、うまくお答えできませんでした。少し言い方を変えて、もう一度お願いできますか？"
+
+
 def split_reply(reply):
     """返答を (本文, 出典の行, 画像 {"query", "items"} または None) に分ける。"""
     reply, _, images = reply.partition(IMAGES)
@@ -153,7 +165,8 @@ def _ask(text):
         msg = _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
         if not calls:
-            return (msg.get("content") or "").strip() if not results else " ".join(results)
+            reply = (msg.get("content") or "").strip() if not results else " ".join(results)
+            return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
         messages.append(msg)
         for name, args in calls:
             res = tools.run_tool(name, args)

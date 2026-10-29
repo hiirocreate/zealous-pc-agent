@@ -39,7 +39,7 @@ def test_run_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
     tools.run_tool("create_text_file", {"name": "memo", "content": "abc", "bogus": 1})
     assert (tmp_path / "memo.txt").read_text(encoding="utf-8") == "abc"
-    assert tools.run_tool("nope", {}).startswith("エラー")
+    assert "対応していません" in tools.run_tool("nope", {})
     monkeypatch.setattr(config, "DRY_RUN", True)
     assert tools.run_tool("lock_screen", {}).startswith("[DRY]")
 
@@ -62,7 +62,7 @@ def test_folder_ops(tmp_path, monkeypatch):
     tools.run_tool("copy_item", {"name": "A", "dest": str(tmp_path / "B")})
     assert (tmp_path / "B" / "A" / "n.txt").exists()
     # ホームフォルダそのものや設定で禁止された操作は拒否
-    assert "エラー" in tools.run_tool("rename_item", {"name": os.path.expanduser("~"), "new_name": "x"})
+    assert "できませんでした" in tools.run_tool("rename_item", {"name": os.path.expanduser("~"), "new_name": "x"})
     monkeypatch.setattr(config, "FOLDER_OPS_ENABLED", False)
     assert "無効" in tools.run_tool("create_folder", {"name": "C"})
 

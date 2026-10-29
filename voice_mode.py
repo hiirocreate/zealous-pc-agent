@@ -19,8 +19,8 @@ class VoiceMode(ctk.CTkToplevel):
         super().__init__(app, fg_color=T.BG)
         self.app = app
         self.title(f"{app_name()} と話す")
-        self.geometry(f"360x560+{x}+{y}")
-        self.minsize(300, 460)
+        self.geometry(f"360x640+{x}+{y}")
+        self.minsize(300, 560)
         self.attributes("-topmost", True)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.muted = False
@@ -42,6 +42,7 @@ class VoiceMode(ctk.CTkToplevel):
         self.ai_label = ctk.CTkLabel(self, text="話しかけてください", font=T.font(12), text_color=T.TEXT,
                                      wraplength=310, justify="center")
         self.ai_label.pack(padx=20, pady=(2, 0), fill="x")
+        self.pics = ctk.CTkFrame(self, fg_color="transparent")  # 返事に画像があるときの並び
 
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(side="bottom", pady=22)
@@ -84,6 +85,7 @@ class VoiceMode(ctk.CTkToplevel):
     # ---- 会話の表示 ----
     def heard(self, text):
         self.user_text, self.ai_text = text, ""
+        self.clear_images()
         self.user_label.configure(text=f"あなた: {_short(text, 80)}")
         self.ai_label.configure(text="")
 
@@ -94,6 +96,29 @@ class VoiceMode(ctk.CTkToplevel):
     def reply_done(self, body):
         self.ai_text = body
         self.ai_label.configure(text=_tail(body, 120))
+
+    def show_images(self, images):
+        """返事に画像があれば、文の下に4枚まで並べる。押すと一覧(大きく見られる)を開く。"""
+        import gallery
+        self.clear_images()
+        items = images["items"]
+        open_all = lambda: gallery.Gallery(self, images["query"], items)  # noqa: E731
+        row = ctk.CTkFrame(self.pics, fg_color="transparent")
+        row.pack()
+        for item in items[:4]:
+            pic = ctk.CTkLabel(row, text="", width=72, height=72, fg_color=T.SURFACE, corner_radius=0, cursor="hand2")
+            pic.pack(side="left", padx=3)
+            pic.bind("<Button-1>", lambda e: open_all())
+            gallery.load_async(pic, [item["thumb"]], (72, 72), lambda im, _, p=pic: p.configure(image=im))
+        ctk.CTkButton(self.pics, text=f"画像を大きく見る（{len(items)}枚）", height=28, corner_radius=14,
+                      font=T.font(10), fg_color="transparent", border_width=1, border_color=T.ACCENT,
+                      hover_color=T.SURFACE, command=open_all).pack(pady=(8, 0))
+        self.pics.pack(pady=(12, 0))
+
+    def clear_images(self):
+        for w in self.pics.winfo_children():
+            w.destroy()
+        self.pics.pack_forget()
 
     # ---- 操作 ----
     def toggle_mute(self):

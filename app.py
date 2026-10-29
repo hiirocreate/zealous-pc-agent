@@ -53,6 +53,12 @@ STATES = {
     "stop": ("停止しました", T.WARN, False),
 }
 BUSY = ("think",)  # 緊急停止ボタンを出す状態
+# 「待機して」「待機モード」「小さくして」「おやすみ」など(短い言い方だけ。ほかの命令と取り違えない)
+STANDBY = re.compile(r"(?:もう|じゃあ|では|ちょっと|いったん|一旦)?(?:"
+                     r"(?:待機|たいき|スタンバイ)(?:モード|状態)?(?:に)?(?:して|しといて|しておいて|戻って|入って|"
+                     r"なって|して(?:ください|くれる|くれ|ね))?(?:ください)?|"
+                     r"(?:小さく|ちいさく|縮小)(?:して)?(?:ください)?|"
+                     r"(?:おやすみ|休んで|やすんで|休憩して)(?:ください|なさい)?)")
 FOLLOW_SEC = 8    # 合図の言葉の後、続けて話しかけられる秒数(返事の読み上げが終わるたびに延長)
 
 
@@ -886,6 +892,8 @@ class App(ctk.CTk):
         body, sources, images = split_reply(text)
         if self._voice_win is not None:
             self._voice_win.reply_done(body)
+            if images:
+                self._voice_win.show_images(images)
         config.VOICE_CONTEXT = (getattr(config, "VOICE_CONTEXT", "") + " " + body)[-200:]
         streamed = self._stream is not None
         if streamed:
@@ -901,8 +909,8 @@ class App(ctk.CTk):
                 self._stream[0].configure(text=body)
             else:
                 self._log(body, "ai")
-            if images:
-                self._log_images(images)
+            if images:  # 音声会話画面では、画像は会話画面に並べる(一覧は押したときだけ開く)
+                self._log_images(images, auto_open=self._voice_win is None)
             if sources:
                 self._log_sources(sources)
         self._stream = None
@@ -1018,6 +1026,9 @@ class App(ctk.CTk):
             self.hint.grid_remove()
 
     def _submit(self, text):
+        if STANDBY.fullmatch(re.sub(r"[\s。、！!？?…]", "", text)):  # 「待機して」など: 小さくして待機する
+            self._standby()
+            return
         config.VOICE_CONTEXT = text  # 次の聞き取りの手がかりにする(直前の話題)
         zlog.note(f"送信: {text[:40]!r}")
         self._log(text, "user")
@@ -1075,7 +1086,7 @@ class App(ctk.CTk):
         x, y, w, h, _ = self._current_rect()
         l, t, r, b = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
         vx = max(l, min(x + self._px(w) - self._px(360), r - self._px(360)))
-        vy = max(t, min(y - self._px(570), b - self._px(560)))
+        vy = max(t, min(y - self._px(650), b - self._px(640)))
         self.voice.conversation = True
         self.voice._ensure_stream()
         self._voice_win = voice_mode.VoiceMode(self, vx, vy)
@@ -1093,6 +1104,17 @@ class App(ctk.CTk):
         self.deiconify()
         self.lift()
         self._show_panel()
+
+    def _standby(self):
+        """待機を命じられた: 音声会話画面やチャットを閉じ、小さな待機表示に戻る。"""
+        zlog.note("待機")
+        if self._voice_win is not None:
+            self._voice_win.close()  # (閉じると読み上げも止まるので、先に閉じてから話す)
+        self.speaker.say("はい、待機しますね。")
+        self._end_follow()
+        if self._expanded:
+            self._show_pill()
+        self._set_state("idle")
 
     def _wake_up(self):
         """合図の言葉で呼ばれたとき: ウィジェットを表に出してチャット画面を開く。"""
@@ -1329,9 +1351,13 @@ class App(ctk.CTk):
                 self._on_delta(text)
             elif kind == "reply":
                 self._on_reply(text)
-            else:
+            else:  # うまく答えられなかった: 自然な言い方で伝え、読み上げる(技術的な中身は記録へ)
+                import llm
+                zlog.error(f"返事のエラー: {text}")
+                if self._stream is not None:
+                    self.speaker.flush()
                 self._stream = None
-                self._log(f"エラー: {text}")
+                self._on_reply(llm.friendly(text))
         if self._state == "think" and not self.worker.pending:
             self._set_state("idle")
         self._animate()
