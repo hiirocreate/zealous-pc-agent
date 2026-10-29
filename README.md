@@ -4,24 +4,30 @@
 |---|---|---|
 | ![待機](docs/standby.png) | ![応答待ち](docs/busy.png) | ![パネル](docs/panel.png) |
 
-## 準備 (Windows 11)・コマンド入力は不要
-1. 各インストーラーで以下を入れて起動
-   - Python 3.10以上（https://www.python.org/ ／「Add python.exe to PATH」にチェック）
-   - Ollama（https://ollama.com/）
-   - VOICEVOX（https://voicevox.hiroshiba.jp/）
-2. このフォルダの **`install.pyw` をダブルクリック** →「インストール」
-   - 部品のインストール、AIモデル（`qwen2.5:1.5b`）の取得、ショートカット（デスクトップ・スタートメニュー）作成、自動起動の設定、Windows の「アプリ」一覧への登録まで行います
-3. 以後はデスクトップの **Zealous** アイコン（または `zealous.pyw`）をダブルクリックで起動
-   - Bluetooth操作を使う場合は、アイコンを右クリック →「管理者として実行」
-4. 設定はすべて本体の **⚙** から変更（接続確認・モデル取得・自動起動・権限もここで操作可）
+## インストール（Windows 11）
+1. [Releases](../../releases) または [Actions](../../actions) の成果物から **`ZealousSetup.exe`** をダウンロードして実行
+2. 初回起動時のセットアップ画面で「準備を開始」を押す
+   - AIエンジン（Ollama）・AIモデル・音声合成（VOICEVOX エンジン）・音声認識（Whisper）を自動でダウンロードして準備します（合計 約4〜5GB、初回のみ）
+   - Python・Ollama・VOICEVOX を別途インストールする必要はありません（Python は Zealous.exe に同梱）
+   - すでに Ollama / VOICEVOX を起動している場合はそれを使います
+3. 以後はデスクトップ・スタートメニューの **Zealous** から起動。Ollama と VOICEVOX は Zealous が裏で自動起動・終了します
+4. 設定は本体の **⚙** から（AIモデルを変えたら「部品を準備」で再取得）
+   - Bluetooth操作を使う場合は「管理者として実行」
 
 ## アンインストール
-次のどれかから起動し、「アンインストール」を押すだけです。
-- Windows の「設定 > アプリ > インストールされているアプリ」→ Zealous →「アンインストール」
-- 本体の ⚙ →「アンインストール」
-- このフォルダの `uninstall.pyw` をダブルクリック
+Windows の「設定 > アプリ > インストールされているアプリ」→ Zealous →「アンインストール」（⚙ の「アンインストール」からも可）。
+ダウンロードした部品と設定も消すかは確認画面で選べます。
 
-設定・AIモデル・部品・フォルダ本体を消すかどうかはチェックで選べます。
+## 保存場所
+| 内容 | 場所 |
+|---|---|
+| 本体 | `%LOCALAPPDATA%\Programs\Zealous` |
+| Ollama・AIモデル・VOICEVOX・Whisper | `%LOCALAPPDATA%\Zealous` |
+| 設定 | `%APPDATA%\Zealous\settings.json` |
+
+## 開発者向け
+- ソースから実行: `pip install -r requirements.txt` → `python zealous.pyw`
+- インストーラーは GitHub Actions（`.github/workflows/build.yml`）が PyInstaller + Inno Setup で自動作成。`v1.0.0` のようなタグを push すると Releases に公開
 
 ## 構成
 | ファイル | 役割 |
@@ -36,10 +42,12 @@
 | `tts.py` | VOICEVOX 非同期再生 |
 | `wakeword.py` | 「ウェイク、<AI名>」検出 |
 | `settings_window.py` | 設定の管理画面（⚙ボタン） |
-| `install.pyw` / `uninstall.pyw` | インストール / アンインストール画面（標準ライブラリのみで動作） |
-| `zealous.pyw` | 起動用（コンソール画面なし） |
+| `zealous.pyw` | 起動口（初回セットアップ → 本体、`--uninstall` で後片付け） |
+| `setup_wizard.py` | 初回セットアップ画面 |
+| `runtime.py` | Ollama・VOICEVOX・Whisper の自動ダウンロードと裏での起動/停止 |
+| `packaging/installer.iss` | インストーラー（Inno Setup）定義 |
 | `services.py` | Ollama/VOICEVOX 接続確認・モデル取得 |
-| `shortcut.py` | ショートカット・自動起動の作成 |
+| `shortcut.py` | 自動起動・起動コマンド |
 | `config.py` | 設定の既定値と `%APPDATA%\Zealous\settings.json` への保存 |
 
 ## 動作
@@ -55,5 +63,5 @@
 - ⚙「お試しモード」ONで関数を実行せず呼び出し内容のみ表示（判定確認用）。
 - シャットダウンは30秒猶予（「シャットダウンを取り消して」で中止）。
 
-## テスト（開発者向け）
+## テスト
 `python -m pytest tests`

@@ -92,8 +92,9 @@ class VoiceInput:
     def _transcriber(self):
         try:
             from faster_whisper import WhisperModel
+            import runtime
             model = WhisperModel(config.WHISPER_MODEL, device=config.WHISPER_DEVICE,
-                                 compute_type=config.WHISPER_COMPUTE)
+                                 compute_type=config.WHISPER_COMPUTE, download_root=runtime.WHISPER_DIR)
         except Exception as e:
             self._on_status(f"Whisper読み込みエラー: {e}")
             return

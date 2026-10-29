@@ -45,9 +45,3 @@ def pull_model(on_progress):
             on_progress(d.get("status", "") + pct)
     on_progress("モデル取得完了")
 
-
-def delete_model():
-    req = urllib.request.Request(ollama_base() + "/api/delete", method="DELETE",
-                                 data=json.dumps({"model": config.OLLAMA_MODEL}).encode(),
-                                 headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=30).close()

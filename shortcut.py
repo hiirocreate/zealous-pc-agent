@@ -1,18 +1,14 @@
-"""ショートカット・自動起動・「アプリ」一覧への登録(コンソール画面を出さずに実行)。"""
+"""自動起動(スタートアップのショートカット)と起動コマンド。コンソール画面は出さない。"""
 import os
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+FROZEN = getattr(sys, "frozen", False)  # Zealous.exe として配布されているか
+HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
 LAUNCHER = os.path.join(HERE, "zealous.pyw")
-UNINSTALLER = os.path.join(HERE, "uninstall.pyw")
-ICON = os.path.join(HERE, "assets", "zealous.ico")
+ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "zealous.ico")
 NAME = "Zealous.lnk"
-_PROGRAMS = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs")
-STARTUP_DIR = os.path.join(_PROGRAMS, "Startup")
-START_MENU_DIR = _PROGRAMS
-UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Zealous"
-VERSION = "1.0.0"
+STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
 
 
 def pythonw():
@@ -20,47 +16,37 @@ def pythonw():
     return exe if os.path.exists(exe) else sys.executable
 
 
+def command(*args):
+    """Zealous を起動するコマンド(exe 版 / ソース版)。"""
+    return [sys.executable, *args] if FROZEN else [pythonw(), LAUNCHER, *args]
+
+
+def uninstaller():
+    """exe 版はインストーラーが置いたアンインストーラー、ソース版は無し。"""
+    p = os.path.join(HERE, "unins000.exe")
+    return p if FROZEN and os.path.exists(p) else None
+
+
 def create(folder):
+    cmd = command()
     q = lambda s: s.replace("'", "''")
+    args = " ".join(f'"{a}"' for a in cmd[1:])
     script = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(os.path.join(folder, NAME))}');"
-              f"$s.TargetPath='{q(pythonw())}';$s.Arguments='\"{q(LAUNCHER)}\"';"
+              f"$s.TargetPath='{q(cmd[0])}';$s.Arguments='{q(args)}';"
               f"$s.WorkingDirectory='{q(HERE)}';$s.IconLocation='{q(ICON)}';$s.Save()")
     subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
                    check=True, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def remove(folder):
-    path = os.path.join(folder, NAME)
-    if os.path.exists(path):
-        os.remove(path)
+def is_autostart():
+    return os.path.exists(os.path.join(STARTUP_DIR, NAME))
 
 
 def set_autostart(enabled):
     if os.name != "nt":
         return
-    if enabled:
+    path = os.path.join(STARTUP_DIR, NAME)
+    if enabled and not os.path.exists(path):
         create(STARTUP_DIR)
-    else:
-        remove(STARTUP_DIR)
-
-
-def register_app():
-    """Windows の「設定 > アプリ」に登録し、そこからアンインストールできるようにする。"""
-    import winreg
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as k:
-        for name, value in {
-            "DisplayName": "Zealous", "DisplayVersion": VERSION, "Publisher": "Zealous",
-            "DisplayIcon": ICON, "InstallLocation": HERE,
-            "UninstallString": f'"{pythonw()}" "{UNINSTALLER}"',
-        }.items():
-            winreg.SetValueEx(k, name, 0, winreg.REG_SZ, value)
-        for name in ("NoModify", "NoRepair"):
-            winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, 1)
-
-
-def unregister_app():
-    import winreg
-    try:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
-    except OSError:
-        pass
+    elif not enabled and os.path.exists(path):
+        os.remove(path)

@@ -4,12 +4,16 @@
 緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
 import math
 import multiprocessing as mp
+import os
 import queue
+import threading
 
 import customtkinter as ctk
 
 import config
 import icons
+import runtime
+import shortcut
 import theme as T
 from agent_worker import AgentWorker
 from settings_window import SettingsWindow
@@ -82,6 +86,9 @@ class App(ctk.CTk):
         self._build()
         self._show_pill()
 
+        threading.Thread(target=runtime.start_services, daemon=True).start()  # Ollama / VOICEVOX
+        if os.name == "nt":
+            config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
         self.speaker = Speaker(on_error=self._post_log)
         self.voice = VoiceInput(on_text=lambda t: self._events.put(lambda: self._on_voice(t)),
@@ -456,6 +463,7 @@ class App(ctk.CTk):
 
     def quit_app(self):
         self.worker.close()
+        runtime.stop_services()
         self.destroy()
 
 

@@ -1,0 +1,64 @@
+# Windows 用インストーラー ZealousSetup.exe を作る。
+# main への push / 手動実行でビルドし、成果物(Artifacts)に置く。
+# v から始まるタグ(例: v1.0.0)を push すると Releases にも公開する。
+name: build-installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 部品をインストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: テスト
+        run: python -m pytest -q tests
+
+      - name: Zealous.exe を作る(Python 同梱)
+        run: >
+          pyinstaller zealous.pyw --noconfirm --windowed --name Zealous
+          --icon assets/zealous.ico --add-data "assets;assets"
+          --collect-all customtkinter --collect-all faster_whisper --collect-all ctranslate2
+          --collect-all _sounddevice_data
+          --hidden-import llm --hidden-import tools --hidden-import app --hidden-import setup_wizard
+
+      - name: 起動確認(すべての部品が exe から読み込めるか)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Zealous\Zealous.exe -ArgumentList "--selftest", "$PWD\selftest.txt" -PassThru -Wait
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "読み込みに失敗した部品があります" }
+
+      - name: インストーラーを作る
+        shell: pwsh
+        run: |
+          $ver = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "1.0.0" }
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" packaging\installer.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZealousSetup
+          path: dist/ZealousSetup.exe
+
+      - name: Releases に公開
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ZealousSetup.exe

@@ -75,7 +75,8 @@ class SettingsWindow(ctk.CTkToplevel):
         bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
         bar.grid_columnconfigure(2, weight=1)
         ctk.CTkButton(bar, text="接続確認", width=80, command=self._check).grid(row=0, column=0)
-        ctk.CTkButton(bar, text="モデル取得", width=80, command=self._pull).grid(row=0, column=1, padx=4)
+        ctk.CTkButton(bar, text="部品を準備", width=80, command=lambda: self._setup(on_quit)).grid(
+            row=0, column=1, padx=4)
         self.svc = ctk.CTkLabel(bar, text="", anchor="w", wraplength=250, justify="left")
         self.svc.grid(row=0, column=2, sticky="ew")
 
@@ -131,13 +132,19 @@ class SettingsWindow(ctk.CTkToplevel):
         self._show("確認中…")
         self._bg(lambda: self._show(services.check_ollama()[2] + "\n" + services.check_voicevox()[1]))
 
-    def _pull(self):
-        self._show(f"{config.OLLAMA_MODEL} を取得中…")
-        self._bg(lambda: services.pull_model(self._show))
+    def _setup(self, on_quit):
+        """セットアップ画面(AIモデル変更時の再取得なども)を開き、終わったら本体を再起動する。"""
+        import subprocess
+        subprocess.Popen(shortcut.command("--setup"), cwd=shortcut.HERE)
+        on_quit()
 
     def _uninstall(self, on_quit):
         import subprocess
-        subprocess.Popen([shortcut.pythonw(), shortcut.UNINSTALLER], cwd=shortcut.HERE)
+        exe = shortcut.uninstaller()
+        if not exe:
+            self.msg.configure(text="ソース版は不要です(フォルダを削除してください)", text_color="gray70")
+            return
+        subprocess.Popen([exe], cwd=shortcut.HERE)
         on_quit()
 
     def _fill(self, values):

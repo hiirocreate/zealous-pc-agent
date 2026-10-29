@@ -14,7 +14,8 @@ DEFAULTS = {
     "WAKE_ENABLED": False,
     "INPUT_MODE": "トランシーバー",
     "AUTOSTART": False,              # PC起動時に自動起動
-    "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
+    "WINDOW_POS": None,
+    "SETUP_DONE": False,             # 初回セットアップ画面を表示済みか              # 常駐位置 [x, y](ドラッグで更新)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可

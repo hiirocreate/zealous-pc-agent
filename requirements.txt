@@ -1,6 +1,5 @@
 customtkinter
 requests
-pyaudio
 sounddevice
 numpy
 faster-whisper
