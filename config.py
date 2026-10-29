@@ -18,6 +18,7 @@ DEFAULTS = {
     "AUTOSTART": False,              # PC起動時に自動起動
     "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
     "PANEL_SIZE": [340, 500],        # 会話パネルの大きさ [幅, 高さ](端のドラッグで更新)
+    "SIDEBAR_OPEN": True,            # パネルが広いとき、スレッド一覧を左に出しておくか
     "PANEL_OFFSET": None,            # 待機表示から見た会話パネルの位置 [x, y](大きさを変えると更新)
     "SMOOTH_FRAME": True,            # Windows: なめらかな外枠と影を重ねて表示(再起動後に反映)
     "SETUP_DONE": False,             # 初回セットアップ画面を表示済みか

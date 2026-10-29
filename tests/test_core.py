@@ -289,3 +289,17 @@ def test_transcribe_tuning():
     assert VoiceInput.transcribe(FakeModel("ご視聴ありがとうございました"), speech, True) == ""  # 決まり文句は捨てる
     assert VoiceInput.transcribe(FakeModel("x"), np.zeros(SR, np.float32), True) == ""             # 無音
     assert VoiceInput.transcribe(FakeModel("x"), speech[:SR // 10], True) == ""                     # 短すぎる
+
+
+def test_search_relevance():
+    import json
+    import websearch
+    data = {"props": {"pageProps": {"initialProps": {"pageData": {"algos": [
+        {"title": "<b>株式会社 才</b>（さい）", "url": "https://sai.example.jp/", "description": "Web制作の<b>株式会社才</b>"}]}}}}}
+    page = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+    assert websearch.parse_yahoo_web(page) == [
+        {"title": "株式会社 才（さい）", "url": "https://sai.example.jp/", "snippet": "Web制作の株式会社才"}]
+    general = {"title": "株式会社とは？仕組みを解説", "url": "https://kaisha.example.jp/", "snippet": "株式会社の基本"}
+    exact = {"title": "株式会社 才 会社概要", "url": "https://sai.example.jp/", "snippet": ""}
+    assert websearch.is_relevant("株式会社才", exact) and not websearch.is_relevant("株式会社才", general)
+    assert websearch.relevance("株式会社才", exact) > websearch.relevance("株式会社才", general)

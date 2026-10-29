@@ -62,17 +62,63 @@ def parse_ddg(page):
     return results
 
 
+def parse_yahoo_web(page):
+    """Yahoo! JAPAN のウェブ検索結果(ページに埋め込まれたデータ)を読む。"""
+    import json
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.S)
+    if not m:
+        return []
+    data = json.loads(m.group(1)).get("props", {}).get("pageProps", {}).get("initialProps", {})
+    return [{"title": _text(a.get("title", "")), "url": a.get("url", ""), "snippet": _text(a.get("description", ""))}
+            for a in data.get("pageData", {}).get("algos", []) if a.get("url")]
+
+
+_ENGINES = [
+    ("https://search.yahoo.co.jp/search?p={q}", parse_yahoo_web),     # 日本語に強い
+    ("https://www.bing.com/search?q={q}&setlang=ja&cc=JP", parse_bing),
+    ("https://html.duckduckgo.com/html/?q={q}", parse_ddg),
+]
+
+
+def _norm(text):
+    return re.sub(r"[\s　・]", "", text).lower()
+
+
+def _words(query):
+    return [w for w in re.split(r"[\s　]+", query.lower()) if w]
+
+
+def relevance(query, result):
+    """検索した言葉がどれだけ含まれているか(言葉全体がそのまま含まれていれば高い)。"""
+    body = _norm(result["title"] + result["snippet"] + result["url"])
+    return (3 if _norm(query) in body else 0) + sum(1 for w in _words(query) if _norm(w) in body)
+
+
+def is_relevant(query, result):
+    """検索した言葉(空白で区切った語)がすべて含まれているか。"""
+    body = _norm(result["title"] + result["snippet"] + result["url"])
+    return all(_norm(w) in body for w in _words(query))
+
+
 def search(query, limit=5):
+    """複数の検索サイトから集め、検索した言葉を含む結果を上位にする(言葉が一般的な語に分解されて、
+    関係ない結果が混ざるのを防ぐ)。十分に関係する結果がそろったら、残りの検索サイトは使わない。"""
     q = urllib.parse.quote_plus(query)
-    for url, parse in ((f"https://www.bing.com/search?q={q}&setlang=ja&cc=JP", parse_bing),
-                       (f"https://html.duckduckgo.com/html/?q={q}", parse_ddg)):
+    found, seen = [], set()
+    for url, parse in _ENGINES:
         try:
-            results = [r for r in parse(_get(url)) if r["url"].startswith("http")]
-        except OSError:
+            results = [r for r in parse(_get(url.format(q=q), timeout=5)) if r["url"].startswith("http")]
+        except Exception:
             continue
-        if results:
-            return results[:limit]
-    return []
+        for r in results:
+            key = r["url"].split("#")[0].rstrip("/")
+            if key not in seen:
+                seen.add(key)
+                found.append(r)
+        if sum(1 for r in found if is_relevant(query, r)) >= limit:
+            break
+    found.sort(key=lambda r: -relevance(query, r))  # 同じ点数なら検索サイトの順のまま
+    return found[:limit]
 
 
 def page_text(page, limit=1500):

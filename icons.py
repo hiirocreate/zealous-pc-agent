@@ -176,3 +176,17 @@ def trash(size=14, color=(138, 145, 165)):
     d.rounded_rectangle((100, 44, 156, 70), radius=8, outline=color, width=16)
     d.rounded_rectangle((68, 96, 188, 220), radius=18, outline=color, width=16)
     return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def threads(size=17, color=(170, 176, 194)):
+    """スレッド一覧(重なった2つの吹き出し)。"""
+    img, d = _canvas()
+    d.rounded_rectangle((70, 30, 236, 140), radius=30, outline=color, width=16)       # 奥の吹き出し
+    d.polygon([(196, 136), (226, 136), (226, 170)], fill=color)
+    d.rounded_rectangle((20, 92, 186, 202), radius=30, fill=(0, 0, 0, 0))              # 手前と重なる部分を抜く
+    d.rounded_rectangle((20, 92, 186, 202), radius=30, fill=color)                     # 手前の吹き出し
+    d.polygon([(44, 198), (76, 198), (36, 240)], fill=color)
+    for y in (132, 162):
+        d.rounded_rectangle((52, y - 7, 154, y + 7), radius=7, fill=(0, 0, 0, 0))     # 文字の線(抜き)
+    return _img(img, size, size)

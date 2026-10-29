@@ -52,8 +52,9 @@ def _context():
 
 def summarize(query, material):
     """検索結果を、質問に答える形で短くまとめる(書いた分から順に画面と読み上げへ流す)。"""
-    prompt = (f"次の検索結果をもとに「{query}」について日本語で2〜3文で簡潔に答えてください。"
-              "検索結果に書かれていないことは書かないでください。\n\n" + material)
+    prompt = (f"次の検索結果をもとに、「{query}」そのものについて日本語で2〜3文で簡潔に答えてください。"
+              f"「{query}」に関係ない一般的な説明はしないでください。"
+              "検索結果に書かれていないことは書かず、情報が見つからなければそう伝えてください。\n\n" + material)
     msg = _chat([{"role": "user", "content": prompt}], use_tools=False, stream_out=True)
     return (msg.get("content") or "").strip()
 

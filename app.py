@@ -53,6 +53,25 @@ STATES = {
 BUSY = ("think",)  # 緊急停止ボタンを出す状態
 
 
+def _autohide_scrollbar(frame):
+    """中身が収まっているときはスクロールバーを隠す(CTkScrollableFrame は常に出すため)。"""
+    canvas, bar = frame._parent_canvas, frame._scrollbar
+
+    def check(_=None):
+        try:
+            need = canvas.bbox("all") and canvas.bbox("all")[3] > canvas.winfo_height() + 1
+            if need and not bar.winfo_ismapped():
+                bar.grid()
+            elif not need and bar.winfo_ismapped():
+                bar.grid_remove()
+                canvas.yview_moveto(0)
+        except tk.TclError:
+            pass
+    frame.bind("<Configure>", lambda e: frame.after_idle(check), add="+")
+    canvas.bind("<Configure>", lambda e: frame.after_idle(check), add="+")
+    frame.after(200, check)
+
+
 class RoundButton(ctk.CTkButton):
     """真円ボタン(CTkButton は角丸半径ぶん横幅が広がるため、その余白を消す)。"""
 
@@ -214,21 +233,26 @@ class App(ctk.CTk):
             self._grips[edge] = g
 
     def _build_sidebar(self, master):
-        side = ctk.CTkFrame(master, fg_color=T.SURFACE, corner_radius=PANEL_R if self.shell.ok else 14,
-                            width=SIDEBAR_W)
+        """左端に沿ったスレッド一覧(Claude のような構成)。右端に区切り線。"""
+        side = ctk.CTkFrame(master, fg_color=T.SIDEBAR, corner_radius=0, width=SIDEBAR_W)
         side.grid_propagate(False)
         side.grid_columnconfigure(0, weight=1)
-        side.grid_rowconfigure(1, weight=1)
+        side.grid_rowconfigure(2, weight=1)
+        ctk.CTkFrame(side, fg_color=T.BORDER, width=1, corner_radius=0).grid(row=0, column=1, rowspan=3,
+                                                                              sticky="ns")
         top = ctk.CTkFrame(side, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=10, pady=(14, 6))
-        top.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(top, text="チャット", font=T.font(13, "bold"), text_color=T.TEXT).grid(row=0, column=0,
-                                                                                         sticky="w", padx=4)
-        ctk.CTkButton(top, text="新しいチャット", image=icons.plus(12), compound="left", width=110, height=28,
-                      corner_radius=14, font=T.font(11), fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                      command=self._new_thread).grid(row=0, column=1)
+        top.grid(row=0, column=0, sticky="ew", padx=(10, 8), pady=(12, 4))
+        top.grid_columnconfigure(1, weight=1)
+        self._round(top, 30, icons.threads(17), self._toggle_drawer, hover=T.SURFACE).grid(row=0, column=0)
+        ctk.CTkLabel(top, text="チャット", font=T.font(13, "bold"), text_color=T.TEXT).grid(
+            row=0, column=1, sticky="w", padx=6)
+        ctk.CTkButton(side, text="新しいチャット", image=icons.plus(12), compound="left", anchor="w", height=34,
+                      corner_radius=10, font=T.font(11), fg_color="transparent", hover_color=T.SURFACE,
+                      text_color=T.TEXT, command=self._new_thread).grid(row=1, column=0, sticky="ew",
+                                                                        padx=8, pady=(4, 6))
         self.thread_list = ctk.CTkScrollableFrame(side, fg_color="transparent", scrollbar_button_color=T.BORDER)
-        self.thread_list.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 10))
+        self.thread_list.grid(row=2, column=0, sticky="nsew", padx=(4, 2), pady=(0, 10))
+        _autohide_scrollbar(self.thread_list)
         self.thread_list.grid_columnconfigure(0, weight=1)
         return side
 
@@ -239,7 +263,7 @@ class App(ctk.CTk):
         head = ctk.CTkFrame(p, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=(10, 12), pady=(12, 4))
         head.grid_columnconfigure(2, weight=1)
-        self.menu_btn = self._round(head, 30, icons.menu(16), self._toggle_drawer)
+        self.menu_btn = self._round(head, 30, icons.threads(17), self._toggle_drawer)  # スレッド一覧の開閉
         self.menu_btn.grid(row=0, column=0, rowspan=2, padx=(0, 4))
         emb2 = ctk.CTkLabel(head, text="", image=icons.emblem(32), width=32)
         emb2.grid(row=0, column=1, rowspan=2, padx=(2, 8))
@@ -263,6 +287,9 @@ class App(ctk.CTk):
         self.chat.grid(row=1, column=0, sticky="nsew", padx=6)
         self.chat.grid_columnconfigure(0, weight=1)
         self.chat.bind("<Configure>", self._on_chat_resize, add="+")
+        _autohide_scrollbar(self.chat)
+        # 一覧を重ねて開いているとき、チャット側を押したら閉じる
+        self.chat._parent_canvas.bind("<Button-1>", lambda e: self._close_drawer(), add="+")
         self._bubbles = []
         self._wrap = 220
         self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
@@ -589,31 +616,43 @@ class App(ctk.CTk):
         # 次に開くときも同じ場所・大きさになるよう、待機表示から見た位置と大きさを覚える
         config.save({"PANEL_SIZE": [w, h], "PANEL_OFFSET": [x - self._pos[0], y - self._pos[1]]})
 
-    # ---- パネルの幅に合わせて、スレッド一覧を左に出す / ☰ で開く ----
+    # ---- スレッド一覧: 広いときはチャットの左に並べ、狭いときは左端から重ねて出す ----
     def _on_panel_resize(self, e):
-        wide = self._logical(e.width) >= WIDE
-        mode = "wide" if wide else "narrow"
+        mode = "wide" if self._logical(e.width) >= WIDE else "narrow"
         if mode == self._side_mode:
             return
         self._side_mode = mode
         self._close_drawer()
-        if wide:
-            self.side.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-            self.menu_btn.grid_remove()
+        self._layout_side()
+
+    def _layout_side(self):
+        if self._side_mode == "wide" and config.SIDEBAR_OPEN:
+            self.side.grid(row=0, column=0, sticky="nsew")
+            self.menu_btn.grid_remove()  # 一覧の上にある同じボタンで閉じられる
         else:
             self.side.grid_forget()
             self.menu_btn.grid()
 
     def _toggle_drawer(self):
-        if self._side_mode == "wide":
-            return
-        if self.side.winfo_manager() == "place":
+        if self._side_mode == "wide":  # 広いとき: 一覧の表示・非表示を切り替え(次回も覚えておく)
+            config.save({"SIDEBAR_OPEN": not config.SIDEBAR_OPEN})
+            self._layout_side()
+        elif self.side.winfo_manager() == "place":
             self._close_drawer()
         else:
-            # CTk の部品は place で大きさを渡せないので、高さはパネルに合わせて設定してから重ねる
-            self.side.configure(height=self._logical(self.panel.winfo_height()) - 16)
-            self.side.place(in_=self.panel, x=8, y=8)
+            # 左端から全体の高さで、すっと出す(CTk の部品は place で大きさを渡せないので高さは先に設定)
+            self.side.configure(height=self._logical(self.panel.winfo_height()))
+            self.side.place(in_=self.panel, x=-self._px(SIDEBAR_W), y=0)
             self.side.lift()
+            self._slide(0)
+
+    def _slide(self, i, frames=5):
+        x = -self._px(SIDEBAR_W) * (1 - (1 - (i + 1) / frames) ** 3)
+        if self.side.winfo_manager() != "place":
+            return
+        self.side.place_configure(x=int(x) if i + 1 < frames else 0)
+        if i + 1 < frames:
+            self.after(10, self._slide, i + 1, frames)
 
     def _close_drawer(self):
         if self.side.winfo_manager() == "place":
@@ -639,20 +678,34 @@ class App(ctk.CTk):
                 row=0, column=0, pady=12)
         for i, t in enumerate(items):
             active = t["id"] == self.thread["id"]
-            row = ctk.CTkFrame(self.thread_list, fg_color=T.BG if active else "transparent", corner_radius=10,
-                               cursor="hand2")
-            row.grid(row=i, column=0, sticky="ew", pady=1)
+            base = T.SURFACE if active else T.SIDEBAR
+            row = ctk.CTkFrame(self.thread_list, fg_color=base, corner_radius=10, cursor="hand2", height=48)
+            row.grid(row=i, column=0, sticky="ew", padx=2, pady=1)
             row.grid_columnconfigure(0, weight=1)
-            title = ctk.CTkLabel(row, text=t["title"], font=T.font(11, "bold" if active else "normal"),
-                                 text_color=T.TEXT if active else T.SUB, anchor="w")
-            title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=(6, 0))
+            name = t["title"] if len(t["title"]) <= 13 else t["title"][:12] + "…"
+            title = ctk.CTkLabel(row, text=name, font=T.font(11, "bold" if active else "normal"),
+                                 text_color=T.TEXT if active else "#c3c8d6", anchor="w", height=18)
+            title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=(7, 0))
             when = ctk.CTkLabel(row, text=threads.when(t["updated"]), font=T.font(9), text_color=T.SUB, anchor="w",
                                 height=12)
-            when.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
-            self._round(row, 24, icons.trash(12), lambda tid=t["id"]: self._delete_thread(tid),
-                        hover=T.BORDER).grid(row=0, column=1, rowspan=2, padx=(0, 4))
+            when.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 7))
+            trash = self._round(row, 24, icons.trash(12), lambda tid=t["id"]: self._delete_thread(tid),
+                                fg=base, hover=T.BORDER)
             for w in (row, title, when):
                 w.bind("<Button-1>", lambda e, tid=t["id"]: self._open_thread(tid))
+            # マウスを乗せた行だけ明るくし、削除ボタンを出す
+            row.bind("<Enter>", lambda e, r=row, b=trash: (r.configure(fg_color=T.SURFACE),
+                                                          b.grid(row=0, column=1, rowspan=2, padx=(0, 6))))
+            row.bind("<Leave>", lambda e, r=row, b=trash, c=base: self._row_leave(e, r, b, c))
+
+    def _row_leave(self, e, row, trash, color):
+        # 行の中の部品へ移っただけなら閉じない
+        x, y = row.winfo_pointerxy()
+        inside = row.winfo_rootx() <= x < row.winfo_rootx() + row.winfo_width() and \
+            row.winfo_rooty() <= y < row.winfo_rooty() + row.winfo_height()
+        if not inside:
+            row.configure(fg_color=color)
+            trash.grid_remove()
 
     def _new_thread(self):
         self._close_drawer()
