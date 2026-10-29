@@ -98,6 +98,10 @@ class DotSpinner(ctk.CTkLabel):
 
 
 class App(ctk.CTk):
+    # 合図の言葉で始めた音声の会話(起動中の _show_pill からも参照されるので、最初から用意しておく)
+    _voice_session = False
+    _follow_until = 0
+
     def __init__(self):
         ctk.set_appearance_mode("dark")
         super().__init__(fg_color=T.KEY)
@@ -137,7 +141,6 @@ class App(ctk.CTk):
             config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
         self.speaker = Speaker(on_error=self._post_log)
-        self._voice_session, self._follow_until = False, 0  # 合図の言葉で始めた音声の会話
         self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
