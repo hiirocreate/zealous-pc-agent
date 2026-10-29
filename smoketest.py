@@ -74,6 +74,16 @@ def run(out):
             note(f"文字入力: {'OK' if typed == 'hello zealous' else 'NG'} ({typed!r})")
             shot("3_typed")
 
+            # 日本語入力(変換中 → 確定)を模擬して、入力欄への反映で落ちないか
+            if app._ime:
+                ops = app._ime["ops"]
+                for op in (("pre", "あいう", 3), ("pre", "あいうえお", 5), ("result", "愛上尾"), ("end",)):
+                    ops.put(op)
+                    time.sleep(0.1)
+                time.sleep(0.5)
+                typed = on_main(lambda: app.entry.get("1.0", "end").strip())
+                note(f"日本語入力(模擬): {'OK' if typed == 'hello zealous愛上尾' else 'NG'} ({typed!r})")
+
             # 左辺をつかんで左へ広げる: 右辺は動かないこと
             x, y, w, h = rect()
             pyautogui.moveTo(x + 2, y + h // 2)

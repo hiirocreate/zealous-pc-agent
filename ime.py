@@ -6,6 +6,7 @@ Tk は変換中の文字を Windows 標準の白い枠で表示してしまう�
 確定した文字は、これまで通り Tk が入力欄に入れる。"""
 import ctypes
 import os
+import queue
 
 import zlog
 
@@ -94,7 +95,6 @@ def attach(text, font_family, font_px):
             text.insert(start, s, TAG)
             text.mark_set("insert", f"{start}+{min(cursor, len(s))}c")
         text.see("insert")
-        text.event_generate("<<ImePreedit>>")  # 入力欄の高さの調整などに使う
 
     # 日本語入力からの「文字はどこ？」という問い合わせは、Tk が入力欄を描いている最中にも届く。
     # その最中に入力欄を調べると Tk が壊れて強制終了するので、位置は普段のうちに調べて覚えておき、
@@ -183,25 +183,30 @@ def attach(text, font_family, font_px):
         old = user32.GetWindowLongPtrW(hwnd, GWLP_WNDPROC)
 
         def proc(h, msg, wparam, lparam):
+            # ここは Windows から直接呼ばれる。ここで Tk(入力欄)に触ると、Tk の処理の途中に割り込む形になり、
+            # 強制終了することがある。ここでは日本語入力の文字を受け取って順番に積むだけにし、
+            # 入力欄への反映は Tk の側(pump)で行う。
             try:
                 if state["focused"]:
                     if msg == WM_IME_SETCONTEXT and wparam:
                         lparam &= ~ISC_SHOWUICOMPOSITIONWINDOW  # 標準の白い枠を出さない
                     elif msg == WM_IME_STARTCOMPOSITION:
-                        zlog.note("日本語入力 変換開始")
+                        state["hwnd"] = h
                         place_candidates(h)  # 覚えた位置を使うだけ(入力欄には触らない)
                         return 0
                     elif msg == WM_IME_COMPOSITION:
-                        if lparam & GCS_RESULTSTR:  # 確定: 下書きを消し、確定文字は Tk に入れてもらう
-                            clear_preedit()
-                        elif lparam & GCS_COMPSTR:
-                            show_preedit(*composition(h, GCS_COMPSTR))
-                            # 位置は描き終わってから調べ、候補の一覧をその下(入らなければ上)へ
-                            text.after_idle(lambda: (remember(), place_candidates(h)))
-                            return 0
+                        state["hwnd"] = h
+                        handled = False
+                        if lparam & GCS_RESULTSTR:  # 確定した文字
+                            ops.put(("result", composition(h, GCS_RESULTSTR)[0]))
+                            handled = True
+                        if lparam & GCS_COMPSTR:  # 変換中の文字
+                            ops.put(("pre", *composition(h, GCS_COMPSTR)))
+                            handled = True
+                        if handled:
+                            return 0  # Tk には渡さない(確定文字もこちらで入れる)
                     elif msg == WM_IME_ENDCOMPOSITION:
-                        zlog.note("日本語入力 変換終了")
-                        clear_preedit()
+                        ops.put(("end",))
                     elif msg == WM_IME_REQUEST:
                         res = answer_request(h, wparam, lparam)
                         if res:
@@ -217,9 +222,44 @@ def attach(text, font_family, font_px):
         user32.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, ctypes.cast(cb, ctypes.c_void_p))
         state["hooked"].add(hwnd)
 
+    ops = queue.Queue()  # Windows から受け取った日本語入力の知らせ(Tk の側で順に反映する)
+
+    def pump():
+        """積まれた日本語入力の知らせを、入力欄に反映する(Tk の中で安全に行う)。"""
+        changed = False
+        while True:
+            try:
+                op = ops.get_nowait()
+            except queue.Empty:
+                break
+            changed = True
+            try:
+                if op[0] == "pre":
+                    show_preedit(op[1], op[2])
+                elif op[0] == "result":
+                    clear_preedit()
+                    text.insert("insert", op[1])
+                    text.see("insert")
+                    zlog.note(f"日本語入力 確定 {len(op[1])}文字")
+                else:
+                    clear_preedit()
+            except Exception:
+                pass
+        if changed:
+            remember()
+            if state.get("hwnd"):
+                place_candidates(state["hwnd"])
+            text.event_generate("<<ImePreedit>>")  # 入力欄の高さの調整などに使う
+        if state["focused"]:
+            state["pump"] = text.after(15, pump)
+        else:
+            state["pump"] = None
+
     def focus_in(_=None):
         state["focused"] = True
         remember_later()
+        if not state.get("pump"):
+            state["pump"] = text.after(15, pump)
         hwnd = user32.GetFocus()
         if hwnd and hwnd not in state["hooked"]:
             try:
@@ -231,9 +271,12 @@ def attach(text, font_family, font_px):
 
     def focus_out(_=None):
         state["focused"] = False
+        pump()  # 残っている確定文字などを反映してから
         clear_preedit()
 
     for event in ("<KeyRelease>", "<ButtonRelease-1>", "<Configure>"):
         text.bind(event, remember_later, add="+")
     text.bind("<FocusIn>", focus_in, add="+")
     text.bind("<FocusOut>", focus_out, add="+")
+    state["ops"] = ops  # 動作確認(smoketest)から日本語入力の知らせを模擬するため
+    return state

@@ -320,7 +320,7 @@ class App(ctk.CTk):
         self.entry.grid(row=0, column=1, sticky="ew", padx=2, pady=4)
         self.entry.bind("<Return>", self._on_return)
         import ime  # 日本語の変換中の文字を、この入力欄の中に表示させる
-        ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
+        self._ime = ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
         self.entry.bind("<KeyRelease>", lambda e: self._fit_input())
         self.entry._textbox.bind("<<ImePreedit>>", lambda e: self._fit_input(), add="+")
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
