@@ -25,7 +25,8 @@ _keep = []  # Windows に渡した関数を、消されないよう持ってお�
 
 def attach(text, font_family, font_px):
     """text(tk.Text) で日本語入力するとき、変換中の文字を入力欄の中に描く。"""
-    if os.name != "nt":
+    import config
+    if os.name != "nt" or not getattr(config, "IME_INLINE", True):
         return
     from ctypes import wintypes
     user32, imm = ctypes.WinDLL("user32"), ctypes.WinDLL("imm32")
@@ -93,12 +94,31 @@ def attach(text, font_family, font_px):
         text.see("insert")
         text.event_generate("<<ImePreedit>>")  # 入力欄の高さの調整などに使う
 
-    def caret_box(index="insert"):
-        """文字の位置と行の高さ(画面上の実ピクセル)。(左, 上, 高さ) を返す。"""
-        box = text.bbox(index) or text.bbox("insert")
-        if not box:
-            return None
-        return text.winfo_rootx() + box[0], text.winfo_rooty() + box[1], box[3]
+    # 日本語入力からの「文字はどこ？」という問い合わせは、Tk が入力欄を描いている最中にも届く。
+    # その最中に入力欄を調べると Tk が壊れて強制終了するので、位置は普段のうちに調べて覚えておき、
+    # 問い合わせには覚えた値だけで答える。
+    cache = {"caret": None, "chars": [], "doc": None}
+
+    def remember(_=None):
+        try:
+            box = text.bbox("insert")
+            x0, y0 = text.winfo_rootx(), text.winfo_rooty()
+            cache["doc"] = (x0, y0, x0 + text.winfo_width(), y0 + text.winfo_height())
+            cache["caret"] = (x0 + box[0], y0 + box[1], box[3]) if box else None
+            chars = []
+            ranges = text.tag_ranges(TAG)
+            if ranges:
+                n = len(text.get(ranges[0], ranges[-1]))
+                for i in range(n + 1):
+                    b = text.bbox(f"{ranges[0]}+{i}c")
+                    if b:
+                        chars.append((x0 + b[0], y0 + b[1], b[3]))
+            cache["chars"] = chars
+        except Exception:
+            pass
+
+    def remember_later(_=None):
+        text.after_idle(remember)
 
     def client_rect(hwnd, x, y, h):
         """画面上の位置を、窓の中の位置に直す。行の上下を (左, 上, 右, 下) で返す。"""
@@ -108,20 +128,20 @@ def attach(text, font_family, font_px):
 
     def candidate_form(hwnd):
         """変換候補・予測候補の一覧が、入力中の行に重ならないようにする指定(行の下、入らなければ上)。"""
-        cb = caret_box()
+        cb = cache["caret"]
         if not cb:
             return None
         l, t, r, b = client_rect(hwnd, *cb)
         return CANDIDATEFORM(0, CFS_EXCLUDE, wintypes.POINT(l, b), wintypes.RECT(l, t, r, b))
 
     def place_candidates(hwnd):
+        form = candidate_form(hwnd)
+        if not form:
+            return
         himc = imm.ImmGetContext(hwnd)
         if not himc:
             return
         try:
-            form = candidate_form(hwnd)
-            if not form:
-                return
             # 変換中の文字の場所(入力欄の中)を伝える。予測候補はこの位置を基準に、文字を避けて出る
             l, t = form.rcArea.left, form.rcArea.top
             imm.ImmSetCompositionWindow(himc, ctypes.byref(COMPOSITIONFORM(CFS_POINT, wintypes.POINT(l, t))))
@@ -132,32 +152,26 @@ def attach(text, font_family, font_px):
             imm.ImmReleaseContext(hwnd, himc)
 
     def answer_request(hwnd, kind, lparam):
-        """新しい日本語入力(Windows 10/11 の Microsoft IME など)からの「文字はどこ？」に答える。
-        答えないと、予測候補が入力欄の上に重なって、打っている文字が見えなくなる。"""
-        if kind == IMR_QUERYCHARPOSITION and lparam:
+        """新しい日本語入力(Windows 10/11 の Microsoft IME など)からの「文字はどこ？」に答える
+        (答えないと、予測候補が入力欄の上に重なる)。入力欄には触らず、覚えた位置だけを使う。"""
+        if not lparam:
+            return 0
+        if kind == IMR_QUERYCHARPOSITION:
             info = IMECHARPOSITION.from_address(lparam)
-            start = text.tag_ranges(TAG)
-            index = f"{start[0]}+{info.dwCharPos}c" if start else "insert"
-            cb = caret_box(index)
-            if not cb:
+            if info.dwSize < ctypes.sizeof(IMECHARPOSITION):
+                return 0
+            chars = cache["chars"]
+            cb = chars[min(info.dwCharPos, len(chars) - 1)] if chars else cache["caret"]
+            if not cb or not cache["doc"]:
                 return 0
             info.pt = wintypes.POINT(cb[0], cb[1])
             info.cLineHeight = cb[2]
-            x, y = text.winfo_rootx(), text.winfo_rooty()
-            info.rcDocument = wintypes.RECT(x, y, x + text.winfo_width(), y + text.winfo_height())
+            info.rcDocument = wintypes.RECT(*cache["doc"])
             return 1
-        if kind == IMR_CANDIDATEWINDOW and lparam:
+        if kind == IMR_CANDIDATEWINDOW:
             form = candidate_form(hwnd)
             if not form:
                 return 0
-            ctypes.memmove(lparam, ctypes.byref(form), ctypes.sizeof(form))
-            return 1
-        if kind == IMR_COMPOSITIONWINDOW and lparam:
-            cb = caret_box()
-            if not cb:
-                return 0
-            l, t, _, _ = client_rect(hwnd, *cb)
-            form = COMPOSITIONFORM(CFS_POINT, wintypes.POINT(l, t))
             ctypes.memmove(lparam, ctypes.byref(form), ctypes.sizeof(form))
             return 1
         return 0
@@ -172,14 +186,15 @@ def attach(text, font_family, font_px):
                     if msg == WM_IME_SETCONTEXT and wparam:
                         lparam &= ~ISC_SHOWUICOMPOSITIONWINDOW  # 標準の白い枠を出さない
                     elif msg == WM_IME_STARTCOMPOSITION:
-                        place_candidates(h)
+                        place_candidates(h)  # 覚えた位置を使うだけ(入力欄には触らない)
                         return 0
                     elif msg == WM_IME_COMPOSITION:
                         if lparam & GCS_RESULTSTR:  # 確定: 下書きを消し、確定文字は Tk に入れてもらう
                             clear_preedit()
                         elif lparam & GCS_COMPSTR:
                             show_preedit(*composition(h, GCS_COMPSTR))
-                            place_candidates(h)
+                            # 位置は描き終わってから調べ、候補の一覧をその下(入らなければ上)へ
+                            text.after_idle(lambda: (remember(), place_candidates(h)))
                             return 0
                     elif msg == WM_IME_ENDCOMPOSITION:
                         clear_preedit()
@@ -200,6 +215,7 @@ def attach(text, font_family, font_px):
 
     def focus_in(_=None):
         state["focused"] = True
+        remember_later()
         hwnd = user32.GetFocus()
         if hwnd and hwnd not in state["hooked"]:
             try:
@@ -213,5 +229,7 @@ def attach(text, font_family, font_px):
         state["focused"] = False
         clear_preedit()
 
+    for event in ("<KeyRelease>", "<ButtonRelease-1>", "<Configure>"):
+        text.bind(event, remember_later, add="+")
     text.bind("<FocusIn>", focus_in, add="+")
     text.bind("<FocusOut>", focus_out, add="+")

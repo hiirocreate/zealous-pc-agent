@@ -25,6 +25,7 @@ DEFAULTS = {
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
     "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)
+    "IME_INLINE": True,              # 日本語の変換中の文字を入力欄の中に表示する(OFF で Windows 標準の表示)
     "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
