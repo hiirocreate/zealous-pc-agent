@@ -11,6 +11,14 @@ import tools
 
 
 SOURCES = "\n\n出典:\n"  # 返答のうち、これより後ろは画面表示用(読み上げない)
+IMAGES = "\n\n画像:\n"   # この後ろは画像一覧(JSON)。画面に表示し、読み上げない
+
+
+def split_reply(reply):
+    """返答を (本文, 出典の行, 画像 {"query", "items"} または None) に分ける。"""
+    reply, _, images = reply.partition(IMAGES)
+    body, _, sources = reply.partition(SOURCES)
+    return body, sources, json.loads(images) if images else None
 
 _history = deque()  # 直前のやりとり [(ユーザーの発言, 返答)]
 _last = 0.0
@@ -19,14 +27,14 @@ _last = 0.0
 def system_prompt():
     return (f"あなたはWindows PCを操作するアシスタント「{config.AI_NAME}」です。"
             "PC操作が必要な命令には必ず用意された関数を呼び出してください。"
-            "調べものや質問には search_summary 関数を使ってください。"
+            "調べものや質問には search_summary、画像や写真を探すときは image_search 関数を使ってください。"
             "関数が不要な会話には日本語で一文だけ短く答えてください。")
 
 
 def _remember(text, reply):
     """会話の記憶。設定の往復数だけ覚え、しばらく話しかけなければ忘れる。"""
     global _last
-    _history.append((text, reply.split(SOURCES)[0][:300]))
+    _history.append((text, split_reply(reply)[0][:300]))
     while len(_history) > config.CONTEXT_TURNS:
         _history.popleft()
     _last = time.monotonic()

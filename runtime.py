@@ -158,6 +158,8 @@ def step_ollama(progress):
 def step_model(progress):
     if services.check_ollama()[1]:
         return f"{config.OLLAMA_MODEL} 取得済み"
+    import models
+    progress(None, f"{models.label(config.OLLAMA_MODEL)} をダウンロードします")
 
     def on(text):
         parts = text.rsplit(" ", 1)

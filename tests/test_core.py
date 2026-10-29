@@ -111,10 +111,11 @@ def test_search_summary(monkeypatch):
     monkeypatch.setattr(websearch, "search", lambda q: [{"title": "A", "url": "https://a", "snippet": "a"},
                                                         {"title": "B", "url": "https://b", "snippet": "b"}])
     monkeypatch.setattr(websearch, "read_pages", lambda r: ["本文A", "本文B"])
+    monkeypatch.setattr(websearch, "images", lambda q, limit=30: [{"thumb": "t"}])
     monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: {"content": "要約です"})
-    out = tools.run_tool("search_summary", {"query": "猫"})
-    body, _, sources = out.partition(llm.SOURCES)
+    body, sources, images = llm.split_reply(tools.run_tool("search_summary", {"query": "猫"}))
     assert body == "要約です" and sources == "[1] A\nhttps://a\n[2] B\nhttps://b"
+    assert images == {"query": "猫", "items": [{"thumb": "t"}], "open": False}  # 関連画像は一覧を自動で開かない
 
 
 def test_parse_bing():
@@ -146,3 +147,31 @@ def test_conversation_memory(monkeypatch):
     llm.ask("三つ目")
     contents = [m["content"] for m in seen[-1]]
     assert "二つ目" in contents and "一つ目" not in contents   # 直前の1往復だけ覚えている
+
+
+def test_image_search(monkeypatch):
+    import websearch
+    items = [{"thumb": "t", "mid": "m", "full": "f", "title": "りんご", "page": "p"}]
+    monkeypatch.setattr(websearch, "images", lambda q, limit=30: items)
+    body, sources, images = llm.split_reply(tools.run_tool("image_search", {"query": "リンゴ"}))
+    assert "1枚" in body and sources == ""
+    assert images == {"query": "リンゴ", "items": items, "open": True}
+
+
+def test_parse_yahoo_images():
+    import json
+    import websearch
+    data = {"props": {"initialProps": {"pageProps": {"algos": [
+        {"title": "赤いリンゴ", "refererUrl": "https://ex.jp", "thumbnail": {"url": "https://t"},
+         "main": {"url": "https://m"}, "original": {"url": "https://o"}}]}}}}
+    page = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+    assert websearch.parse_yahoo_images(page) == [
+        {"thumb": "https://t", "mid": "https://m", "full": "https://o", "title": "赤いリンゴ", "page": "https://ex.jp"}]
+
+
+def test_model_labels():
+    import models
+    text = models.label("qwen2.5:3b")
+    assert "1.9GB" in text and models.name_of(text) == "qwen2.5:3b"
+    assert models.name_of("gemma2:2b") == "gemma2:2b"          # 手入力の名前はそのまま
+    assert "1.9GB" in models.warning("qwen2.5:3b")              # 変更時は必ずサイズを伝える

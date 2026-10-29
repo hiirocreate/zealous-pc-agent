@@ -7,6 +7,7 @@ import customtkinter as ctk
 
 import config
 import icons
+import models
 import services
 import shortcut
 import theme as T
@@ -69,7 +70,8 @@ TABS = [
     ]),
     ("AI", [
         ("—", "AIの頭脳"),
-        ("OLLAMA_MODEL", "AIモデル（使う頭脳の種類）", "str", "変えたら「更新・情報」の「部品を準備」で取得"),
+        ("OLLAMA_MODEL", "AIモデル（使う頭脳の種類）", "model",
+         "一覧から選ぶか名前を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
         ("OLLAMA_URL", "Ollama の URL（AIを動かすソフトの接続先）", "str", "通常は変更不要"),
         ("OLLAMA_TIMEOUT", "タイムアウト（返事を待つ最大秒数）", "int", ""),
         ("—", "動き方"),
@@ -193,6 +195,11 @@ class SettingsWindow(ctk.CTkToplevel):
             if kind == "bool":
                 var = ctk.BooleanVar()
                 ctk.CTkSwitch(row, text="", variable=var, width=46, progress_color=T.ACCENT).grid(**ctl)
+            elif kind == "model":
+                var = ctk.StringVar()
+                ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
+                                fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
+                                button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
             elif kind in ("choice", "voice"):
                 var = ctk.StringVar()
                 options = self._voice_choices() if kind == "voice" else [lbl for _, lbl in f[4]]
@@ -292,6 +299,8 @@ class SettingsWindow(ctk.CTkToplevel):
             v = values[key]
             if kind == "voice":
                 var.set(self._voice_labels.get(v, ""))
+            elif kind == "model":
+                var.set(models.label(v))
             elif kind == "choice":
                 var.set(next((lbl for lbl, val in self._choices[key].items() if val == v), v))
             elif kind == "bool":
@@ -309,6 +318,10 @@ class SettingsWindow(ctk.CTkToplevel):
             try:
                 if kind == "voice":
                     changes[key] = self._voice_ids[var.get()]
+                elif kind == "model":
+                    changes[key] = models.name_of(var.get())
+                    if not changes[key]:
+                        raise ValueError
                 elif kind == "choice":
                     changes[key] = self._choices[key][var.get()]
                 else:
@@ -322,6 +335,37 @@ class SettingsWindow(ctk.CTkToplevel):
             self._select("一般")
             self.msg.configure(text="AI名とウェイク語は必須です", text_color=T.DANGER)
             return
+        if changes["OLLAMA_MODEL"] != config.OLLAMA_MODEL:
+            # AIモデルの変更は、必ずサイズと注意を伝えて確認してから
+            self.msg.configure(text="モデルのサイズを確認中…", text_color=T.SUB)
+            name = changes["OLLAMA_MODEL"]
+            threading.Thread(target=lambda: self.after(0, lambda w=models.warning(name): self._confirm(w, changes)),
+                             daemon=True).start()
+            return
+        self._commit(changes)
+
+    def _confirm(self, text, changes):
+        """モデル変更の確認ダイアログ。"""
+        self.msg.configure(text="")
+        dlg = ctk.CTkToplevel(self, fg_color=T.BG)
+        dlg.title("AIモデルの変更")
+        dlg.attributes("-topmost", True)
+        dlg.resizable(False, False)
+        ctk.CTkLabel(dlg, text="⚠ 確認してください", font=T.font(14, "bold"), text_color=T.WARN).pack(
+            anchor="w", padx=20, pady=(18, 6))
+        ctk.CTkLabel(dlg, text=text, font=T.font(12), text_color=T.TEXT, justify="left", wraplength=400).pack(
+            anchor="w", padx=20)
+        btns = ctk.CTkFrame(dlg, fg_color="transparent")
+        btns.pack(anchor="e", padx=20, pady=18)
+        ctk.CTkButton(btns, text="やめる", width=96, height=34, corner_radius=17, fg_color="transparent",
+                      border_width=1, border_color=T.BORDER, text_color=T.SUB, hover_color=T.SURFACE,
+                      command=dlg.destroy).pack(side="left", padx=6)
+        ctk.CTkButton(btns, text="変更してダウンロード", width=160, height=34, corner_radius=17,
+                      fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, font=T.font(12, "bold"),
+                      command=lambda: (dlg.destroy(), self._commit(changes))).pack(side="left")
+        dlg.grab_set()
+
+    def _commit(self, changes):
         try:
             shortcut.set_autostart(changes["AUTOSTART"])
         except Exception as e:

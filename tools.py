@@ -105,10 +105,38 @@ def search_summary(query):
     results = websearch.search(query)
     if not results:
         return f"「{query}」の検索結果を取得できませんでした"
-    docs = websearch.read_pages(results)
-    summary = llm.summarize(query, results[:len(docs)], docs) or results[0]["snippet"]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(1) as ex:
+        pics = ex.submit(lambda: _safe(websearch.images, query, 8))  # 関連画像も同時に探す
+        docs = websearch.read_pages(results)
+        summary = llm.summarize(query, results[:len(docs)], docs) or results[0]["snippet"]
     links = "\n".join(f"[{i}] {r['title']}\n{r['url']}" for i, r in enumerate(results[:len(docs)], 1))
-    return summary + llm.SOURCES + links
+    return summary + llm.SOURCES + links + _images_part(query, pics.result())
+
+
+def _safe(func, *args):
+    try:
+        return func(*args)
+    except Exception:
+        return []
+
+
+def _images_part(query, found, open_gallery=False):
+    """画面に渡す画像一覧。open_gallery=True なら一覧ウィンドウを自動で開く。"""
+    import json
+    import llm
+    data = {"query": query, "items": found, "open": open_gallery}
+    return llm.IMAGES + json.dumps(data, ensure_ascii=False) if found else ""
+
+
+@tool("Webで画像・写真を探して一覧で表示する(「〜の写真を探して」「〜の画像を見せて」など)",
+      query=("string", "探す画像の内容", True))
+def image_search(query):
+    import websearch
+    found = websearch.images(query)
+    if not found:
+        return f"「{query}」の画像が見つかりませんでした"
+    return f"「{query}」の画像を{len(found)}枚見つけました。一覧を表示します。" + _images_part(query, found, True)
 
 
 # ---------------- アプリ ----------------

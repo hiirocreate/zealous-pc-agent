@@ -13,12 +13,13 @@ import customtkinter as ctk
 import config
 import icons
 import runtime
+import services
 import updater
 import voicevox
 import shortcut
 import theme as T
 from agent_worker import AgentWorker
-from llm import SOURCES
+from llm import split_reply
 from settings_window import SettingsWindow
 from tts import Speaker
 from voice import VoiceInput
@@ -330,6 +331,26 @@ class App(ctk.CTk):
             link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
         self._add_widget(box, "w")
 
+    def _log_images(self, images):
+        """画像のサムネイルを横に並べ、クリックで一覧ウィンドウを開く。画像検索なら一覧も自動で開く。"""
+        import gallery
+        items = images["items"]
+        open_all = lambda: gallery.Gallery(self, images["query"], items)  # noqa: E731
+        box = ctk.CTkFrame(self.chat, fg_color="transparent")
+        for i, item in enumerate(items[:4]):
+            # 角丸を付けると幅が広がってはみ出すため、角丸なしの正方形で並べる
+            pic = ctk.CTkLabel(box, text="", width=52, height=52, fg_color=T.SURFACE, corner_radius=0,
+                               cursor="hand2")
+            pic.grid(row=0, column=i, padx=2)
+            pic.bind("<Button-1>", lambda e: open_all())
+            gallery.load_async(pic, [item["thumb"]], (52, 52), lambda im, _, p=pic: p.configure(image=im))
+        ctk.CTkButton(box, text=f"画像一覧（{len(items)}枚）", height=26, corner_radius=13, font=T.font(10),
+                      fg_color="transparent", border_width=1, border_color=T.ACCENT, hover_color=T.SURFACE,
+                      command=open_all).grid(row=1, column=0, columnspan=4, sticky="w", padx=2, pady=(4, 0))
+        self._add_widget(box, "w")
+        if images.get("open"):
+            open_all()
+
     def _post_log(self, text):  # 任意のスレッドから呼べる
         self._events.put(lambda: self._log(text, "sys"))
 
@@ -448,24 +469,32 @@ class App(ctk.CTk):
         self._log("設定を保存しました")
         self._set_state("idle")
         if runtime.voicevox_exe() and voicevox.needs_change(config.VOICEVOX_SPEAKER):
-            self._download_voice()
+            self._background("声", self._prepare_voice)
+        running, has_model, _ = services.check_ollama()
+        if running and not has_model:
+            self._background(f"AIモデル {config.OLLAMA_MODEL}", lambda p: services.pull_model(lambda t: p(None, t)))
 
-    def _download_voice(self):
+    def _prepare_voice(self, progress):
         """選んだ声のモデルだけを取得し(使わない声は削除)、VOICEVOX を読み込み直す。"""
-        note = ctk.CTkLabel(self.chat, text="声を準備中…", font=T.font(10), text_color=T.SUB)
+        voicevox.install_voice(config.VOICEVOX_SPEAKER, progress)
+        runtime.restart_voicevox()
+
+    def _background(self, label, job):
+        """時間のかかる準備を裏で行い、進み具合をチャット欄に表示する。job(progress(割合, 説明))。"""
+        note = ctk.CTkLabel(self.chat, text=f"{label}: 準備中…", font=T.font(10), text_color=T.SUB,
+                            wraplength=240)
         self._add_widget(note, None)
         note.grid(row=len(self._bubbles) - 1, column=0, pady=2)
 
         def progress(ratio, text):
-            self._events.put(lambda: note.winfo_exists() and note.configure(text=f"声: {text}"))
+            self._events.put(lambda: note.winfo_exists() and note.configure(text=f"{label}: {text}"))
 
         def run():
             try:
-                voicevox.install_voice(config.VOICEVOX_SPEAKER, progress)
-                runtime.restart_voicevox()
+                job(progress)
                 progress(1, "準備できました")
             except Exception as e:
-                err = f"取得に失敗: {e}"
+                err = f"失敗しました（{e}）"
                 progress(0, err)
         threading.Thread(target=run, daemon=True).start()
 
@@ -572,11 +601,13 @@ class App(ctk.CTk):
                 break
         for kind, text in self.worker.poll():
             if kind == "reply":
-                body, _, sources = text.partition(SOURCES)
+                body, sources, images = split_reply(text)
                 self._log(body, "ai")
+                if images:
+                    self._log_images(images)
                 if sources:
                     self._log_sources(sources)
-                self.speaker.say(body)  # 出典(URL)は読み上げない
+                self.speaker.say(body)  # 出典(URL)や画像は読み上げない
             else:
                 self._log(f"エラー: {text}")
         if self._state == "think" and not self.worker.pending:

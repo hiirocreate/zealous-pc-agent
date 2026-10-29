@@ -92,3 +92,62 @@ def read_pages(results, count=3):
             return r["snippet"]
     with ThreadPoolExecutor(count) as ex:
         return list(ex.map(one, results[:count]))
+
+
+def parse_yahoo_images(page):
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.S)
+    if not m:
+        return []
+    import json
+    algos = json.loads(m.group(1)).get("props", {}).get("initialProps", {}).get("pageProps", {}).get("algos", [])
+    out = []
+    for a in algos:
+        thumb = (a.get("thumbnail") or a.get("main") or {}).get("url")
+        mid = (a.get("main") or {}).get("url") or thumb  # 検索サイト側で縮小した画像(元画像が開けないときの代わり)
+        full = (a.get("original") or {}).get("url") or mid
+        if thumb:
+            out.append({"thumb": thumb, "mid": mid, "full": full, "title": a.get("title", ""),
+                        "page": a.get("refererUrl", "")})
+    return out
+
+
+def parse_bing_images(page):
+    import json
+    out = []
+    for m in re.findall(r'\bm="(\{&quot;[^"]+\})"', page):
+        try:
+            d = json.loads(html.unescape(m))
+        except ValueError:
+            continue
+        if d.get("turl"):
+            out.append({"thumb": d["turl"], "mid": d["turl"], "full": d.get("murl") or d["turl"], "title": d.get("t", ""),
+                        "page": d.get("purl", "")})
+    return out
+
+
+def images(query, limit=30):
+    """画像を検索して [{"thumb", "mid", "full", "title", "page"}] を返す。Yahoo!画像検索、だめなら Bing。"""
+    q = urllib.parse.quote_plus(query)
+    for url, parse in ((f"https://search.yahoo.co.jp/image/search?p={q}", parse_yahoo_images),
+                       (f"https://www.bing.com/images/search?q={q}&form=HDRSC2&first=1", parse_bing_images)):
+        try:
+            found = parse(_get(url))
+        except OSError:
+            continue
+        if found:
+            return found[:limit]
+    return []
+
+
+def fetch_image(url, timeout=10):
+    """画像のデータを取得する(表示用)。url は1つ、または候補のリスト(先頭から順に試す)。"""
+    if isinstance(url, (list, tuple)):
+        for u in url:
+            try:
+                return fetch_image(u, timeout)
+            except Exception:
+                continue
+        raise OSError("画像を取得できませんでした")
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Referer": "https://search.yahoo.co.jp/"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(15_000_000)
