@@ -71,7 +71,7 @@ def main():
         return smoketest.run(sys.argv[sys.argv.index("--smoketest") + 1])
     import single_instance
     lock = single_instance.acquire()
-    if lock is None and "--setup" in sys.argv:  # 設定画面から開いたときは、元の Zealous が閉じるのを少し待つ
+    if lock is None and ("--setup" in sys.argv or "--restart" in sys.argv):  # 元の Zealous が閉じるのを少し待つ
         import time
         for _ in range(40):
             time.sleep(0.25)

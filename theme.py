@@ -1,7 +1,11 @@
 """配色・フォント。"""
 import os
 
-FONT = "Yu Gothic UI" if os.name == "nt" else "IPAPGothic"
+import config
+
+DEFAULT_FONT = "Yu Gothic UI" if os.name == "nt" else "IPAPGothic"
+FONT = config.UI_FONT or DEFAULT_FONT  # 設定で変えたフォント(再起動で反映)
+SCALE = (config.UI_FONT_SCALE or 100) / 100  # 文字の大きさ
 KEY = "#010203"          # 角丸の外側を透過させる色(Windows)
 
 BG = "#14161c"           # カード背景
@@ -20,4 +24,4 @@ DANGER_HOVER = "#c53030"
 
 
 def font(size=12, weight="normal"):
-    return (FONT, size, weight)
+    return (FONT, max(7, round(size * SCALE)), weight)

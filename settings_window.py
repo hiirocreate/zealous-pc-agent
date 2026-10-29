@@ -40,6 +40,9 @@ TABS = [
         ("—", "起動"),
         ("AUTOSTART", "PC起動時に自動で起動", "bool", "Windows にサインインしたら Zealous を立ち上げる"),
         ("—", "表示"),
+        ("UI_FONT", "フォント（画面の文字の書体）", "font", "このPCに入っているフォントから選べます（保存後、再起動で反映）"),
+        ("UI_FONT_SCALE", "文字の大きさ", "choice", "画面全体の文字の大きさ（保存後、再起動で反映）",
+         [(90, "小さめ（90%）"), (100, "標準（100%）"), (115, "大きめ（115%）"), (130, "特大（130%）")]),
         ("IME_INLINE", "日本語入力を入力欄の中に表示", "bool",
          "変換中の文字を入力欄の中に表示します。文字入力で調子が悪いときはOFFに（再起動後に反映）"),
         ("SMOOTH_FRAME", "なめらかな外枠と影", "bool",
@@ -128,6 +131,19 @@ def parse(kind, raw):
     if kind == "list":
         return [w.strip() for w in raw.replace("、", ",").split(",") if w.strip()]
     return raw.strip() if isinstance(raw, str) else raw
+
+
+DEFAULT_LABEL = f"標準（{T.DEFAULT_FONT}）"
+_FIRST = ["Yu Gothic UI", "Meiryo UI", "BIZ UDPGothic", "BIZ UDゴシック", "游ゴシック", "メイリオ",
+          "Noto Sans JP", "UD デジタル 教科書体 NK-R", "MS UI Gothic"]
+
+
+def font_choices(widget):
+    """このPCのフォント一覧(日本語でよく使うものを先頭に。縦書き用の @ 付きは除く)。"""
+    import tkinter.font as tkfont
+    names = sorted({n for n in tkfont.families(widget) if not n.startswith("@")}, key=str.lower)
+    first = [n for n in _FIRST if n in names]
+    return first + [n for n in names if n not in first]
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -235,6 +251,21 @@ class SettingsWindow(ctk.CTkToplevel):
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
                                 fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
                                 button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
+            elif kind == "font":
+                var = ctk.StringVar()
+                fonts = font_choices(self)
+                self._choices[key] = {DEFAULT_LABEL: "", **{n: n for n in fonts}}
+                box = ctk.CTkComboBox(row, values=[DEFAULT_LABEL] + fonts, variable=var, fg_color=T.BG,
+                                      border_color=T.BORDER, button_color=T.BG, button_hover_color=T.BORDER,
+                                      dropdown_fg_color=T.SURFACE, font=T.font(11))
+                box.grid(**ctl)
+                preview = ctk.CTkLabel(row, text="", text_color=T.TEXT, anchor="w")
+                preview.grid(row=3, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 10))
+
+                def show(*_, v=var, p=preview):  # 選んだフォントの見本
+                    name = self._choices["UI_FONT"].get(v.get(), v.get()) or T.DEFAULT_FONT
+                    p.configure(text="見本: こんにちは、Zealous です。Aa 123", font=(name, 13))
+                var.trace_add("write", show)
             elif kind == "choice":
                 var = ctk.StringVar()
                 options = [lbl for _, lbl in f[4]]
@@ -396,6 +427,8 @@ class SettingsWindow(ctk.CTkToplevel):
             v = values[key]
             if kind == "model":
                 var.set(models.label(v))
+            elif kind == "font":
+                var.set(v or DEFAULT_LABEL)
             elif kind == "choice":
                 # 選択肢に無い値(外したマイクなど)は先頭の選択肢にする
                 var.set(next((lbl for lbl, val in self._choices[key].items() if val == v),
@@ -419,6 +452,8 @@ class SettingsWindow(ctk.CTkToplevel):
                         raise ValueError
                 elif kind == "choice":
                     changes[key] = self._choices[key][var.get()]
+                elif kind == "font":
+                    changes[key] = self._choices[key].get(var.get(), var.get().strip())
                 else:
                     changes[key] = parse(kind, var.get())
             except (ValueError, KeyError):
@@ -466,6 +501,11 @@ class SettingsWindow(ctk.CTkToplevel):
         except Exception as e:
             self.msg.configure(text=f"自動起動の設定に失敗: {e}", text_color=T.DANGER)
             return
+        restart = any(changes.get(k) != getattr(config, k) for k in ("UI_FONT", "UI_FONT_SCALE"))
         config.save(changes)
         self._on_saved()
         self.destroy()
+        if restart:
+            import tkinter.messagebox as mb
+            if mb.askyesno("表示の変更", "フォント・文字の大きさは、再起動すると反映されます。\n今すぐ再起動しますか？"):
+                self.master.restart_app()

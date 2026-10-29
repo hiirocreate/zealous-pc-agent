@@ -1284,6 +1284,14 @@ class App(ctk.CTk):
         import traceback
         _log_error("".join(traceback.format_exception(exc, val, tb)))
 
+    def restart_app(self):
+        """Zealous を起動し直す(新しい Zealous は、この Zealous が終わるのを待ってから出る)。"""
+        import subprocess
+        import sys
+        args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath("zealous.pyw")]
+        subprocess.Popen(args + ["--restart"], cwd=os.getcwd())
+        self.quit_app()
+
     def quit_app(self):
         zlog.note("終了")
         try:

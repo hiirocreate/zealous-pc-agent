@@ -29,6 +29,8 @@ DEFAULTS = {
     "SEARCH_IMAGE_COUNT": 8,         # 調べものの返事に添える画像の枚数
     "SOURCE_COUNT": 3,               # 調べものの返事に添える参考リンクの数
     "SAFE_SITES_ONLY": True,         # 危険と判定されたサイトは表示・案内しない
+    "UI_FONT": "",                   # 画面の文字のフォント(空なら標準: Yu Gothic UI)
+    "UI_FONT_SCALE": 100,            # 画面の文字の大きさ(%)
     "IME_INLINE": True,              # 日本語の変換中の文字を入力欄の中に表示する(OFF で Windows 標準の表示)
     "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----
