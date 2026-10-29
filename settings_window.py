@@ -115,7 +115,6 @@ TABS = [
     ("更新・情報", [
         ("—", "アップデート（新しい版への更新）"),
         ("AUTO_UPDATE", "起動時に新しい版を確認", "bool", "見つかると会話ボタンに印が付きます"),
-        ("UPDATE_REPO", "配布元（更新ファイルの置き場所）", "str", "GitHub（プログラムの公開サイト）のリポジトリ（保管場所）名。通常は変更不要"),
     ]),
 ]
 FIELDS = [f for _, fields in TABS for f in fields if f[0] not in ("—", "＊")]

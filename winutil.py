@@ -5,6 +5,7 @@
 - work_area / virtual_bounds: 複数のモニター(デュアルスクリーン)の範囲を調べる。
 """
 import ctypes
+import functools
 import os
 import tkinter as tk
 
@@ -98,7 +99,8 @@ def set_rect(win, x, y, w, h):
     if not WIN:
         return False
     try:
-        return bool(user32.SetWindowPos(hwnd_of(win), None, int(x), int(y), int(w), int(h), 0x4 | 0x10))
+        # SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS(左や上の辺を動かしたとき、古い中身がずれて残らないように)
+        return bool(user32.SetWindowPos(hwnd_of(win), None, int(x), int(y), int(w), int(h), 0x4 | 0x10 | 0x100))
     except Exception:
         return False
 
@@ -236,12 +238,8 @@ class Shell:
                 self._give_up()
 
     def _draw(self, w, h, r, fast):
-        import numpy as np
-        img = render_frame(w, h, r, self.fill, self.border, self.MARGIN, fast)
-        a = np.asarray(img, dtype=np.float32)
-        a[..., :3] *= a[..., 3:4] / 255.0  # Windows は「色×透明度」済みの値を求める
-        bgra = a[..., [2, 1, 0, 3]].astype(np.uint8).tobytes()
-        self._blit(bgra, img.width, img.height)
+        bgra, W, H = frame_bgra(w, h, r, self.fill, self.border, self.MARGIN)
+        self._blit(bgra, W, H)
 
     def _blit(self, bgra, W, H):
         screen = user32.GetDC(None)
@@ -281,6 +279,40 @@ def render_frame(w, h, r, fill, border, m, fast=False):
                                             fill=_rgb(fill) + (255,), outline=_rgb(border) + (255,), width=k)
     img.alpha_composite(shape.resize((W, H), Image.BILINEAR if fast else Image.LANCZOS))
     return img
+
+
+@functools.lru_cache(maxsize=8)
+def _template(r, fill, border, m):
+    """外枠の見本(きれいに描いた小さな外枠を、色×透明度にした配列)。四隅はそのまま使い、
+    まっすぐな辺と内側は引き伸ばして、どんな大きさの外枠も一瞬で、きれいなまま作る。"""
+    import numpy as np
+    side = 2 * (2 * m + r) + 8  # 四隅(角の丸み+影のぼかし)の間に、まっすぐな部分が残る大きさ
+    img = render_frame(side, side, r, fill, border, m)
+    a = np.asarray(img, dtype=np.float32)
+    a[..., :3] *= a[..., 3:4] / 255.0  # Windows は「色×透明度」済みの値を求める
+    return a[..., [2, 1, 0, 3]].astype(np.uint8), 2 * m + r + 2
+
+
+def frame_bgra(w, h, r, fill, border, m):
+    """外枠の画像を、Windows に渡す形(BGRA のバイト列, 幅, 高さ)で作る。"""
+    import numpy as np
+    W, H = w + 2 * m, h + 2 * m
+    tpl, c = _template(r, fill, border, m)
+    if W <= 2 * c + 2 or H <= 2 * c + 2:  # 小さいときは見本が使えないので、そのまま描く
+        a = np.asarray(render_frame(w, h, r, fill, border, m), dtype=np.float32)
+        a[..., :3] *= a[..., 3:4] / 255.0
+        return a[..., [2, 1, 0, 3]].astype(np.uint8).tobytes(), W, H
+    th, tw = tpl.shape[:2]
+    mid_y, mid_x = th // 2, tw // 2
+    out = np.empty((H, W, 4), np.uint8)
+    rows = (slice(0, c), slice(c, H - c), slice(H - c, H))
+    trows = (slice(0, c), slice(mid_y, mid_y + 1), slice(th - c, th))
+    cols = (slice(0, c), slice(c, W - c), slice(W - c, W))
+    tcols = (slice(0, c), slice(mid_x, mid_x + 1), slice(tw - c, tw))
+    for ro, tro in zip(rows, trows):
+        for co, tco in zip(cols, tcols):
+            out[ro, co] = tpl[tro, tco]  # 1列・1行の部分は、そのまま引き伸ばされる
+    return out.tobytes(), W, H
 
 
 def _rgb(hex_color):
