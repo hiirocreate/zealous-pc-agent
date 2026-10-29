@@ -33,12 +33,14 @@ DEFAULTS = {
     "OLLAMA_TIMEOUT": 60,
     "USE_GPU": True,                 # NVIDIA の GPU があれば使う(GPU 用ライブラリを追加で取得)
     "MAX_TOOL_STEPS": 3,
+    "QUICK_ROUTE": True,             # 「〜を調べて」などはAIの判断を待たずに直接実行(速い)
     "CONTEXT_TURNS": 4,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
     "CONTEXT_RESET_MIN": 10,         # この分数だけ話しかけなければ記憶を消す             # 1命令あたりの関数呼び出し上限(ループ防止)
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)
     # ---- 音声合成 (VOICEVOX) ----
     "TTS_ENABLED": True,
+    "TTS_SPEED": 1.1,                # 話す速さ(1.0 が標準)
     "VOICEVOX_URL": "http://localhost:50021",
     "VOICEVOX_SPEAKER": 3,
     # ---- 音声認識 (Faster-Whisper) ※変更はアプリ再起動後に反映 ----

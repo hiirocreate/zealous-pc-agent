@@ -106,3 +106,26 @@ def close(size=14, color=(170, 176, 194)):
     d.line((56, 56, 200, 200), fill=color, width=26)
     d.line((200, 56, 56, 200), fill=color, width=26)
     return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=8)
+def dot_frames(dot=6, gap=5, count=28):
+    """読み込み中の3つのドットのコマ送り画像。4倍の大きさで描いて縮小し、縁をなめらかにする。
+    ドットは順番に、ふわっと浮き上がりながら大きく・明るくなる。"""
+    k = 4
+    colors = [(124, 92, 255), (91, 140, 255), (34, 211, 238)]
+    w, h = dot * 3 + gap * 2, int(dot * 2.4)
+    frames = []
+    for f in range(count):
+        img = Image.new("RGBA", (w * k, h * k), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        for i, (r, g, b) in enumerate(colors):
+            t = (f / count - i * 0.14) % 1.0
+            wave = math.sin(math.pi * min(t / 0.55, 1.0)) ** 2  # 0→1→0 を滑らかに(後半は休む)
+            size = dot * (0.72 + 0.28 * wave) * k
+            cx = (i * (dot + gap) + dot / 2) * k
+            cy = (h - dot / 2 - wave * dot * 0.55) * k
+            alpha = int(255 * (0.45 + 0.55 * wave))
+            d.ellipse((cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2), fill=(r, g, b, alpha))
+        frames.append(_img(img.resize((w * 2, h * 2), Image.LANCZOS), w, h))
+    return frames

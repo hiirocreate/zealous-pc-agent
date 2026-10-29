@@ -6,6 +6,7 @@ import threading
 
 def _worker_main(inq, outq):
     import llm
+    llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
     while True:
         text = inq.get()
         try:
@@ -40,7 +41,8 @@ class AgentWorker:
                     out.append(self._outq.get_nowait())
                 except (queue.Empty, OSError, EOFError):
                     break
-            self.pending = max(0, self.pending - len(out))
+            done = sum(1 for kind, _ in out if kind in ("reply", "error"))  # 途中経過(delta)は数えない
+            self.pending = max(0, self.pending - done)
         return out
 
     def kill(self):

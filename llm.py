@@ -22,6 +22,7 @@ def split_reply(reply):
 
 _history = deque()  # 直前のやりとり [(ユーザーの発言, 返答)]
 _last = 0.0
+on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 
 
 def system_prompt():
@@ -49,23 +50,35 @@ def _context():
     return msgs
 
 
-def summarize(query, results, docs):
-    """検索結果の本文を、質問に答える形で短くまとめる。"""
-    material = "\n\n".join(f"[{i}] {r['title']}\n{d}" for i, (r, d) in enumerate(zip(results, docs), 1))
-    prompt = (f"次の検索結果を読んで「{query}」について日本語で3〜4文に要点をまとめてください。"
+def summarize(query, material):
+    """検索結果を、質問に答える形で短くまとめる(書いた分から順に画面と読み上げへ流す)。"""
+    prompt = (f"次の検索結果をもとに「{query}」について日本語で2〜3文で簡潔に答えてください。"
               "検索結果に書かれていないことは書かないでください。\n\n" + material)
-    msg = _chat([{"role": "user", "content": prompt}], use_tools=False)
+    msg = _chat([{"role": "user", "content": prompt}], use_tools=False, stream_out=True)
     return (msg.get("content") or "").strip()
 
 
-def _chat(messages, use_tools=True):
-    body = {"model": config.OLLAMA_MODEL, "messages": messages, "stream": False,
-            "options": {"temperature": 0}, "keep_alive": "30m"}
+def _chat(messages, use_tools=True, stream_out=False):
+    """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
+    関数呼び出し(JSON)らしい返事は画面に出さない。"""
+    body = {"model": config.OLLAMA_MODEL, "messages": messages, "stream": True,
+            "options": {"temperature": 0, "num_ctx": 4096}, "keep_alive": "30m"}
     if use_tools:
         body["tools"] = tools.schemas()
-    r = requests.post(config.OLLAMA_URL, json=body, timeout=config.OLLAMA_TIMEOUT)
-    r.raise_for_status()
-    return r.json()["message"]
+    content, calls, shown = "", [], 0
+    with requests.post(config.OLLAMA_URL, json=body, timeout=config.OLLAMA_TIMEOUT, stream=True) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line:
+                continue
+            msg = json.loads(line).get("message") or {}
+            calls += msg.get("tool_calls") or []
+            content += msg.get("content") or ""
+            if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
+                if len(content) > shown:
+                    on_delta(content[shown:])
+                    shown = len(content)
+    return {"role": "assistant", "content": content, "tool_calls": calls}
 
 
 def parse_tool_calls(message):
@@ -100,11 +113,37 @@ def ask(text):
     return reply
 
 
+# はっきりした言い方は AI に判断させずに直接実行する(速く、小さいモデルでも確実)
+_ROUTES = [
+    (re.compile(r"^(?P<q>.+?)の?(?:写真|画像|イラスト|絵)を?(?:探して|さがして|見せて|検索して|表示して|出して)"),
+     "image_search"),
+    (re.compile(r"^(?P<q>.+?)を?(?:起動して|立ち上げて)"), "launch_app"),
+    (re.compile(r"^(?P<q>.+?)(?:について|を|って)?(?:調べて|しらべて|検索して|教えて)"), "search_summary"),
+]
+_NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さっき|それ|これ|あれ")  # 会話の続き・ブラウザ指定は AI に任せる
+
+
+def quick_route(text):
+    """(関数名, 引数) を返す。当てはまらなければ None。"""
+    t = text.strip().rstrip("。.!！?？")
+    if not config.QUICK_ROUTE or _NOT_SEARCH.search(t):
+        return None
+    for pattern, name in _ROUTES:
+        m = pattern.match(t)
+        if m and m.group("q").strip(" 、,をのは"):
+            key = "name" if name == "launch_app" else "query"
+            return name, {key: m.group("q").strip(" 、,をのは")}
+    return None
+
+
 def _ask(text):
+    route = quick_route(text)
+    if route:
+        return tools.run_tool(*route)
     messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]
     results = []
     for _ in range(config.MAX_TOOL_STEPS):
-        msg = _chat(messages)
+        msg = _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
         if not calls:
             return (msg.get("content") or "").strip() if not results else " ".join(results)
@@ -115,4 +154,4 @@ def _ask(text):
             messages.append({"role": "tool", "content": res})
         if not config.SUMMARIZE_AFTER_TOOL:
             return " ".join(results)
-    return _chat(messages, use_tools=False).get("content", "").strip() or " ".join(results)
+    return _chat(messages, use_tools=False, stream_out=True).get("content", "").strip() or " ".join(results)

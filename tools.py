@@ -109,9 +109,12 @@ def search_summary(query):
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(1) as ex:
         pics = ex.submit(lambda: _safe(websearch.images, query, 8))  # 関連画像も同時に探す
-        docs = websearch.read_pages(results)
-        summary = llm.summarize(query, results[:len(docs)], docs) or results[0]["snippet"]
-    links = "\n".join(f"[{i}] {r['title']}\n{r['url']}" for i, r in enumerate(results[:len(docs)], 1))
+        # AIに渡す量が多いほど遅くなるため、検索結果の説明文5件 + 上位2ページの冒頭だけにする
+        docs = websearch.read_pages(results, count=2, limit=600)
+        material = "\n".join(f"・{r['title']}: {r['snippet']}" for r in results[:5])
+        material += "\n\n" + "\n\n".join(f"[{r['title']}]\n{d}" for r, d in zip(results, docs))
+        summary = llm.summarize(query, material) or results[0]["snippet"]
+    links = "\n".join(f"[{i}] {r['title']}\n{r['url']}" for i, r in enumerate(results[:3], 1))
     return summary + llm.SOURCES + links + _images_part(query, pics.result())
 
 

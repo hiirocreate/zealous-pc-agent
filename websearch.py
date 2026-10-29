@@ -83,11 +83,11 @@ def page_text(page, limit=1500):
     return text[:limit]
 
 
-def read_pages(results, count=3):
+def read_pages(results, count=3, limit=1500):
     """上位のページを同時に読み込む(読めなかったページは検索結果の要約文で代用)。"""
     def one(r):
         try:
-            return page_text(_get(r["url"], timeout=6)) or r["snippet"]
+            return page_text(_get(r["url"], timeout=4), limit) or r["snippet"]
         except Exception:
             return r["snippet"]
     with ThreadPoolExecutor(count) as ex:

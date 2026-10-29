@@ -2,10 +2,10 @@
 待機中は横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐し、ドラッグで移動できる。
 会話パネルは常駐位置に応じて、画面の内側へ向かって展開する。
 緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
-import math
 import multiprocessing as mp
 import os
 import queue
+import re
 import threading
 
 import customtkinter as ctk
@@ -53,23 +53,18 @@ class RoundButton(ctk.CTkButton):
             self.grid_columnconfigure(c, minsize=0)
 
 
-class DotSpinner(ctk.CTkCanvas):
-    """3つのドットが波打つローディング表示。tick() を一定間隔で呼んで動かす。"""
+class DotSpinner(ctk.CTkLabel):
+    """3つのドットが波打つローディング表示(なめらかに描いたコマ画像を順に切り替える)。
+    tick() を一定間隔で呼んで動かす。"""
 
-    def __init__(self, master, bg, dot=5, gap=4):
-        self._d, self._g = dot, gap
-        super().__init__(master, width=dot * 3 + gap * 2, height=dot * 3, bg=bg, highlightthickness=0)
+    def __init__(self, master, bg=None, dot=5, gap=4):
+        self._frames = icons.dot_frames(dot, gap)
+        super().__init__(master, text="", image=self._frames[0], fg_color="transparent")
         self._t = 0
 
     def tick(self):
-        self._t += 1
-        self.delete("all")
-        d, h = self._d, self._d * 3
-        for i, col in enumerate((T.ACCENT, "#5b8cff", T.CYAN)):
-            lift = max(0.0, math.sin(self._t * 0.35 - i * 0.9))  # 順番に跳ねる
-            y = h - d - lift * d * 1.6
-            x = i * (d + self._g)
-            self.create_oval(x, y, x + d, y + d, fill=col, outline="")
+        self._t = (self._t + 1) % len(self._frames)
+        self.configure(image=self._frames[self._t])
 
 
 class App(ctk.CTk):
@@ -91,7 +86,8 @@ class App(ctk.CTk):
         self._build()
         self._show_pill()
 
-        threading.Thread(target=runtime.start_services, daemon=True).start()  # Ollama / VOICEVOX
+        # Ollama / VOICEVOX を裏で起動し、AIモデルと声を先に読み込んでおく(最初の返事を速くする)
+        threading.Thread(target=lambda: (runtime.start_services(), runtime.warm_up()), daemon=True).start()
         if os.name == "nt":
             config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
@@ -106,6 +102,7 @@ class App(ctk.CTk):
         self._apply_settings()
         self._set_state("idle")
         self._update_info = None
+        self._stream = None  # 書きかけの返事 [吹き出し, ここまでの文字]
         if config.AUTO_UPDATE and updater.FROZEN:
             self.after(5000, self.check_update)
         self.after(50, self._pump)
@@ -183,7 +180,7 @@ class App(ctk.CTk):
         self.panel_logo.grid(row=0, column=1, sticky="sw")
         row2, self.dot, self.status = self._status_row(head)
         row2.grid(row=1, column=1, sticky="nw", pady=(3, 0))
-        self.head_spin = DotSpinner(row2, T.BG, dot=4, gap=3)
+        self.head_spin = DotSpinner(row2, T.BG, dot=5, gap=3)
         self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=2, rowspan=2)
         for w in (head, emb2, self.panel_logo, row2, self.dot, self.status):
             self._draggable(w)
@@ -193,7 +190,7 @@ class App(ctk.CTk):
         self.chat.grid_columnconfigure(0, weight=1)
         self._bubbles = []
         self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
-        self.typing_spin = DotSpinner(self.typing, T.SURFACE, dot=6, gap=5)
+        self.typing_spin = DotSpinner(self.typing, T.SURFACE, dot=7, gap=5)
         self.typing_spin.pack(padx=14, pady=10)
 
         box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=18)
@@ -205,6 +202,8 @@ class App(ctk.CTk):
                                     text_color=T.TEXT, height=30, wrap="char", activate_scrollbars=False)
         self.entry.grid(row=0, column=1, sticky="ew", padx=2, pady=4)
         self.entry.bind("<Return>", self._on_return)
+        import ime  # 日本語の変換中の文字を、この入力欄の中に表示させる
+        ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
         self.entry.bind("<KeyRelease>", lambda e: self._fit_input())
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
@@ -306,6 +305,31 @@ class App(ctk.CTk):
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
         self._add_widget(w, None)
+        return w
+
+    # ---- 返事を書けた分から表示・読み上げ ----
+    def _on_delta(self, piece):
+        if self._stream is None:
+            self.typing.grid_remove()  # 文字が届き始めたら「入力中」のドットは消す
+            self._stream = [self._log("", "ai"), ""]
+        self._stream[1] += piece
+        self._stream[0].configure(text=self._stream[1])
+        self.speaker.feed(piece)  # 一文になったところから話し始める
+        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+
+    def _on_reply(self, text):
+        body, sources, images = split_reply(text)
+        if self._stream is not None:
+            self._stream[0].configure(text=body)
+            self.speaker.flush()  # 句点で終わっていない最後の部分も読む
+        else:
+            self._log(body, "ai")
+            self.speaker.say(body)  # 出典(URL)や画像は読み上げない
+        self._stream = None
+        if images:
+            self._log_images(images)
+        if sources:
+            self._log_sources(sources)
 
     def _add_widget(self, w, sticky):
         """チャット欄の末尾に部品を追加する(sticky 指定時はここで配置)。"""
@@ -417,6 +441,10 @@ class App(ctk.CTk):
 
     def _submit(self, text):
         self._log(text, "user")
+        if re.search(r"声を(?:変え|かえ|選|えら)", text):  # 「声を変えたい」は声選びの画面を開く
+            self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
+            self.open_voice_picker()
+            return
         self.worker.submit(text)
         self._set_state("think")
 
@@ -461,7 +489,16 @@ class App(ctk.CTk):
             self._settings.focus()
             return
         self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app,
-                                        on_check_update=lambda report: self.check_update(True, report))
+                                        on_check_update=lambda report: self.check_update(True, report),
+                                        on_pick_voice=self.open_voice_picker)
+
+    def open_voice_picker(self, on_changed=None):
+        import voice_picker
+        if getattr(self, "_picker", None) and self._picker.winfo_exists():
+            self._picker.focus()
+            return
+        self._picker = voice_picker.VoicePicker(self, play_wav=self.speaker.play_wav, say=self.speaker.say,
+                                                on_changed=on_changed)
 
     def _settings_saved(self):
         self.worker.restart()  # 推論プロセスに新しい設定を読ませる
@@ -587,6 +624,7 @@ class App(ctk.CTk):
         self._events.put(self._after_stop)
 
     def _after_stop(self):
+        self._stream = None
         self._recording = False
         self._paint_mic(False)
         self._log("⚠ 緊急停止しました")
@@ -600,15 +638,12 @@ class App(ctk.CTk):
             except queue.Empty:
                 break
         for kind, text in self.worker.poll():
-            if kind == "reply":
-                body, sources, images = split_reply(text)
-                self._log(body, "ai")
-                if images:
-                    self._log_images(images)
-                if sources:
-                    self._log_sources(sources)
-                self.speaker.say(body)  # 出典(URL)や画像は読み上げない
+            if kind == "delta":
+                self._on_delta(text)
+            elif kind == "reply":
+                self._on_reply(text)
             else:
+                self._stream = None
                 self._log(f"エラー: {text}")
         if self._state == "think" and not self.worker.pending:
             self._set_state("idle")

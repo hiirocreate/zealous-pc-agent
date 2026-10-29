@@ -15,7 +15,7 @@ import voicevox
 from version import VERSION
 
 # 項目: (キー, 表示名, 種類, 補足説明[, 選択肢])
-#   種類: str / int / float / bool / list / choice / voice
+#   種類: str / int / float / bool / list / choice / model
 #   choice の選択肢は (保存する値, 表示名) の組
 TABS = [
     ("一般", [
@@ -51,7 +51,8 @@ TABS = [
     ("声・音声", [
         ("—", "読み上げ"),
         ("TTS_ENABLED", "返事を声で読み上げる", "bool", "VOICEVOX（無料の読み上げソフト）を使います"),
-        ("VOICEVOX_SPEAKER", "声", "voice", "⬇ の付いた声は、保存するとその声だけダウンロード（使わない声は削除）"),
+        ("＊", "voice_picker"),  # 「声を選ぶ」ボタン(キャラ一覧・試聴・ダウンロード)
+        ("TTS_SPEED", "話す速さ（1.0 が標準）", "float", "大きいほど速く話します（例: 1.2）"),
         ("VOICEVOX_URL", "VOICEVOX の URL（読み上げソフトの接続先）", "str", "通常は変更不要"),
         ("—", "聞き取り（再起動後に反映）"),
         ("WHISPER_MODEL", "Whisper（声を文字にするAI）の種類", "choice", "大きいほど正確ですが重くなります",
@@ -90,7 +91,7 @@ TABS = [
         ("UPDATE_REPO", "配布元（更新ファイルの置き場所）", "str", "GitHub のリポジトリ名（owner/repo の形）"),
     ]),
 ]
-FIELDS = [f for _, fields in TABS for f in fields if f[0] != "—"]
+FIELDS = [f for _, fields in TABS for f in fields if f[0] not in ("—", "＊")]
 _INFO_TAB = "更新・情報"
 
 
@@ -106,9 +107,10 @@ def parse(kind, raw):
 
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_saved, on_quit, on_check_update):
+    def __init__(self, master, on_saved, on_quit, on_check_update, on_pick_voice):
         super().__init__(master, fg_color=T.BG)
         self._on_saved, self._on_quit, self._on_check_update = on_saved, on_quit, on_check_update
+        self._on_pick_voice = on_pick_voice
         self._vars = {}
         self._choices = {}  # キー -> {表示名: 値}
         self.title(f"{config.AI_NAME} 設定")
@@ -178,9 +180,10 @@ class SettingsWindow(ctk.CTkToplevel):
             if f[0] == "—":
                 self._section(page, f[1])
                 continue
+            if f[0] == "＊":
+                self._voice_card(page)
+                continue
             key, label, kind, hint = f[:4]
-            if kind == "voice" and not voicevox.cached_catalog():
-                kind = "int"  # 声の一覧が無いときは話者ID(声の番号)を直接入力
             # スイッチは右端、それ以外の入力欄は説明の下に横幅いっぱいで置く(長い項目名でも切れない)
             switch = kind == "bool"
             wrap = 330 if switch else 400
@@ -203,11 +206,10 @@ class SettingsWindow(ctk.CTkToplevel):
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
                                 fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
                                 button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
-            elif kind in ("choice", "voice"):
+            elif kind == "choice":
                 var = ctk.StringVar()
-                options = self._voice_choices() if kind == "voice" else [lbl for _, lbl in f[4]]
-                if kind == "choice":
-                    self._choices[key] = {lbl: val for val, lbl in f[4]}
+                options = [lbl for _, lbl in f[4]]
+                self._choices[key] = {lbl: val for val, lbl in f[4]}
                 ctk.CTkOptionMenu(row, values=options, variable=var, dynamic_resizing=False,
                                   fg_color=T.BG, button_color=T.BG, button_hover_color=T.BORDER,
                                   dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
@@ -287,22 +289,33 @@ class SettingsWindow(ctk.CTkToplevel):
         subprocess.Popen([exe], cwd=shortcut.HERE)
         self._on_quit()
 
-    def _voice_choices(self):
-        """声の選択肢。未ダウンロードのものにはサイズを付ける。"""
-        have = voicevox.installed_models()
-        self._voice_ids, self._voice_labels = {}, {}
-        for v in voicevox.cached_catalog():
-            text = voicevox.label(v) + ("" if v["vvm"] in have else f"  ⬇{v['mb']}MB")
-            self._voice_ids[text], self._voice_labels[v["id"]] = v["id"], text
-        return list(self._voice_ids)
+    def _voice_card(self, page):
+        """いまの声と「声を選ぶ」ボタン。キャラ一覧の画面で試聴・ダウンロードする。"""
+        row = self._card_row(page)
+        ctk.CTkLabel(row, text="声", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(9, 0))
+        self.voice_now = ctk.CTkLabel(row, text="", font=T.font(11), text_color=T.CYAN, anchor="w")
+        self.voice_now.grid(row=1, column=0, sticky="w", padx=12)
+        ctk.CTkLabel(row, text="キャラクターの一覧から試聴して選べます。選んだ声のモデル（約55MB）だけを"
+                               "ダウンロードし、使わなくなった声は削除します。",
+                     font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=330).grid(
+            row=2, column=0, sticky="w", padx=12, pady=(2, 10))
+        ctk.CTkButton(row, text="声を選ぶ", width=110, height=34, corner_radius=17, fg_color=T.ACCENT,
+                      hover_color=T.ACCENT_HOVER, font=T.font(12, "bold"),
+                      command=lambda: self._on_pick_voice(self.refresh_voice)).grid(
+            row=0, column=1, rowspan=3, padx=12)
+        self.refresh_voice()
+
+    def refresh_voice(self):
+        cur = next((v for v in voicevox.cached_catalog() if v["id"] == config.VOICEVOX_SPEAKER), None)
+        if self.winfo_exists():
+            self.voice_now.configure(text=f"いま: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
 
     # ---------------- 値の読み書き ----------------
     def _fill(self, values):
         for key, (kind, var) in self._vars.items():
             v = values[key]
-            if kind == "voice":
-                var.set(self._voice_labels.get(v, ""))
-            elif kind == "model":
+            if kind == "model":
                 var.set(models.label(v))
             elif kind == "choice":
                 var.set(next((lbl for lbl, val in self._choices[key].items() if val == v), v))
@@ -319,9 +332,7 @@ class SettingsWindow(ctk.CTkToplevel):
         changes = {}
         for key, (kind, var) in self._vars.items():
             try:
-                if kind == "voice":
-                    changes[key] = self._voice_ids[var.get()]
-                elif kind == "model":
+                if kind == "model":
                     changes[key] = models.name_of(var.get())
                     if not changes[key]:
                         raise ValueError

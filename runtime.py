@@ -138,6 +138,28 @@ def restart_voicevox():
             _spawn([voicevox_exe(), "--host", "127.0.0.1", "--port", "50021"])
 
 
+def warm_up():
+    """起動直後に AIモデルと声を読み込んでおき、最初の返事を速くする(裏で実行)。"""
+    import requests
+    if _wait(lambda: services.check_ollama()[0], 60):
+        try:  # 空の依頼でモデルをメモリに載せる
+            requests.post(services.ollama_base() + "/api/generate",
+                          json={"model": config.OLLAMA_MODEL, "keep_alive": "30m"}, timeout=120)
+        except requests.RequestException:
+            pass
+    if config.TTS_ENABLED and _wait(lambda: services.check_voicevox()[0], 120):
+        try:
+            requests.post(f"{config.VOICEVOX_URL}/initialize_speaker",
+                          params={"speaker": config.VOICEVOX_SPEAKER, "skip_reinit": "true"}, timeout=120)
+        except requests.RequestException:
+            pass
+
+
+def wait_voicevox(seconds=120):
+    """VOICEVOX が応答するまで待つ(声の読み込み直し後など)。"""
+    return _wait(lambda: services.check_voicevox()[0], seconds)
+
+
 def stop_services():
     for p in _procs:
         if p.poll() is None:

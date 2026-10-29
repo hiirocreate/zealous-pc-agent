@@ -2,6 +2,7 @@
 声のモデル(.vvm)は配布パッケージ(zip)から必要なものだけを後から取り出す。"""
 import json
 import os
+import threading
 
 import remotezip
 import runtime
@@ -42,7 +43,7 @@ def catalog():
             for st in m["styles"]:
                 if "talk" in st.get("type", "talk"):  # 歌唱用のスタイルは除く
                     voices.append({"id": st["id"], "speaker": m["name"], "style": st["name"], "vvm": vvm,
-                                   "mb": info.file_size >> 20})
+                                   "mb": info.file_size >> 20, "uuid": m["speaker_uuid"]})
     voices.sort(key=lambda v: v["id"])
     os.makedirs(runtime.DATA_DIR, exist_ok=True)
     with open(CATALOG, "w", encoding="utf-8") as f:
@@ -56,7 +57,7 @@ def cached_catalog():
         try:
             with open(path, encoding="utf-8") as f:
                 voices = json.load(f)
-            if voices:
+            if voices and "uuid" in voices[0]:  # 古い形式(キャラの識別子なし)は作り直す
                 return voices
         except (OSError, ValueError):
             pass
@@ -105,3 +106,49 @@ def install_voice(style_id, progress):
         os.remove(os.path.join(MODEL_DIR, old))
         changed = True
     return changed
+
+
+# ---------------- 声選びの画面用 ----------------
+def speakers():
+    """キャラごとにまとめた一覧 [{"name", "uuid", "vvm", "mb", "styles": [{"id", "style"}]}](一覧の順)。
+    同じキャラでもモデルが分かれている場合は、モデルごとに分ける(ダウンロード単位がモデルのため)。"""
+    out = {}
+    for v in cached_catalog():
+        key = (v["uuid"], v["vvm"])
+        if key not in out:
+            out[key] = {"name": v["speaker"], "uuid": v["uuid"], "vvm": v["vvm"], "mb": v["mb"], "styles": []}
+        out[key]["styles"].append({"id": v["id"], "style": v["style"]})
+    for sp in out.values():
+        sp["styles"].sort(key=lambda s: (s["style"] != "ノーマル", s["id"]))  # ノーマルを先頭に
+    return sorted(out.values(), key=lambda sp: (int(sp["vvm"].split(".")[0]), sp["name"]))
+
+
+_remote = None
+_remote_lock = threading.Lock()
+
+
+def _read_remote(name):
+    """配布パッケージの中の小さなファイルを1つ読む(目次は1回だけ読み、以後は使い回す)。"""
+    global _remote
+    with _remote_lock:  # 読み取り位置を共有するため、同時には読まない
+        if _remote is None:
+            _remote = remotezip.open_zip(PKG, block=128 << 10)[0]
+        return _remote.read(name)
+
+
+def _resource(uuid, kind, name):
+    return f"resources/character_info/{uuid}/{kind}/{name}"
+
+
+def icon_bytes(uuid, style_id):
+    """キャラの顔アイコン(PNG)。エンジン導入済みならPC内から、未導入ならネットから小さく取得。"""
+    local = os.path.join(DIR, *_resource(uuid, "icons", f"{style_id}.png").split("/"))
+    if os.path.exists(local):
+        with open(local, "rb") as f:
+            return f.read()
+    return _read_remote(_resource(uuid, "icons", f"{style_id}.png"))
+
+
+def sample_wav(uuid, style_id):
+    """試聴用の音声(WAV)。モデルをダウンロードしなくても聞ける。"""
+    return _read_remote(_resource(uuid, "voice_samples", f"{style_id}_001.wav"))

@@ -46,7 +46,7 @@ def test_run_tool(tmp_path, monkeypatch):
 
 def test_ask_with_mock(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", True)
-    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: {
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {
         "tool_calls": [{"function": {"name": "open_url", "arguments": {"url": "example.com"}}}]})
     assert llm.ask("example.comを開いて").startswith("[DRY] open_url")
 
@@ -77,9 +77,9 @@ def test_voice_models(tmp_path, monkeypatch):
     import json
     import voicevox
     cat = tmp_path / "cat.json"
-    cat.write_text(json.dumps([{"id": 3, "speaker": "ずんだもん", "style": "ノーマル", "vvm": "0.vvm", "mb": 56},
-                               {"id": 8, "speaker": "春日部つむぎ", "style": "ノーマル", "vvm": "0.vvm", "mb": 56},
-                               {"id": 13, "speaker": "青山龍星", "style": "ノーマル", "vvm": "15.vvm", "mb": 63}]),
+    cat.write_text(json.dumps([{"id": 3, "speaker": "ずんだもん", "style": "ノーマル", "vvm": "0.vvm", "mb": 56, "uuid": "z"},
+                               {"id": 8, "speaker": "春日部つむぎ", "style": "ノーマル", "vvm": "0.vvm", "mb": 56, "uuid": "k"},
+                               {"id": 13, "speaker": "青山龍星", "style": "ノーマル", "vvm": "15.vvm", "mb": 63, "uuid": "a"}]),
                    encoding="utf-8")
     monkeypatch.setattr(voicevox, "CATALOG", str(cat))
     monkeypatch.setattr(voicevox, "BUNDLED", str(cat))
@@ -90,6 +90,8 @@ def test_voice_models(tmp_path, monkeypatch):
     assert not voicevox.needs_change(8)                 # 同じモデルに入っている声
     assert voicevox.needs_change(13)                    # 別のモデルが必要
     assert voicevox.install_voice(8, lambda *a: None) is False
+    assert [(sp["name"], [st["id"] for st in sp["styles"]]) for sp in voicevox.speakers()] == [
+        ("ずんだもん", [3]), ("春日部つむぎ", [8]), ("青山龍星", [13])]
 
 
 def test_settings_fields():
@@ -110,9 +112,9 @@ def test_search_summary(monkeypatch):
     import websearch
     monkeypatch.setattr(websearch, "search", lambda q: [{"title": "A", "url": "https://a", "snippet": "a"},
                                                         {"title": "B", "url": "https://b", "snippet": "b"}])
-    monkeypatch.setattr(websearch, "read_pages", lambda r: ["本文A", "本文B"])
+    monkeypatch.setattr(websearch, "read_pages", lambda r, count=3, limit=1500: ["本文A", "本文B"])
     monkeypatch.setattr(websearch, "images", lambda q, limit=30: [{"thumb": "t"}])
-    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: {"content": "要約です"})
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "要約です"})
     body, sources, images = llm.split_reply(tools.run_tool("search_summary", {"query": "猫"}))
     assert body == "要約です" and sources == "[1] A\nhttps://a\n[2] B\nhttps://b"
     assert images == {"query": "猫", "items": [{"thumb": "t"}], "open": False}  # 関連画像は一覧を自動で開かない
@@ -140,7 +142,7 @@ def test_find_app():
 def test_conversation_memory(monkeypatch):
     seen = []
     monkeypatch.setattr(config, "CONTEXT_TURNS", 1)
-    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: (seen.append(m), {"content": "はい"})[1])
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: (seen.append(m), {"content": "はい"})[1])
     llm._history.clear()
     llm.ask("一つ目")
     llm.ask("二つ目")
@@ -183,3 +185,47 @@ def test_ollama_members():
              "lib/ollama/cuda_v13/cublas.dll", "lib/ollama/vulkan/ggml-vulkan.dll"]
     assert [n for n in names if runtime.ollama_member(n, None)] == [names[0], names[1], names[4]]
     assert [n for n in names if runtime.ollama_member(n, "cuda_v13")] == [names[0], names[1], names[3], names[4]]
+
+
+def test_quick_route():
+    assert llm.quick_route("リンゴの写真探しておいて") == ("image_search", {"query": "リンゴ"})
+    assert llm.quick_route("Excelを起動して") == ("launch_app", {"name": "Excel"})
+    assert llm.quick_route("東京タワーについて調べてください") == ("search_summary", {"query": "東京タワー"})
+    assert llm.quick_route("あなたの名前を教えて") is None          # 会話はAIに任せる
+    assert llm.quick_route("ブラウザで天気を検索して") is None      # ブラウザ指定はAIに任せる
+
+
+def test_streaming_chat(monkeypatch):
+    import json
+
+    class Resp:
+        def __init__(self, lines):
+            self.lines = lines
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            return [json.dumps({"message": {"content": c}}).encode() for c in self.lines]
+
+    got = []
+    monkeypatch.setattr(llm, "on_delta", got.append)
+    monkeypatch.setattr(llm.requests, "post", lambda *a, **k: Resp(["こんに", "ちは。", "元気です"]))
+    assert llm._chat([], stream_out=True)["content"] == "こんにちは。元気です"
+    assert got == ["こんに", "ちは。", "元気です"]               # 届いた分から順に渡す
+    got.clear()
+    monkeypatch.setattr(llm.requests, "post", lambda *a, **k: Resp(['{"name": "lock_screen"', "}"]))
+    llm._chat([], stream_out=True)
+    assert got == []                                           # 関数呼び出しのJSONは画面に出さない
+
+
+def test_split_sentences():
+    from tts import split_sentences
+    assert split_sentences("はい。わかりました！次は？") == ["はい。", "わかりました！", "次は？"]
+    assert split_sentences("短い、文。") == ["短い、文。"]
