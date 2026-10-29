@@ -190,8 +190,8 @@ def step_whisper(progress):
 
 
 STEPS = [
-    ("AIエンジン (Ollama)", step_ollama),
-    ("AIモデル", step_model),
-    ("音声合成 (VOICEVOX)", step_voicevox),
-    ("音声認識 (Whisper)", step_whisper),
+    ("Ollama（AIを動かすソフト）", step_ollama),
+    ("AIモデル（AIの頭脳）", step_model),
+    ("VOICEVOX（読み上げソフト）", step_voicevox),
+    ("Whisper（声を文字にするAI）", step_whisper),
 ]

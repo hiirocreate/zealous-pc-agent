@@ -90,3 +90,10 @@ def test_voice_models(tmp_path, monkeypatch):
     assert not voicevox.needs_change(8)                 # 同じモデルに入っている声
     assert voicevox.needs_change(13)                    # 別のモデルが必要
     assert voicevox.install_voice(8, lambda *a: None) is False
+
+
+def test_settings_fields():
+    import pytest
+    sw = pytest.importorskip("settings_window")  # 画面部品(tkinter)が無い環境では飛ばす
+    assert {f[0] for f in sw.FIELDS} <= set(config.DEFAULTS)
+    assert sw.parse("list", "a、b, ,c") == ["a", "b", "c"]
