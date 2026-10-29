@@ -50,5 +50,8 @@ def install(info, progress):
     dest = os.path.join(tempfile.gettempdir(), f"ZealousSetup-{info['version']}.exe")
     runtime.download(info["url"], dest, progress)
     # 終了を待ってから上書きし、終わったら自動で起動し直す(installer.iss の [Run] 参照)
-    subprocess.Popen([dest, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
-                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    # 失敗したときは理由が画面に出るよう、メッセージは隠さない。記録は設定フォルダの update.log に残す。
+    # 作業フォルダは一時フォルダにする(インストール先を作業フォルダのまま掴んでいると、入れ替えの邪魔になる)
+    log = os.path.join(config.APP_DIR, "update.log")
+    subprocess.Popen([dest, "/SILENT", "/NORESTART", "/CLOSEAPPLICATIONS", f"/LOG={log}"],
+                     cwd=tempfile.gettempdir(), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
