@@ -329,3 +329,15 @@ def test_safe_only_and_chunks(monkeypatch):
     monkeypatch.setattr(websearch, "_images_one", lambda q, n: a if q == "x" else b)
     got = [it["full"].rsplit("/", 1)[1] for it in websearch.images("q", 10)]
     assert got == ["a0", "a1", "a2", "a3", "b0", "b1", "b2", "b3", "a4", "a5"]
+
+
+def test_persona_parse():
+    import persona
+    assert persona.parse("関西弁で話して") == ("set", "関西弁で話して")
+    assert persona.parse("これからは兄弟みたいに話して") == ("set", "兄弟みたいに話して")
+    assert persona.parse("話し方を元に戻して") == ("reset", "")
+    assert persona.parse("今日の天気を教えて") is None
+    assert persona.apply("関西弁で話す", ("add", "もっと短く答えて")) == "関西弁で話す。もっと短く答えて"
+    config.PERSONA = "関西弁で話す"
+    assert "関西弁" in llm.system_prompt()
+    config.PERSONA = ""

@@ -37,11 +37,21 @@ _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 
 
+def persona_rule():
+    """設定の「AIの性格・話し方」を、AIへの指示にする(空なら何も足さない)。"""
+    persona = (getattr(config, "PERSONA", "") or "").strip()
+    if not persona:
+        return ""
+    return (f"\n\n【あなたの性格・話し方】{persona}\n"
+            "この性格・話し方を、会話の最後まで必ず守ってください。"
+            "実在の人物の名前が出てきても、本人になりすますことはせず、口調や雰囲気をまねるだけにしてください。")
+
+
 def system_prompt():
     return (f"あなたはWindows PCを操作するアシスタント「{config.AI_NAME}」です。"
             "PC操作が必要な命令には必ず用意された関数を呼び出してください。"
             "調べものや質問には search_summary、画像や写真を探すときは image_search 関数を使ってください。"
-            "関数が不要な会話には日本語で一文だけ短く答えてください。")
+            "関数が不要な会話には日本語で一文だけ短く答えてください。" + persona_rule())
 
 
 def _remember(text, reply):
@@ -66,7 +76,8 @@ def summarize(query, material):
     """検索結果を、質問に答える形で短くまとめる(書いた分から順に画面と読み上げへ流す)。"""
     prompt = (f"次の検索結果をもとに、「{query}」そのものについて日本語で2〜3文で簡潔に答えてください。"
               f"「{query}」に関係ない一般的な説明はしないでください。"
-              "検索結果に書かれていないことは書かず、情報が見つからなければそう伝えてください。\n\n" + material)
+              "検索結果に書かれていないことは書かず、情報が見つからなければそう伝えてください。"
+              + persona_rule() + "\n\n" + material)
     msg = _chat([{"role": "user", "content": prompt}], use_tools=False, stream_out=True)
     return (msg.get("content") or "").strip()
 

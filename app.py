@@ -1032,6 +1032,11 @@ class App(ctk.CTk):
             self.hint.grid_remove()
 
     def _submit(self, text):
+        import persona
+        change = persona.parse(text)
+        if change:  # 「関西弁で話して」「話し方を元に戻して」など: AIの性格・話し方を変える
+            self._change_persona(text, change)
+            return
         if STANDBY.fullmatch(re.sub(r"[\s。、！!？?…]", "", text)):  # 「待機して」など: 小さくして待機する
             self._standby()
             return
@@ -1112,6 +1117,21 @@ class App(ctk.CTk):
         self.deiconify()
         self.lift()
         self._show_panel()
+
+    def _change_persona(self, text, change):
+        import persona
+        new = persona.apply(config.PERSONA, change)
+        config.save({"PERSONA": new})
+        zlog.note(f"話し方を変更: {new!r}")
+        self._log(text, "user")
+        self._log(f"話し方を変更しました: {new or '標準'}（設定の「AI」タブでも変えられます）")
+        self.worker.restart()  # 考える側に新しい話し方を読ませる
+        # 新しい話し方で、ひとこと返事をしてもらう
+        history = threads.history(self.thread, config.CONTEXT_TURNS)
+        threads.add(self.thread, "user", text)
+        self._pending_tid = self.thread["id"]
+        self.worker.submit("（話し方を変えたので）今の話し方で、了解の返事をひとことだけしてください。", history)
+        self._set_state("think")
 
     def _standby(self):
         """待機を命じられた: 音声会話画面やチャットを閉じ、小さな待機表示に戻る。"""

@@ -23,6 +23,16 @@ _PARTICLE = re.compile(r"(?<=[\u4e00-\u9fff\u30a0-\u30ffA-Za-z0-9])(?:は|が|�
 FIRST_MIN, NEXT_COMMA, FORCE = 4, 24, 60  # 最初の区切りの最小文字数 / 読点で切る長さ / 強制的に切る長さ
 
 
+def persona_voice():
+    """AIの話し方に合わせた、声の速さ(倍率)と高さ(足す値)。"""
+    p = getattr(config, "PERSONA", "") or ""
+    if any(w in p for w in ("元気", "明るく", "楽しそう", "ハイテンション", "テンション高")):
+        return 1.08, 0.03
+    if any(w in p for w in ("落ち着", "ゆっくり", "執事", "穏やか", "おだやか", "低い声", "渋")):
+        return 0.92, -0.02
+    return 1.0, 0.0
+
+
 def cut_point(buf, first):
     """届いた途中の文から、読み上げに回せる位置を返す(まだなら None)。
     最初の区切りは短めに切って早く話し始め、2つ目からは自然な文の切れ目で切る。"""
@@ -133,7 +143,9 @@ class Speaker:
         q = requests.post(f"{config.VOICEVOX_URL}/audio_query", params=p, timeout=10)
         q.raise_for_status()
         query = q.json()
-        query["speedScale"] = config.TTS_SPEED
+        speed, pitch = persona_voice()
+        query["speedScale"] = config.TTS_SPEED * speed
+        query["pitchScale"] = query.get("pitchScale", 0.0) + pitch
         # 区切りの前後の無音を短くして、区切りをまたいでも途切れて聞こえないようにする
         query["outputSamplingRate"] = 24000
         query["prePhonemeLength"] = 0.05

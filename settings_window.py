@@ -96,6 +96,10 @@ TABS = [
         ("VAD_MIN_SEC", "1回の発言の最小秒数", "float", "これより短い音は無視（咳や物音対策）"),
     ]),
     ("AI", [
+        ("—", "AIの性格・話し方"),
+        ("PERSONA", "AIの性格・話し方", "persona",
+         "例:「兄弟のようにタメ口で」「関西弁で明るく」「結論から短く答える」。下の型から選んで書き足すこともできます。"
+         "会話の中で「関西弁で話して」「話し方を元に戻して」と言っても変えられます"),
         ("—", "AIの頭脳"),
         ("OLLAMA_MODEL", "AIモデル（使う頭脳の種類）", "model",
          "一覧から選ぶか名前を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
@@ -250,6 +254,27 @@ class SettingsWindow(ctk.CTkToplevel):
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
                                 fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
                                 button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
+            elif kind == "persona":
+                import persona
+                var = ctk.StringVar()
+                box = ctk.CTkTextbox(row, height=74, fg_color=T.BG, border_color=T.BORDER, border_width=1,
+                                     font=T.font(11), wrap="char")
+                box.grid(**ctl)
+                # 入力欄の中身を、ほかの欄と同じように var で読み書きできるようにする
+                def sync(*_, b=box, v=var):
+                    if b.get("1.0", "end-1c") != v.get():
+                        b.delete("1.0", "end")
+                        b.insert("1.0", v.get())
+                var.trace_add("write", sync)
+                box.bind("<KeyRelease>", lambda e, b=box, v=var: v.set(b.get("1.0", "end-1c")), add="+")
+                chips = ctk.CTkFrame(row, fg_color="transparent")
+                chips.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+                for i, (name, text) in enumerate(persona.PRESETS):
+                    ctk.CTkButton(chips, text=name, height=26, width=10, corner_radius=13, font=T.font(10),
+                                  fg_color="transparent", border_width=1, border_color=T.BORDER,
+                                  hover_color=T.SURFACE, text_color=T.TEXT,
+                                  command=lambda t=text, v=var: v.set(t)).grid(row=i // 3, column=i % 3,
+                                                                                padx=2, pady=2, sticky="w")
             elif kind == "font":
                 var = ctk.StringVar()
                 fonts = font_choices(self)
