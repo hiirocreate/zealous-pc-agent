@@ -1,9 +1,11 @@
 # Windows 用インストーラー ZealousSetup.exe を作る。
-# main への push: ビルドできるかの確認のみ / 手動実行: 成果物(Artifacts)に置く
-# v から始まるタグ(例: v1.0.0)を push: 配信用の公開リポジトリの Releases に公開する
-#   必要な設定(リポジトリの Settings > Secrets and variables > Actions):
+# main への push: ビルドできるかの確認のみ
+# 手動実行(Actions > build-installer > Run workflow): バージョンを入れると Releases に公開、空なら成果物(Artifacts)に置く
+# v から始まるタグ(例: v1.0.0)を push: Releases に公開する
+#   配信用の公開リポジトリへ直接置くには(リポジトリの Settings > Secrets and variables > Actions):
 #     変数   RELEASE_REPO  … 配信用リポジトリ(例: hiirocreate/zealous-releases)
 #     秘密   RELEASE_TOKEN … そのリポジトリに書き込めるトークン(Contents: Read and write)
+#   未設定なら、このリポジトリの Releases に置く
 name: build-installer
 
 on:
@@ -11,6 +13,11 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "公開するバージョン(例: 1.0.0)。空ならビルドの確認だけ"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -33,10 +40,13 @@ jobs:
       - name: テスト
         run: python -m pytest -q tests
 
-      - name: バージョンを設定(タグ v1.2.3 → 1.2.3)
-        if: github.ref_type == 'tag'
+      - name: バージョンを決める(タグ v1.2.3 / 手動実行の入力)
+        id: ver
         shell: bash
-        run: echo "VERSION = \"${GITHUB_REF_NAME#v}\"" > version.py
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="${{ inputs.version }}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ -n "$v" ]; then echo "VERSION = \"$v\"" > version.py; fi
 
       - name: Zealous.exe を作る(Python 同梱)
         run: >
@@ -57,24 +67,26 @@ jobs:
       - name: インストーラーを作る
         shell: pwsh
         run: |
-          $ver = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "1.0.0" }
+          $ver = if ("${{ steps.ver.outputs.version }}") { "${{ steps.ver.outputs.version }}" } else { "1.0.0" }
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" packaging\installer.iss
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.ver.outputs.version == ''
+        continue-on-error: true  # 保存容量の上限に達していてもビルド自体は成功扱い
         with:
           name: ZealousSetup
           path: dist/ZealousSetup.exe
           retention-days: 3
 
       - name: 配信用リポジトリの Releases に公開
-        if: github.ref_type == 'tag'
+        if: steps.ver.outputs.version != ''
         uses: softprops/action-gh-release@v2
         with:
           # 未設定ならこのリポジトリの Releases に置く
           repository: ${{ vars.RELEASE_REPO || github.repository }}
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
-          tag_name: ${{ github.ref_name }}
-          name: Zealous ${{ github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Zealous v${{ steps.ver.outputs.version }}
           files: dist/ZealousSetup.exe
