@@ -5,6 +5,7 @@
 - 小さい声は音量をそろえてから文字にする
 - 何も聞き取れなかったときは、そのことを知らせる"""
 import collections
+import os
 import queue
 import re
 import threading
@@ -45,6 +46,7 @@ class VoiceInput:
         self._pre = collections.deque(maxlen=3)
         self._seg = None
         self._lock = threading.Lock()
+        self.should_listen = lambda: True  # 待機中の聞き取りをしてよいか(考え中・読み上げ中は休む)
         threading.Thread(target=self._transcriber, daemon=True).start()
 
     # ---- 操作 ----
@@ -143,7 +145,14 @@ class VoiceInput:
                 self._buf.append(mono)
                 return
         if self._wake:
-            self._vad(mono)
+            try:
+                listen = self.should_listen()
+            except Exception:
+                listen = True
+            if listen:
+                self._vad(mono)
+            else:
+                self._seg = None
 
     def _vad(self, mono):
         loud = float(np.sqrt(np.mean(mono ** 2))) > config.VAD_THRESHOLD
@@ -158,15 +167,17 @@ class VoiceInput:
         sr = self._rate
         if self._silence >= config.VAD_SILENCE_SEC * sr or total >= config.VAD_MAX_SEC * sr:
             seg, self._seg = self._seg, None
-            if (total - self._silence) >= config.VAD_MIN_SEC * sr:
+            # 文字起こしが追いつかないときは捨てる(たまり続けると重くなり、最後は落ちてしまう)
+            if (total - self._silence) >= config.VAD_MIN_SEC * sr and self._jobs.empty():
                 self._jobs.put((self._gen, self._to_16k(np.concatenate(seg)), False))
 
     # ---- 文字起こし ----
     def _load(self, name):
         from faster_whisper import WhisperModel
         import runtime
+        # CPU の半分だけを使う(全部使うと、常時聞き取りの間 PC 全体が重くなる)
         return WhisperModel(name, device=config.WHISPER_DEVICE, compute_type=config.WHISPER_COMPUTE,
-                            download_root=runtime.WHISPER_DIR)
+                            download_root=runtime.WHISPER_DIR, cpu_threads=max(2, (os.cpu_count() or 4) // 2))
 
     def _transcriber(self):
         model, loaded = None, None
@@ -198,7 +209,8 @@ class VoiceInput:
             return ""
         audio = audio * min(0.9 / peak, 20.0)  # 小さい声は音量をそろえる
         segs, _ = model.transcribe(
-            audio, language=config.LANGUAGE, beam_size=5, temperature=0.0,
+            # 待機中の聞き取りは軽く(合図の言葉を見つけるだけなので)、ボタンで話したときは正確に
+            audio, language=config.LANGUAGE, beam_size=5 if from_button else 1, temperature=0.0,
             condition_on_previous_text=False,
             vad_filter=not from_button,  # ボタン・話すキーで録った音は話している前提なので切り落とさない
             initial_prompt=f"{config.AI_NAME}。",  # AI名を正しく聞き取りやすくする

@@ -42,6 +42,18 @@ def selftest(out):
     sys.exit(1 if errors else 0)
 
 
+def _crash_log(folder):
+    """強制終了したときの記録を crash.log に残す(原因を調べるため)。"""
+    import faulthandler
+    try:
+        os.makedirs(folder, exist_ok=True)
+        f = open(os.path.join(folder, "crash.log"), "a", encoding="utf-8")
+        faulthandler.enable(f, all_threads=True)
+        _crash_log.file = f  # 閉じられないように持っておく
+    except OSError:
+        pass
+
+
 def main():
     os.chdir(_here())
     sys.path.insert(0, os.getcwd())
@@ -67,6 +79,7 @@ def main():
         import setup_wizard
         if not setup_wizard.run():
             return
+    _crash_log(config.APP_DIR)
     from app import App
     app = App()
     single_instance.serve(lock, app.bring_to_front)

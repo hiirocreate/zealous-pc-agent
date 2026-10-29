@@ -140,6 +140,8 @@ class App(ctk.CTk):
         self._voice_session, self._follow_until = False, 0  # 合図の言葉で始めた音声の会話
         self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
+        # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
+        self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
         try:
             import stopper
             stopper.register(self.emergency_stop)
@@ -1243,6 +1245,11 @@ class App(ctk.CTk):
             self._fit_on_screen()
         self.after(50, self._pump)
 
+    def report_callback_exception(self, exc, val, tb):
+        """画面の処理で起きたエラーは記録して続ける(1つのエラーで全体が止まらないように)。"""
+        import traceback
+        _log_error("".join(traceback.format_exception(exc, val, tb)))
+
     def quit_app(self):
         try:
             self.worker.close()  # 裏方のプロセスも確実に止める(残るとアップデートで上書きできない)
@@ -1250,6 +1257,18 @@ class App(ctk.CTk):
             pass
         runtime.stop_services()
         self.destroy()
+
+
+def _log_error(text):
+    """エラーを設定フォルダの error.log に残す(落ちた原因を後から調べられるように)。"""
+    try:
+        path = os.path.join(config.APP_DIR, "error.log")
+        if os.path.exists(path) and os.path.getsize(path) > 1_000_000:
+            os.replace(path, path + ".old")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n{text}\n")
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":

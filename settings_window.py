@@ -251,9 +251,13 @@ class SettingsWindow(ctk.CTkToplevel):
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
         self.upd_status = ctk.CTkLabel(row, text=f"現在のバージョン: {VERSION}", font=T.font(10),
                                        text_color=T.SUB, anchor="w", justify="left", wraplength=300)
-        self.upd_status.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 9))
+        # 結果の文が長くても途切れないよう、文はカードの幅いっぱいに折り返し、ボタンはその下に置く
+        self.upd_status.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
+        row.grid_columnconfigure(0, weight=1)
+        row.bind("<Configure>", lambda e: self.upd_status.configure(
+            wraplength=max(200, int(e.width / self.upd_status._get_widget_scaling()) - 30)), add="+")
         btns = ctk.CTkFrame(row, fg_color="transparent")
-        btns.grid(row=0, column=1, rowspan=2, padx=12)
+        btns.grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
         self.upd_check = ctk.CTkButton(btns, text="今すぐ確認", width=100, height=30, corner_radius=15,
                                        font=T.font(11), fg_color="transparent", border_width=1,
                                        border_color=T.ACCENT, text_color=T.TEXT, hover_color=T.BORDER,
