@@ -41,7 +41,7 @@ TABS = [
         ("AUTOSTART", "PC起動時に自動で起動", "bool", "Windows にサインインしたら Zealous を立ち上げる"),
         ("—", "表示"),
         ("SMOOTH_FRAME", "なめらかな外枠と影", "bool",
-         "ウィジェットの縁を滑らかにし、影を付けます。表示が乱れる場合はOFFに（再起動後に反映）"),
+         "ウィジェット（常駐する小さな窓）の縁を滑らかにし、影を付けます。表示が乱れる場合はOFFに（再起動後に反映）"),
     ]),
     ("権限", [
         ("—", "AIに任せる操作"),
@@ -64,9 +64,9 @@ TABS = [
         ("WHISPER_MODEL", "Whisper（声を文字にするAI）の種類", "choice",
          "大きいほど正確ですが重くなります。聞き間違いが多いときは small がおすすめ（初回に約0.5GBを取得）",
          [("tiny", "tiny（軽い・速い）"), ("base", "base（標準）"), ("small", "small（高精度・やや重い）")]),
-        ("WHISPER_DEVICE", "計算に使う装置", "choice", "分からなければ CPU のまま",
+        ("WHISPER_DEVICE", "計算に使う装置", "choice", "分からなければ CPU（PCの標準の計算装置）のまま",
          [("cpu", "CPU（どのPCでも動く）"), ("cuda", "CUDA（NVIDIA製GPU：速いが対応GPUが必要）")]),
-        ("WHISPER_COMPUTE", "計算の細かさ", "choice", "分からなければ int8 のまま",
+        ("WHISPER_COMPUTE", "計算の細かさ", "choice", "分からなければ int8（軽い標準の設定）のまま",
          [("int8", "int8（軽い・標準）"), ("float16", "float16（GPU向け）"),
           ("float32", "float32（最も細かい・重い）")]),
         ("LANGUAGE", "言語コード（話す言語）", "str", "ja = 日本語、en = 英語"),
@@ -96,7 +96,7 @@ TABS = [
     ("更新・情報", [
         ("—", "アップデート（新しい版への更新）"),
         ("AUTO_UPDATE", "起動時に新しい版を確認", "bool", "見つかると会話ボタンに印が付きます"),
-        ("UPDATE_REPO", "配布元（更新ファイルの置き場所）", "str", "GitHub のリポジトリ名（owner/repo の形）"),
+        ("UPDATE_REPO", "配布元（更新ファイルの置き場所）", "str", "GitHub（プログラムの公開サイト）のリポジトリ（保管場所）名。通常は変更不要"),
     ]),
 ]
 FIELDS = [f for _, fields in TABS for f in fields if f[0] not in ("—", "＊")]
@@ -249,7 +249,7 @@ class SettingsWindow(ctk.CTkToplevel):
         row = self._card_row(page)
         ctk.CTkLabel(row, text="アップデート", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
-        self.upd_status = ctk.CTkLabel(row, text=f"いまのバージョン: {VERSION}", font=T.font(10),
+        self.upd_status = ctk.CTkLabel(row, text=f"現在のバージョン: {VERSION}", font=T.font(10),
                                        text_color=T.SUB, anchor="w", justify="left", wraplength=300)
         self.upd_status.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 9))
         btns = ctk.CTkFrame(row, fg_color="transparent")
@@ -349,7 +349,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_quit()
 
     def _voice_card(self, page):
-        """いまの声と「声を選ぶ」ボタン。キャラ一覧の画面で試聴・ダウンロードする。"""
+        """現在の声と「声を選ぶ」ボタン。キャラ一覧の画面で試聴・ダウンロードする。"""
         row = self._card_row(page)
         ctk.CTkLabel(row, text="声", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
@@ -368,7 +368,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def refresh_voice(self):
         cur = next((v for v in voicevox.cached_catalog() if v["id"] == config.VOICEVOX_SPEAKER), None)
         if self.winfo_exists():
-            self.voice_now.configure(text=f"いま: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
+            self.voice_now.configure(text=f"現在の声: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
 
     # ---------------- 値の読み書き ----------------
     def _fill(self, values):

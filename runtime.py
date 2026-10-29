@@ -205,7 +205,7 @@ def step_ollama(progress):
     progress(None, "起動中…")
     start_services()
     if not _wait(lambda: services.check_ollama()[0]):
-        raise RuntimeError("Ollama が起動しませんでした")
+        raise RuntimeError("Ollama（AIを動かすソフト）が起動しませんでした")
     return "準備完了"
 
 
@@ -234,7 +234,7 @@ def step_voicevox(progress):
     progress(None, "起動中…")
     start_services()
     if not _wait(lambda: services.check_voicevox()[0], seconds=180):
-        raise RuntimeError("VOICEVOX が起動しませんでした")
+        raise RuntimeError("VOICEVOX（読み上げソフト）が起動しませんでした")
     return "準備完了"
 
 

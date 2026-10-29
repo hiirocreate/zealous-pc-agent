@@ -141,7 +141,7 @@ class VoicePicker(ctk.CTkToplevel):
 
     def _update_status(self):
         cur = next((v for v in voicevox.cached_catalog() if v["id"] == config.VOICEVOX_SPEAKER), None)
-        self.status.configure(text=f"いまの声: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
+        self.status.configure(text=f"現在の声: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
 
     # ---------------- 試聴・決定 ----------------
     def _preview(self, sp, style_id):

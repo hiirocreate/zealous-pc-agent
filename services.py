@@ -19,7 +19,7 @@ def check_ollama():
     try:
         names = [m["name"] for m in _get(ollama_base() + "/api/tags")["models"]]
     except Exception:
-        return False, False, "Ollama が起動していません"
+        return False, False, "Ollama（AIを動かすソフト）が起動していません"
     has = any(n == config.OLLAMA_MODEL or n.split(":")[0] == config.OLLAMA_MODEL for n in names)
     return True, has, f"Ollama OK / モデル {config.OLLAMA_MODEL}: {'取得済み' if has else '未取得'}"
 
@@ -28,7 +28,7 @@ def check_voicevox():
     try:
         return True, f"VOICEVOX OK (v{_get(config.VOICEVOX_URL + '/version')})"
     except Exception:
-        return False, "VOICEVOX が起動していません"
+        return False, "VOICEVOX（読み上げソフト）が起動していません"
 
 
 def pull_model(on_progress):
