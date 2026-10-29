@@ -175,3 +175,11 @@ def test_model_labels():
     assert "1.9GB" in text and models.name_of(text) == "qwen2.5:3b"
     assert models.name_of("gemma2:2b") == "gemma2:2b"          # 手入力の名前はそのまま
     assert "1.9GB" in models.warning("qwen2.5:3b")              # 変更時は必ずサイズを伝える
+
+
+def test_ollama_members():
+    import runtime
+    names = ["ollama.exe", "lib/ollama/ggml-cpu.dll", "lib/ollama/cuda_v12/cublas.dll",
+             "lib/ollama/cuda_v13/cublas.dll", "lib/ollama/vulkan/ggml-vulkan.dll"]
+    assert [n for n in names if runtime.ollama_member(n, None)] == [names[0], names[1], names[4]]
+    assert [n for n in names if runtime.ollama_member(n, "cuda_v13")] == [names[0], names[1], names[3], names[4]]

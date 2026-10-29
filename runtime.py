@@ -9,6 +9,8 @@ import config
 import remotezip
 import services
 
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Zealous")
 OLLAMA_DIR = os.path.join(DATA_DIR, "ollama")
 OLLAMA_MODELS = os.path.join(DATA_DIR, "models")
@@ -25,7 +27,25 @@ def has_nvidia():
     """NVIDIA の GPU ドライバーがあるか(無ければ GPU 用の大きなライブラリを入れない)。"""
     return os.path.exists(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32", "nvcuda.dll"))
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+def cuda_folder():
+    """Ollama の GPU 用ライブラリのうち、このPCで使う1種類だけを選ぶ(使わないなら None)。
+    CUDA 13 用はドライバー 580 以降が必要。それより古い、または確認できなければ CUDA 12 用。"""
+    if not config.USE_GPU or not has_nvidia():
+        return None
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10, creationflags=_NO_WINDOW).stdout
+        major = int(out.strip().split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        major = 0
+    return "cuda_v13" if major >= 580 else "cuda_v12"
+
+
+def ollama_member(name, cuda):
+    """取り出す Ollama のファイルか(GPU 用ライブラリは選んだ1種類だけ)。"""
+    return "/cuda_" not in name or (cuda is not None and f"/{cuda}/" in name)
+
 _procs = []
 
 
@@ -140,12 +160,24 @@ def kill_all(also=""):
 def step_ollama(progress):
     if services.check_ollama()[0]:
         return "起動済みの Ollama を使います"
-    if not ollama_exe():
-        # NVIDIA の GPU が無ければ CUDA 用ライブラリ(約1.5GB)は取り出さない
+    cuda = cuda_folder()
+    variant = cuda or "cpu"
+    marker = os.path.join(OLLAMA_DIR, ".variant")
+    installed = open(marker).read() if os.path.exists(marker) else ("cpu" if ollama_exe() else "")
+    if installed != variant:
+        # GPU 用ライブラリは使う1種類だけ(NVIDIA の GPU が無い、または GPU を使わない設定なら入れない)
+        stop_services()
         zf, _ = remotezip.open_zip(OLLAMA_ZIP)
-        cuda = has_nvidia()
         tmp = OLLAMA_DIR + ".tmp"
-        remotezip.extract(zf, [m for m in zf.infolist() if cuda or "/cuda_" not in m.filename], tmp, progress)
+        if os.path.isdir(OLLAMA_DIR) and not os.path.isdir(tmp):
+            os.replace(OLLAMA_DIR, tmp)  # 入っているファイルは再ダウンロードせずに使う
+        remotezip.extract(zf, [m for m in zf.infolist() if ollama_member(m.filename, cuda)], tmp, progress)
+        lib = os.path.join(tmp, "lib", "ollama")
+        for name in os.listdir(lib) if os.path.isdir(lib) else []:
+            if name.startswith("cuda_") and name != cuda:  # 使わなくなった GPU 用ライブラリを消す
+                shutil.rmtree(os.path.join(lib, name), ignore_errors=True)
+        with open(os.path.join(tmp, ".variant"), "w") as f:
+            f.write(variant)
         shutil.rmtree(OLLAMA_DIR, ignore_errors=True)
         os.replace(tmp, OLLAMA_DIR)
     progress(None, "起動中…")

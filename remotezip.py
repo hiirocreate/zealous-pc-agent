@@ -101,7 +101,7 @@ def inner_zip(zf, raw, info):
 
 def extract(zf, members, dest, progress, strip=""):
     """members を dest へ取り出す。途中で止まっても、取り出し済みのファイルは飛ばして再開する。"""
-    total = sum(m.file_size for m in members) or 1
+    total = sum(m.compress_size for m in members) or 1  # 実際に通信する量で進み具合を出す
     done = 0
     for m in members:
         name = m.filename[len(strip):] if strip and m.filename.startswith(strip) else m.filename
@@ -114,5 +114,5 @@ def extract(zf, members, dest, progress, strip=""):
             with zf.open(m) as src, open(path + ".part", "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
             os.replace(path + ".part", path)
-        done += m.file_size
+        done += m.compress_size
         progress(done / total, f"ダウンロード中 {done >> 20} / {total >> 20} MB")

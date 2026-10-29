@@ -31,6 +31,7 @@ DEFAULTS = {
     "OLLAMA_URL": "http://localhost:11434/api/chat",
     "OLLAMA_MODEL": "qwen2.5:1.5b",
     "OLLAMA_TIMEOUT": 60,
+    "USE_GPU": True,                 # NVIDIA の GPU があれば使う(GPU 用ライブラリを追加で取得)
     "MAX_TOOL_STEPS": 3,
     "CONTEXT_TURNS": 4,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
     "CONTEXT_RESET_MIN": 10,         # この分数だけ話しかけなければ記憶を消す             # 1命令あたりの関数呼び出し上限(ループ防止)
