@@ -108,27 +108,50 @@ def close(size=14, color=(170, 176, 194)):
     return _img(img, size, size)
 
 
-@functools.lru_cache(maxsize=8)
-def dot_frames(dot=6, gap=5, count=28):
-    """読み込み中の3つのドットのコマ送り画像。4倍の大きさで描いて縮小し、縁をなめらかにする。
-    ドットは順番に、ふわっと浮き上がりながら大きく・明るくなる。"""
-    k = 4
-    colors = [(124, 92, 255), (91, 140, 255), (34, 211, 238)]
-    w, h = dot * 3 + gap * 2, int(dot * 2.4)
+TAIL = 16  # 尾の細かさ
+
+
+@functools.lru_cache(maxsize=None)
+def flow_frames_pil(w, h, count=54, scale=2):
+    """読み込み中のアニメーション「流れる3つの光」(PIL 画像のリスト。w×h の scale 倍の大きさ)。
+    ロゴの3色の光の粒が、∞(無限大)の形の道を尾を引きながら流れ続け、中央で交わるたびに
+    液体のように溶け合っては離れる。考えが行き来しながらまとまっていく様子を表す。"""
+    import numpy as np
+    k = 3  # 細かく計算して縮小し、縁をなめらかにする
+    W, H = w * scale * k, h * scale * k
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    colors = np.array([(124, 92, 255), (91, 140, 255), (34, 211, 238)], np.float32)
+    rx, ry = W * 0.34, H * 0.26            # ∞ の横幅・縦幅
+    base = H * 0.105                       # 光の粒の大きさ
     frames = []
     for f in range(count):
-        img = Image.new("RGBA", (w * k, h * k), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        for i, (r, g, b) in enumerate(colors):
-            t = (f / count - i * 0.14) % 1.0
-            wave = math.sin(math.pi * min(t / 0.55, 1.0)) ** 2  # 0→1→0 を滑らかに(後半は休む)
-            size = dot * (0.72 + 0.28 * wave) * k
-            cx = (i * (dot + gap) + dot / 2) * k
-            cy = (h - dot / 2 - wave * dot * 0.55) * k
-            alpha = int(255 * (0.45 + 0.55 * wave))
-            d.ellipse((cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2), fill=(r, g, b, alpha))
-        frames.append(_img(img.resize((w * 2, h * 2), Image.LANCZOS), w, h))
-    return frames
+        t = f / count
+        field = np.zeros((H, W), np.float32)
+        rgb = np.zeros((H, W, 3), np.float32)
+        for i, col in enumerate(colors):
+            for j in range(TAIL):  # 先頭の粒と、後ろに伸びる尾(細かく重ねて、なめらかな1本にする)
+                th = 2 * math.pi * (t + i / 3) - j * 0.06
+                cx = W / 2 + rx * math.sin(th)
+                cy = H / 2 + ry * math.sin(th) * math.cos(th) * 2
+                fade = 1 - j / TAIL
+                r = base * (1 + 0.18 * math.sin(2 * math.pi * (2 * t + i / 3))) * (0.45 + 0.55 * fade)
+                g = (r * r) / ((xx - cx) ** 2 + (yy - cy) ** 2 + 1.0) * (1.0 if j == 0 else 0.24 * fade ** 1.6)
+                field += g
+                rgb += g[..., None] * col
+        color = rgb / np.maximum(field, 1e-6)[..., None]
+        core = np.clip((field - 0.75) / 0.35, 0, 1)        # 光の粒の本体(溶け合う部分)
+        glow = np.clip((field - 0.2) / 0.55, 0, 1) * 0.35   # まわりのほのかな光
+        alpha = np.maximum(core, glow)
+        img = np.dstack([np.clip(color + core[..., None] * 40, 0, 255), alpha * 255]).astype(np.uint8)
+        frames.append(Image.fromarray(img, "RGBA").resize((w * scale, h * scale), Image.LANCZOS))
+    return tuple(frames)
+
+
+@functools.lru_cache(maxsize=8)
+def dot_frames(dot=6, gap=5, count=54):
+    """読み込み中のアニメーションのコマ画像(大きさは以前の3つのドットと同じ)。"""
+    w, h = dot * 3 + gap * 2, int(dot * 2.4)
+    return [_img(im, w, h) for im in flow_frames_pil(w, h, count)]
 
 
 @functools.lru_cache(maxsize=None)

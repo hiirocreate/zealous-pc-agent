@@ -12,11 +12,11 @@ def _worker_main(inq, outq):
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     import config
     from voice import VoiceInput, load_model
-    model, loaded = None, None
+    models = {}  # (モデル名, 装置, 細かさ) → 読み込んだモデル(待機中用と命令用の2つまで)
     parent = mp.parent_process()
     while True:
         try:
-            job_id, audio, from_button, settings = inq.get(timeout=2)
+            job_id, audio, from_button, command, settings = inq.get(timeout=2)
         except queue.Empty:
             if parent is not None and not parent.is_alive():
                 os._exit(0)  # 本体が終わったら、この作業プロセスも終える(残るとアップデートの邪魔になる)
@@ -24,17 +24,20 @@ def _worker_main(inq, outq):
         try:
             for k, v in settings.items():  # 本体の今の設定に合わせる
                 setattr(config, k, v)
-            want = (config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)
-            if loaded != want:
-                model, loaded = None, None
-                model, loaded = load_model(*want), want
-            outq.put((job_id, VoiceInput.transcribe(model, audio, from_button), None))
+            name = config.COMMAND_WHISPER_MODEL if command else config.WHISPER_MODEL
+            want = (name, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)
+            if want not in models:
+                for key in [k for k in models if k[0] not in (config.WHISPER_MODEL, config.COMMAND_WHISPER_MODEL)]:
+                    del models[key]  # 使わなくなったモデルはメモリから外す
+                models[want] = load_model(*want)
+            outq.put((job_id, VoiceInput.transcribe(models[want], audio, from_button or command), None))
         except Exception as e:
             outq.put((job_id, None, str(e)))
 
 
 class WhisperWorker:
-    SETTINGS = ("WHISPER_MODEL", "WHISPER_DEVICE", "WHISPER_COMPUTE", "LANGUAGE", "AI_NAME")
+    SETTINGS = ("WHISPER_MODEL", "COMMAND_WHISPER_MODEL", "WHISPER_DEVICE", "WHISPER_COMPUTE", "LANGUAGE",
+                "AI_NAME", "VOICE_WORDS", "VOICE_CONTEXT")
 
     def __init__(self, on_status):
         self._ctx = mp.get_context("spawn")
@@ -49,14 +52,16 @@ class WhisperWorker:
             self._proc = self._ctx.Process(target=_worker_main, args=(self._inq, self._outq), daemon=True)
             self._proc.start()
 
-    def transcribe(self, audio, from_button, timeout=300):
+    def transcribe(self, audio, from_button, timeout=900, command=None):
         """文字にした結果を返す。作業プロセスが落ちたら起動し直し、"" を返す。"""
         import config
         with self._lock:
             self._ensure()
             self._next += 1
             job_id = self._next
-            self._inq.put((job_id, audio, from_button, {k: getattr(config, k) for k in self.SETTINGS}))
+            command = from_button if command is None else command
+            self._inq.put((job_id, audio, from_button, command,
+                           {k: getattr(config, k, "") for k in self.SETTINGS}))
             zlog.note(f"音声認識 開始 #{job_id} {len(audio) / 16000:.1f}秒 {'ボタン' if from_button else '待機中'}")
             waited = 0.0
             while True:

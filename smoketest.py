@@ -137,7 +137,7 @@ def run(out):
 
             # 本番と同じく、別プロセスの音声認識で試す
             from whisper_worker import WhisperWorker
-            config.WHISPER_MODEL = "tiny"
+            config.WHISPER_MODEL = config.COMMAND_WHISPER_MODEL = "tiny"
             w = WhisperWorker(note)
             for button in (False, True):
                 text = w.transcribe(rng.normal(0, 0.05, SR * 2).astype(np.float32), button)

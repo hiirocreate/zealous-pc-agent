@@ -31,6 +31,25 @@ def input_devices():
     return list(dict.fromkeys(names))
 
 
+def prompt_text():
+    """聞き取りの手がかり(Whisper に「この言葉が出てきやすい」と伝える文)。長すぎると逆効果なので短く。"""
+    words = [config.AI_NAME] + [w for w in getattr(config, "VOICE_WORDS", []) if w]
+    text = "、".join(dict.fromkeys(words)) + "。"
+    context = getattr(config, "VOICE_CONTEXT", "")
+    if context:
+        text += context[-120:]
+    return text
+
+
+def fix_words(text):
+    """設定の置き換え(「まちがい=正しい」)を当てる。"""
+    for rule in getattr(config, "VOICE_REPLACE", []):
+        wrong, sep, right = str(rule).partition("=")
+        if sep and wrong.strip():
+            text = text.replace(wrong.strip(), right.strip())
+    return text
+
+
 def load_model(name, device, compute):
     from faster_whisper import WhisperModel
     import runtime
@@ -63,6 +82,8 @@ class VoiceInput:
         self._seg = None
         self._lock = threading.Lock()
         self.should_listen = lambda: True  # 待機中の聞き取りをしてよいか(考え中・読み上げ中は休む)
+        self.command_mode = lambda: False  # 待機中に拾った声を、命令として正確に聞き取るべきか
+        self.context = ""  # 直前の会話(聞き取りの手がかりにする)
         threading.Thread(target=self._transcriber, daemon=True).start()
 
     # ---- 操作 ----
@@ -194,18 +215,32 @@ class VoiceInput:
     def _transcriber(self):
         # 文字起こしは別プロセスで行う(音声認識の部品が異常終了しても、本体は落ちない)
         from whisper_worker import WhisperWorker
+        from wakeword import strip_wake_word
         worker = WhisperWorker(self._on_status)
         while True:
             gen, audio, from_button = self._jobs.get()
             if gen != self._gen:
                 continue
-            text = worker.transcribe(audio, from_button)
+            if audio is None:  # 命令用のモデルを前もって読み込む(初回はダウンロード)
+                worker.transcribe(np.zeros(SR, np.float32), True, command=True)
+                continue
+            # 命令(ボタン・話すキー・合図の後の会話)は正確なモデルで、待機中は軽いモデルで文字にする
+            command = from_button or self.command_mode()
+            text = worker.transcribe(audio, from_button, command=command)
+            if not command and text and strip_wake_word(text):
+                # 「ウェイク、ゼラス、〜して」と続けて言った: 命令の部分を正確なモデルで聞き直す
+                text = worker.transcribe(audio, from_button, command=True) or text
             if gen != self._gen:
                 continue
+            text = fix_words(text)
             if text:
                 self._on_text(text, from_button)
             elif from_button:
                 self._on_status("聞き取れませんでした。マイクに近づいて、もう一度話してください")
+
+    def preload(self):
+        """命令用のモデルを裏で準備しておく(最初の命令で待たされないように)。"""
+        self._jobs.put((self._gen, None, True))
 
     @staticmethod
     def transcribe(model, audio, from_button):
@@ -222,11 +257,13 @@ class VoiceInput:
             # 無音の切り落とし(vad_filter)は使わない。声の区切りはこちらで判定済みで、
             # 使うと別のAI部品(onnxruntime)が読み込まれ、Whisper の部品とぶつかって強制終了することがある
             vad_filter=False,
-            initial_prompt=f"{config.AI_NAME}。",  # AI名を正しく聞き取りやすくする
+            initial_prompt=prompt_text(),  # AI名・ユーザー辞書・直前の会話を手がかりにする
         )
         # 声らしくない部分(雑音から作られた文)は捨てる
         text = "".join(s.text for s in segs
                        if getattr(s, "no_speech_prob", 0) < 0.6 and getattr(s, "avg_logprob", 0) > -1.0).strip()
         if _HALLUCINATIONS.match(text) or _repetitive(text):
+            return ""
+        if len(text) > 3 and text.strip("。、 ") in prompt_text():  # 手がかりの文をそのまま返しただけ
             return ""
         return text

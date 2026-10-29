@@ -153,6 +153,8 @@ class App(ctk.CTk):
                                 on_status=self._post_log)
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
         self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
+        self.voice.command_mode = lambda: self._following()  # 合図の後の会話は命令として正確に聞き取る
+        self.after(15000, self.voice.preload)  # 命令用の聞き取りAIを前もって準備(初回はダウンロード)
         try:
             import stopper
             stopper.register(self.emergency_stop)
@@ -862,6 +864,7 @@ class App(ctk.CTk):
 
     def _on_reply(self, text):
         body, sources, images = split_reply(text)
+        config.VOICE_CONTEXT = (getattr(config, "VOICE_CONTEXT", "") + " " + body)[-200:]
         streamed = self._stream is not None
         if streamed:
             self.speaker.flush()  # 句点で終わっていない最後の部分も読む
@@ -993,6 +996,7 @@ class App(ctk.CTk):
             self.hint.grid_remove()
 
     def _submit(self, text):
+        config.VOICE_CONTEXT = text  # 次の聞き取りの手がかりにする(直前の話題)
         zlog.note(f"送信: {text[:40]!r}")
         self._log(text, "user")
         if re.search(r"声を(?:変え|かえ|選|えら)", text):  # 「声を変えたい」は声選びの画面を開く

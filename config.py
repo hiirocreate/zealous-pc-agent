@@ -54,7 +54,10 @@ DEFAULTS = {
     "VOICEVOX_URL": "http://localhost:50021",
     "VOICEVOX_SPEAKER": 3,
     # ---- 音声認識 (Faster-Whisper) ----
-    "WHISPER_MODEL": "base",
+    "WHISPER_MODEL": "base",         # 待機中(合図の言葉を待つ間)の聞き取り用。軽さ優先
+    "COMMAND_WHISPER_MODEL": "small",  # 話しかけた命令を文字にする用。正確さ優先(初回に約0.5GBを取得)
+    "VOICE_WORDS": [],               # ユーザー辞書: 正しく聞き取ってほしい言葉(固有名詞など)
+    "VOICE_REPLACE": [],             # 置き換え: 「まちがい=正しい」の形で、よく間違う言葉を直す
     "WHISPER_DEVICE": "cpu",
     "WHISPER_COMPUTE": "int8",
     "LANGUAGE": "ja",
