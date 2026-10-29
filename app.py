@@ -40,7 +40,7 @@ WIDE = 600             # パネルの幅がこれ以上なら、スレッド一�
 GRIP = 6               # 端をつかんで大きさを変えられる幅
 INPUT_MAX_LINES = 4
 MAX_BUBBLES = 60
-ANIM_FRAMES, ANIM_MS = 9, 15   # 展開・折りたたみの動き(コマ数・1コマの間隔)
+ANIM_FRAMES, ANIM_MS = 6, 8    # 展開・折りたたみの動き(コマ数・1コマの間隔)。全体で約0.1秒
 
 # 状態 -> (表示, 色, 点滅するか)
 STATES = {
@@ -281,6 +281,7 @@ class App(ctk.CTk):
         import ime  # 日本語の変換中の文字を、この入力欄の中に表示させる
         ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
         self.entry.bind("<KeyRelease>", lambda e: self._fit_input())
+        self.entry._textbox.bind("<<ImePreedit>>", lambda e: self._fit_input(), add="+")
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
@@ -327,7 +328,28 @@ class App(ctk.CTk):
     def _apply(self, x, y, w, h, radius, fast=False):
         """窓を (x, y) に 論理サイズ w×h で置き、外枠(Windows)も合わせる。"""
         self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
-        self.shell.update(int(x), int(y), self._px(w), self._px(h), self._px(radius), fast)
+        if getattr(self, "_shell_hold", False):  # 展開・折りたたみ中は外枠だけを別に動かす
+            return
+        W, H = self._px(w), self._px(h)
+        if not fast:  # 実際に変わった大きさで外枠と切り抜きを合わせる(ずれ防止)
+            self.update_idletasks()
+            W, H = self.winfo_width() or W, self.winfo_height() or H
+        self.shell.update(int(x), int(y), W, H, self._px(radius), fast)
+
+    def _fit_on_screen(self):
+        """ウィジェットがモニターからはみ出していたら(モニターを外した時なども)内側へ戻す。"""
+        if self._animating or getattr(self, "_drag", None) or getattr(self, "_resizing", None):
+            return
+        x, y, w, h, r = self._current_rect()
+        W, H = self._px(w), self._px(h)
+        l, t, rr, b = self._work(x + W // 2, y + H // 2)
+        nw, nh = min(W, rr - l), min(H, b - t)
+        nx, ny = self._clamp(x, y, nw, nh, (l, t, rr, b))
+        if (nx, ny, nw, nh) != (x, y, W, H):
+            if not self._expanded:
+                self._pos = (nx, ny)
+                config.save({"WINDOW_POS": list(self._pos)})
+            self._apply(nx, ny, self._logical(nw), self._logical(nh), r)
 
     def _pill_rect(self):
         if getattr(self, "_pos", None) is None:
@@ -355,6 +377,9 @@ class App(ctk.CTk):
         w, h = self._panel_size()
         w, h = min(w, self._logical(r - l)), min(h, self._logical(b - t))
         W, H = self._px(w), self._px(h)
+        off = config.PANEL_OFFSET  # 大きさを変えたときの、待機表示から見たパネルの位置
+        if off and l <= x + off[0] and x + off[0] + W <= r and t <= y + off[1] and y + off[1] + H <= b:
+            return x + off[0], y + off[1], w, h, PANEL_R
         px = x + pw - W if x + pw / 2 > (l + r) / 2 else x   # 右寄りなら右端を揃えて左へ
         py = y + ph - H if y + ph / 2 > (t + b) / 2 else y   # 下寄りなら下端を揃えて上へ
         return (*self._clamp(px, py, W, H, area), w, h, PANEL_R)
@@ -366,41 +391,67 @@ class App(ctk.CTk):
 
     # ================= 展開・折りたたみ(なめらかに大きさを変える) =================
     def _morph(self, start, end, done):
-        """start から end へ、少しずつ大きさを変える。途中は中身のない下地を見せ、最後に中身を出す。"""
+        """start から end へ、少しずつ大きさを変える(最初は速く、最後はゆっくり止まる)。
+        Windows: 本体は一旦見えなくして最後の大きさに整えておき、なめらかな外枠だけを動かす
+        (本体の窓を動かしながら描き直すと、角に黒い四角が出るため)。
+        それ以外: 中身のない下地の大きさを変え、最後に中身を出す。"""
         self._animating = True
-        for w in (self.pill, self.panel):
-            w.pack_forget()
         self._hide_grips()
-        self.morph.pack(fill="both", expand=True)
+        shell = self.shell.ok
+        if shell:
+            self.attributes("-alpha", 0.0)
+            self._shell_hold = True
+            done()  # 見えない間に中身を最後の形にしておく
+        else:
+            for w in (self.pill, self.panel):
+                w.pack_forget()
+            self.morph.pack(fill="both", expand=True)
 
         def step(i):
             t = i / ANIM_FRAMES
-            e = 1 - (1 - t) ** 3  # 最初は速く、最後はゆっくり止まる
+            e = 1 - (1 - t) ** 3
             rect = [a + (b - a) * e for a, b in zip(start, end)]
-            self.morph.configure(corner_radius=int(min(rect[4], rect[3] / 2)))
             last = i >= ANIM_FRAMES
-            self._apply(*rect, fast=not last)
-            if last:
-                self.morph.pack_forget()
-                self._animating = False
-                done()
+            if shell:
+                x, y, w, h, r = rect
+                self.shell.frame(int(x), int(y), self._px(w), self._px(h), self._px(r), fast=not last)
             else:
+                self.morph.configure(corner_radius=int(min(rect[4], rect[3] / 2)))
+                self._apply(*rect, fast=not last)
+            if not last:
                 self.after(ANIM_MS, step, i + 1)
+                return
+            self._animating = False
+            if shell:
+                self._shell_hold = False
+                self._apply(*end)
+                self.update_idletasks()
+                self.attributes("-alpha", 1.0)
+                if self._expanded:
+                    self._show_grips()
+            else:
+                self.morph.pack_forget()
+                done()
         step(1)
 
     def _show_pill(self, animate=True):
         self._close_drawer()
+        if self._maximized:  # 全画面のまま折りたたむときは、外枠を戻して元の大きさから縮める
+            self._maximized = False
+            self.shell.resume()
+            self._apply(*self._restore_rect)
         end = self._pill_rect()
 
         def done():
             self._expanded = self._maximized = False
             self.max_btn.configure(image=icons.maximize(14))
+            self.panel.pack_forget()
+            self._hide_grips()
             self.pill.pack(fill="both", expand=True)
             self._apply(*end)
         if animate and self._expanded and not self._animating:
             self._morph(self._current_rect(), end, done)
         else:
-            self.panel.pack_forget()
             done()
 
     def _show_panel(self, animate=True):
@@ -411,6 +462,7 @@ class App(ctk.CTk):
 
         def done():
             self._expanded = True
+            self.pill.pack_forget()
             self.panel.pack(fill="both", expand=True)
             self._apply(*end)
             self._show_grips()
@@ -418,7 +470,6 @@ class App(ctk.CTk):
         if animate:
             self._morph(self._current_rect(), end, done)
         else:
-            self.pill.pack_forget()
             done()
 
     def bring_to_front(self):
@@ -434,19 +485,24 @@ class App(ctk.CTk):
         """会話パネルの全画面(いまのモニターのタスクバーを除いた範囲)と元の大きさを切り替える。"""
         if not self._expanded or self._animating:
             return
+        # 切り替えの間は本体を見えなくし、描き終わってから出す(大きな黒い窓が一瞬見えるのを防ぐ)
+        self.attributes("-alpha", 0.0)
         if self._maximized:
             self._maximized = False
+            self.shell.resume()
             self._apply(*self._restore_rect)
             self._show_grips()
         else:
             self._restore_rect = self._current_rect()
             x, y, w, h, _ = self._restore_rect
             l, t, r, b = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
-            m = self._px(8)
             self._maximized = True
             self._hide_grips()
-            self._apply(l + m, t + m, self._logical(r - l - 2 * m), self._logical(b - t - 2 * m), PANEL_R)
+            self.shell.suspend()  # 全画面では外枠・影を付けず、画面いっぱいの四角で表示
+            self._apply(l, t, self._logical(r - l), self._logical(b - t), 0)
         self.max_btn.configure(image=icons.maximize(14, restore=self._maximized))
+        self.update_idletasks()
+        self.after(30, lambda: self.attributes("-alpha", 1.0))
 
     # ---- 移動(ドラッグ) ----
     def _drag_start(self, e):
@@ -502,29 +558,36 @@ class App(ctk.CTk):
             grip.place_forget()
 
     def _resize_start(self, e, edge):
-        self._resizing = (edge, e.x_root, e.y_root, self.winfo_x(), self.winfo_y(),
-                          self.winfo_width(), self.winfo_height())
+        x, y, w, h = self.winfo_x(), self.winfo_y(), self.winfo_width(), self.winfo_height()
+        self._resizing = (edge, e.x_root, e.y_root, x, y, x + w, y + h, self._work(x + w // 2, y + h // 2))
 
     def _resize_move(self, e):
-        edge, sx, sy, x, y, w, h = self._resizing
+        """つかんだ辺だけを動かし、反対側の辺は動かさない。モニターの外には出さない。"""
+        if not getattr(self, "_resizing", None):
+            return
+        edge, sx, sy, left, top, right, bottom, (l, t, r, b) = self._resizing
         dx, dy = e.x_root - sx, e.y_root - sy
         mw, mh = self._px(PANEL_MIN_W), self._px(PANEL_MIN_H)
         if "e" in edge:
-            w = max(mw, w + dx)
+            right = min(r, max(left + mw, right + dx))
         if "w" in edge:
-            nw = max(mw, w - dx)
-            x, w = x + w - nw, nw
+            left = max(l, min(right - mw, left + dx))
         if "s" in edge:
-            h = max(mh, h + dy)
+            bottom = min(b, max(top + mh, bottom + dy))
         if "n" in edge:
-            nh = max(mh, h - dy)
-            y, h = y + h - nh, nh
-        self._apply(x, y, self._logical(w), self._logical(h), PANEL_R, fast=True)
+            top = max(t, min(bottom - mh, top + dy))
+        self._resize_rect = (left, top, self._logical(right - left), self._logical(bottom - top), PANEL_R)
+        self._apply(*self._resize_rect, fast=True)
 
     def _resize_end(self, _):
-        x, y, w, h, r = self._current_rect()
+        if not getattr(self, "_resizing", None):
+            return
+        self._resizing = None
+        x, y, w, h, r = getattr(self, "_resize_rect", None) or self._current_rect()
+        self._resize_rect = None
         self._apply(x, y, w, h, r)  # 最後にきれいに描き直す
-        config.save({"PANEL_SIZE": [w, h]})
+        # 次に開くときも同じ場所・大きさになるよう、待機表示から見た位置と大きさを覚える
+        config.save({"PANEL_SIZE": [w, h], "PANEL_OFFSET": [x - self._pos[0], y - self._pos[1]]})
 
     # ---- パネルの幅に合わせて、スレッド一覧を左に出す / ☰ で開く ----
     def _on_panel_resize(self, e):
@@ -847,6 +910,7 @@ class App(ctk.CTk):
             return
         self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app,
                                         on_check_update=lambda report: self.check_update(True, report),
+                                        on_update=self.start_update,
                                         on_pick_voice=self.open_voice_picker)
 
     def open_voice_picker(self, on_changed=None):
@@ -859,6 +923,7 @@ class App(ctk.CTk):
 
     def _settings_saved(self):
         self.worker.restart()  # 推論プロセスに新しい設定を読ませる
+        self.voice.reset_device()  # マイクの選び直しを反映
         self._apply_settings()
         self._log("設定を保存しました")
         self._set_state("idle")
@@ -914,7 +979,8 @@ class App(ctk.CTk):
 
     # ================= アップデート =================
     def check_update(self, manual=False, report=None):
-        """裏で最新版を確認する。自動確認は1日ごとに繰り返す。report(文字列) は設定画面への結果表示。"""
+        """裏で最新版を確認する。自動確認は1日ごとに繰り返す。
+        report(文字列, 新しい版の情報 or None) は設定画面への結果表示(裏のスレッドから呼ぶ)。"""
         def run():
             try:
                 info = updater.check()
@@ -925,7 +991,7 @@ class App(ctk.CTk):
                        else f"既に最新バージョンです（v{updater.VERSION}）")
             self._events.put(lambda: self._update_found(info, manual))
             if report:
-                report(msg)
+                report(msg, info)
         threading.Thread(target=run, daemon=True).start()
         if not manual:
             self.after(24 * 3600 * 1000, self.check_update)
@@ -952,22 +1018,28 @@ class App(ctk.CTk):
         self._add_widget(card, "w")
 
     def install_update(self):
-        info = self._update_info
-        if not info:
+        """会話パネルの「今すぐアップデート」から。"""
+        if not self._update_info:
             return
         self._upd_btn.configure(state="disabled", text="ダウンロード中…")
+        self.start_update(self._update_info, lambda text, failed=False: (
+            self._upd_note.configure(text=text),
+            failed and self._upd_btn.configure(state="normal", text="もう一度")))
 
+    def start_update(self, info, on_progress):
+        """新しい版をダウンロードして入れ替える(終わると自動で起動し直す)。設定画面からも呼ぶ。
+        on_progress(説明, failed=False) は画面の処理として呼ばれる。"""
         def progress(ratio, text):
-            self._events.put(lambda: self._upd_note.configure(text=text))
+            self._events.put(lambda: on_progress(text))
 
         def run():
             try:
                 updater.install(info, progress)
             except Exception as e:
-                err = f"失敗: {e}"
-                self._events.put(lambda: (self._upd_note.configure(text=err),
-                                          self._upd_btn.configure(state="normal", text="もう一度")))
+                err = f"失敗しました: {e}"
+                self._events.put(lambda: on_progress(err, True))
                 return
+            self._events.put(lambda: on_progress("インストールしています。終わると自動で起動し直します"))
             self._events.put(self.quit_app)  # インストーラーが入れ替えて再起動する
         threading.Thread(target=run, daemon=True).start()
 
@@ -1004,6 +1076,9 @@ class App(ctk.CTk):
         if self._state == "think" and not self.worker.pending:
             self._set_state("idle")
         self._animate()
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self._ticks % 40 == 0:  # 2秒ごとに、モニターからはみ出していないか確かめる
+            self._fit_on_screen()
         self.after(50, self._pump)
 
     def quit_app(self):

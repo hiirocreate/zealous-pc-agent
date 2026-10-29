@@ -32,8 +32,10 @@ TABS = [
           ("トグル", "トグル（1回押して開始・もう1回で終了）")]),
         ("PTT_ENABLED", "話すキー（押している間だけ聞き取るキー）を使う", "bool",
          "どの画面を開いていても、キーを押しながら話すだけで聞き取ります"),
-        ("PTT_KEY", "話すキー", "choice", "普段の操作で使わないキーがおすすめ",
-         [("right ctrl", "右Ctrl"), ("right alt", "右Alt"), ("right shift", "右Shift"), ("f8", "F8"),
+        ("PTT_KEY", "話すキー", "choice",
+         "普段の操作で使わないキーがおすすめ。スペースは長押しで話し、短く押すと普通のスペースになります",
+         [("right ctrl", "右Ctrl"), ("space", "スペース（長押しで話す）"), ("right alt", "右Alt"),
+          ("right shift", "右Shift"), ("f8", "F8"),
           ("f9", "F9"), ("f10", "F10"), ("scroll lock", "Scroll Lock"), ("pause", "Pause")]),
         ("—", "起動"),
         ("AUTOSTART", "PC起動時に自動で起動", "bool", "Windows にサインインしたら Zealous を立ち上げる"),
@@ -57,9 +59,11 @@ TABS = [
         ("＊", "voice_picker"),  # 「声を選ぶ」ボタン(キャラ一覧・試聴・ダウンロード)
         ("TTS_SPEED", "話す速さ（1.0 が標準）", "float", "大きいほど速く話します（例: 1.2）"),
         ("VOICEVOX_URL", "VOICEVOX の URL（読み上げソフトの接続先）", "str", "通常は変更不要"),
-        ("—", "聞き取り（再起動後に反映）"),
-        ("WHISPER_MODEL", "Whisper（声を文字にするAI）の種類", "choice", "大きいほど正確ですが重くなります",
-         [("tiny", "tiny（軽い・速い）"), ("base", "base（標準・より正確）")]),
+        ("—", "聞き取り"),
+        ("MIC_DEVICE", "マイク", "mic", "聞き取れないことが多いときは、使っているマイクを選んでください"),
+        ("WHISPER_MODEL", "Whisper（声を文字にするAI）の種類", "choice",
+         "大きいほど正確ですが重くなります。聞き間違いが多いときは small がおすすめ（初回に約0.5GBを取得）",
+         [("tiny", "tiny（軽い・速い）"), ("base", "base（標準）"), ("small", "small（高精度・やや重い）")]),
         ("WHISPER_DEVICE", "計算に使う装置", "choice", "分からなければ CPU のまま",
          [("cpu", "CPU（どのPCでも動く）"), ("cuda", "CUDA（NVIDIA製GPU：速いが対応GPUが必要）")]),
         ("WHISPER_COMPUTE", "計算の細かさ", "choice", "分からなければ int8 のまま",
@@ -111,10 +115,11 @@ def parse(kind, raw):
 
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_saved, on_quit, on_check_update, on_pick_voice):
+    def __init__(self, master, on_saved, on_quit, on_check_update, on_pick_voice, on_update):
         super().__init__(master, fg_color=T.BG)
         self._on_saved, self._on_quit, self._on_check_update = on_saved, on_quit, on_check_update
         self._on_pick_voice = on_pick_voice
+        self._on_update = on_update
         self._vars = {}
         self._choices = {}  # キー -> {表示名: 値}
         self.title(f"{config.AI_NAME} 設定")
@@ -187,6 +192,10 @@ class SettingsWindow(ctk.CTkToplevel):
             if f[0] == "＊":
                 self._voice_card(page)
                 continue
+            if f[2] == "mic":  # マイクはこのPCにつながっているものから選ぶ
+                import voice
+                f = (*f[:2], "choice", f[3],
+                     [("", "既定のマイク（Windows の設定）")] + [(n, n) for n in voice.input_devices()])
             key, label, kind, hint = f[:4]
             # スイッチは右端、それ以外の入力欄は説明の下に横幅いっぱいで置く(長い項目名でも切れない)
             switch = kind == "bool"
@@ -236,8 +245,22 @@ class SettingsWindow(ctk.CTkToplevel):
         return row
 
     def _build_info(self, page):
-        self._action(page, "更新を確認", f"いまのバージョン: {VERSION}", "今すぐ確認",
-                     lambda: (self._show("確認中…"), self._on_check_update(self._show)))
+        # ---- アップデート: 確認して、新しい版があればここから更新できる ----
+        row = self._card_row(page)
+        ctk.CTkLabel(row, text="アップデート", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(9, 0))
+        self.upd_status = ctk.CTkLabel(row, text=f"いまのバージョン: {VERSION}", font=T.font(10),
+                                       text_color=T.SUB, anchor="w", justify="left", wraplength=300)
+        self.upd_status.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 9))
+        btns = ctk.CTkFrame(row, fg_color="transparent")
+        btns.grid(row=0, column=1, rowspan=2, padx=12)
+        self.upd_check = ctk.CTkButton(btns, text="今すぐ確認", width=100, height=30, corner_radius=15,
+                                       font=T.font(11), fg_color="transparent", border_width=1,
+                                       border_color=T.ACCENT, text_color=T.TEXT, hover_color=T.BORDER,
+                                       command=self._check_update)
+        self.upd_check.pack(side="left")
+        self.upd_go = ctk.CTkButton(btns, text="アップデート", width=110, height=30, corner_radius=15,
+                                    font=T.font(11, "bold"), fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
         self._section(page, "部品（AI・音声のソフト）")
         self._action(page, "動作確認", "AIを動かすソフト（Ollama）と読み上げソフト（VOICEVOX）が動いているか",
                      "確認する", self._check)
@@ -269,6 +292,38 @@ class SettingsWindow(ctk.CTkToplevel):
             except Exception as e:
                 self._show(f"エラー: {e}")
         threading.Thread(target=run, daemon=True).start()
+
+    def _check_update(self):
+        self.upd_go.pack_forget()
+        self._upd_text("確認中…", T.SUB)
+
+        def report(msg, info):  # 裏のスレッドから届く
+            self.after(0, lambda: self._update_result(msg, info))
+        self._on_check_update(report)
+
+    def _update_result(self, msg, info):
+        if not self.winfo_exists():
+            return
+        self._upd_text(msg, T.WARN if msg.startswith("確認できません") else T.CYAN if info else T.OK)
+        if info:
+            self.upd_go.configure(text=f"v{info['version']} に更新", state="normal",
+                                  command=lambda: self._run_update(info))
+            self.upd_go.pack(side="left", padx=(6, 0))
+
+    def _run_update(self, info):
+        self.upd_go.configure(state="disabled", text="更新中…")
+        self.upd_check.configure(state="disabled")
+
+        def progress(text, failed=False):
+            self._upd_text(text, T.DANGER if failed else T.CYAN)
+            if failed:
+                self.upd_go.configure(state="normal", text="もう一度")
+                self.upd_check.configure(state="normal")
+        self._on_update(info, progress)
+
+    def _upd_text(self, text, color):
+        if self.winfo_exists():
+            self.upd_status.configure(text=text, text_color=color)
 
     def _show(self, text):
         self.after(0, lambda: self.winfo_exists() and self.svc.configure(text=text))
@@ -322,7 +377,9 @@ class SettingsWindow(ctk.CTkToplevel):
             if kind == "model":
                 var.set(models.label(v))
             elif kind == "choice":
-                var.set(next((lbl for lbl, val in self._choices[key].items() if val == v), v))
+                # 選択肢に無い値(外したマイクなど)は先頭の選択肢にする
+                var.set(next((lbl for lbl, val in self._choices[key].items() if val == v),
+                             next(iter(self._choices[key]))))
             elif kind == "bool":
                 var.set(v)
             else:

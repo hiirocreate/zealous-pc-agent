@@ -246,3 +246,46 @@ def test_threads(tmp_path, monkeypatch):
     assert [x["id"] for x in threads.listing()] == [t["id"]]
     threads.delete(t["id"])
     assert threads.listing() == []
+
+
+def test_space_ptt(monkeypatch):
+    """スペースキー: 長押しで話す、短く押せば普通のスペースを入力し直す。"""
+    import time
+    import types
+    import stopper
+    events, sent, hooks = [], [], []
+    fake = types.SimpleNamespace(KEY_DOWN="down", hook=lambda cb, suppress=False: hooks.append(cb) or (lambda: None),
+                                 unhook=lambda h: None, send=lambda k: sent.append(k))
+    monkeypatch.setitem(__import__("sys").modules, "keyboard", fake)
+    stopper.register_ptt("space", lambda: events.append("start"), lambda: events.append("stop"))
+    press = lambda t: hooks[-1](types.SimpleNamespace(name="space", event_type=t))  # noqa: E731
+    assert press("down") is False and press("up") is False          # 短く押す: 一旦止めて…
+    time.sleep(0.05)
+    assert sent == ["space"] and events == []                         # 普通のスペースとして入力し直す
+    assert press("down") is True and press("up") is True             # 入力し直した分は通す
+    press("down")
+    time.sleep(stopper.HOLD_SEC + 0.1)
+    press("up")
+    assert events == ["start", "stop"]                                # 長押し: 話す
+    assert hooks[-1](types.SimpleNamespace(name="a", event_type="down")) is True  # 他のキーは通す
+
+
+def test_transcribe_tuning():
+    import numpy as np
+    from voice import VoiceInput, SR
+    calls = []
+
+    class FakeModel:
+        def __init__(self, text):
+            self.text = text
+
+        def transcribe(self, audio, **kw):
+            calls.append(kw)
+            return [type("S", (), {"text": self.text})()], None
+
+    speech = (np.sin(np.arange(SR) / 5) * 0.05).astype(np.float32)   # 小さめの声 1秒
+    assert VoiceInput.transcribe(FakeModel("メモ帳を開いて"), speech, True) == "メモ帳を開いて"
+    assert calls[-1]["vad_filter"] is False                              # ボタンで録った音は切り落とさない
+    assert VoiceInput.transcribe(FakeModel("ご視聴ありがとうございました"), speech, True) == ""  # 決まり文句は捨てる
+    assert VoiceInput.transcribe(FakeModel("x"), np.zeros(SR, np.float32), True) == ""             # 無音
+    assert VoiceInput.transcribe(FakeModel("x"), speech[:SR // 10], True) == ""                     # 短すぎる

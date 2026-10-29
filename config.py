@@ -17,12 +17,13 @@ DEFAULTS = {
     "PTT_KEY": "right ctrl",         # 話すキー
     "AUTOSTART": False,              # PC起動時に自動起動
     "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
-    "PANEL_SIZE": [340, 500],
-    "SMOOTH_FRAME": True,            # Windows: なめらかな外枠と影を重ねて表示(再起動後に反映)        # 会話パネルの大きさ [幅, 高さ](端のドラッグで更新)
+    "PANEL_SIZE": [340, 500],        # 会話パネルの大きさ [幅, 高さ](端のドラッグで更新)
+    "PANEL_OFFSET": None,            # 待機表示から見た会話パネルの位置 [x, y](大きさを変えると更新)
+    "SMOOTH_FRAME": True,            # Windows: なめらかな外枠と影を重ねて表示(再起動後に反映)
     "SETUP_DONE": False,             # 初回セットアップ画面を表示済みか
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
-    "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)             # 初回セットアップ画面を表示済みか              # 常駐位置 [x, y](ドラッグで更新)
+    "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可
@@ -45,11 +46,12 @@ DEFAULTS = {
     "TTS_SPEED": 1.1,                # 話す速さ(1.0 が標準)
     "VOICEVOX_URL": "http://localhost:50021",
     "VOICEVOX_SPEAKER": 3,
-    # ---- 音声認識 (Faster-Whisper) ※変更はアプリ再起動後に反映 ----
+    # ---- 音声認識 (Faster-Whisper) ----
     "WHISPER_MODEL": "base",
     "WHISPER_DEVICE": "cpu",
     "WHISPER_COMPUTE": "int8",
     "LANGUAGE": "ja",
+    "MIC_DEVICE": "",                # 使うマイクの名前(空なら Windows の既定のマイク)
     # ---- 常時待ち受けの発話区切り ----
     "VAD_THRESHOLD": 0.015,
     "VAD_SILENCE_SEC": 0.8,

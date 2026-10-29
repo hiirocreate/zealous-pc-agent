@@ -32,7 +32,7 @@ def check():
             rel = json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise RuntimeError("配布元にリリースが見つかりません(非公開リポジトリの可能性)") from e
+            raise RuntimeError(f"配布元（{config.UPDATE_REPO}）にまだ公開された版がありません") from e
         raise
     latest = rel.get("tag_name", "")
     if _ver(latest) <= _ver(VERSION):

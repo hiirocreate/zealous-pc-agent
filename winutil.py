@@ -132,6 +132,38 @@ class Shell:
         except Exception:
             self._give_up()
 
+    def suspend(self):
+        """外枠を一旦外し、本体を切り抜かずにそのまま見せる(全画面のとき)。"""
+        if self.ok and self._ready:
+            try:
+                user32.SetWindowRgn(self.root_hwnd, None, True)
+                self.win.withdraw()
+            except Exception:
+                pass
+            self._last = None
+            self._suspended = True
+
+    def resume(self):
+        if self.ok and self._ready and getattr(self, "_suspended", False):
+            self._suspended = False
+            self.win.deiconify()
+            self.win.attributes("-topmost", True)
+
+    def frame(self, x, y, w, h, radius, fast=True):
+        """外枠だけを (x, y, w, h) に描く(本体の窓の切り抜きは変えない)。展開・折りたたみの途中用。"""
+        if not self.ok:
+            return
+        try:
+            if not self._ready:
+                if not self.root.winfo_ismapped():
+                    return
+                self._setup()
+            self._draw(w, h, radius, fast)
+            self._last = None  # 次の update() で本体の切り抜きと外枠を必ず描き直す
+            self.move(x, y)
+        except Exception:
+            self._give_up()
+
     def _give_up(self):
         """うまく描けない環境では外枠をやめ、本体の窓を切り抜かずにそのまま見せる(使えなくはならない)。"""
         self.ok = False
@@ -142,6 +174,8 @@ class Shell:
             pass
 
     def _update(self, x, y, w, h, radius, fast):
+        if getattr(self, "_suspended", False):
+            return
         if not self._ready:
             if not self.root.winfo_ismapped():
                 return  # まだ画面に出ていない(出た後にもう一度呼ばれる)
@@ -195,7 +229,7 @@ def render_frame(w, h, r, fill, border, m, fast=False):
     """外枠の画像(影つき・角丸・縁取り)。大きめに描いて縮小し、縁をなめらかにする。
     fast=True は動かしている途中用(少し粗く、そのぶん速い)。"""
     from PIL import Image, ImageDraw, ImageFilter
-    k = 2 if fast else 3
+    k = 1 if fast else 3  # 動いている途中は粗くても目に見えないので、速さを優先
     W, H = w + 2 * m, h + 2 * m
     q = 4  # 影はぼかすだけなので 1/4 の大きさで作って拡大する(速い)
     shadow = Image.new("L", (W // q + 1, H // q + 1), 0)

@@ -1,13 +1,33 @@
-"""マイク録音(手動/常時待ち受け)と Faster-Whisper による文字起こし。"""
+"""マイク録音(手動/常時待ち受け)と Faster-Whisper による文字起こし。
+聞き取りの取りこぼしを減らすため、
+- 押す直前の音(0.4秒)と、離した直後の音(0.3秒)も含めて文字にする
+- マイクが 16kHz で開けない場合は、そのマイクの標準の速さで録って 16kHz に変換する
+- 小さい声は音量をそろえてから文字にする
+- 何も聞き取れなかったときは、そのことを知らせる"""
 import collections
 import queue
+import re
 import threading
 
 import numpy as np
 
 import config
 
-_BLOCK = config.SAMPLE_RATE // 10  # 0.1秒
+SR = config.SAMPLE_RATE            # 文字起こしに渡す速さ(16kHz)
+PRE_SEC, POST_SEC = 0.4, 0.3       # 押す前・離した後に含める秒数
+# 無音のときに Whisper が出しがちな決まり文句(実際には話していない)
+_HALLUCINATIONS = re.compile(r"^(ご視聴ありがとうございました|ご視聴ありがとうございます|チャンネル登録|"
+                             r"ありがとうございました|字幕|お疲れ様でした)[。.!！]*$")
+
+
+def input_devices():
+    """選べるマイクの名前の一覧(重複は除く)。"""
+    try:
+        import sounddevice as sd
+        names = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
+    except Exception:
+        return []
+    return list(dict.fromkeys(names))
 
 
 class VoiceInput:
@@ -17,60 +37,112 @@ class VoiceInput:
         self._jobs = queue.Queue()
         self._gen = 0
         self._stream = None
+        self._rate = SR
         self._manual = False
         self._buf = []
+        self._ring = collections.deque()  # 直前の音(押す前の分を含めるため)
         self._wake = False
         self._pre = collections.deque(maxlen=3)
         self._seg = None
+        self._lock = threading.Lock()
         threading.Thread(target=self._transcriber, daemon=True).start()
 
     # ---- 操作 ----
     def start_manual(self):
         if not self._ensure_stream():
             return
-        self._buf, self._manual = [], True
+        with self._lock:
+            self._buf, self._manual = list(self._ring), True  # 押す直前の音から始める
 
     def stop_manual(self):
+        """離した直後の音も少しだけ録ってから文字起こしへ回す。"""
         if not self._manual:
             return
-        self._manual = False
-        if self._buf:
-            self._jobs.put((self._gen, np.concatenate(self._buf), True))
-        self._buf = []
+        threading.Timer(POST_SEC, self._finish_manual, args=(self._gen,)).start()
+
+    def _finish_manual(self, gen):
+        with self._lock:
+            if not self._manual or gen != self._gen:
+                return
+            self._manual = False
+            buf, self._buf = self._buf, []
+        if buf:
+            self._jobs.put((gen, self._to_16k(np.concatenate(buf)), True))
 
     def set_wake(self, enabled):
         self._seg = None
         self._wake = enabled and self._ensure_stream()
 
+    def reset_device(self):
+        """マイクの設定が変わったときに開き直す。"""
+        if self._stream:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        if self._wake:
+            self._ensure_stream()
+
     def cancel(self):
         self._gen += 1
-        self._manual, self._buf, self._seg = False, [], None
+        with self._lock:
+            self._manual, self._buf, self._seg = False, [], None
         while not self._jobs.empty():
             try:
                 self._jobs.get_nowait()
             except queue.Empty:
                 break
 
-    # ---- 内部 ----
+    # ---- 録音 ----
+    def _device(self):
+        name = config.MIC_DEVICE
+        if not name:
+            return None
+        import sounddevice as sd
+        for i, d in enumerate(sd.query_devices()):
+            if d["name"] == name and d["max_input_channels"] > 0:
+                return i
+        return None  # 見つからなければ既定のマイク
+
     def _ensure_stream(self):
         if self._stream:
             return True
         try:
             import sounddevice as sd
-            self._stream = sd.InputStream(samplerate=config.SAMPLE_RATE, channels=1, dtype="float32",
-                                          blocksize=_BLOCK, callback=self._callback)
-            self._stream.start()
+            device = self._device()
+            try:
+                rate = SR
+                stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32", device=device,
+                                        blocksize=rate // 10, callback=self._callback)
+            except Exception:  # 16kHz に対応していないマイクは、標準の速さで録って後で変換
+                rate = int(sd.query_devices(device, "input")["default_samplerate"])
+                stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32", device=device,
+                                        blocksize=rate // 10, callback=self._callback)
+            self._rate = rate
+            self._ring = collections.deque(maxlen=max(1, int(PRE_SEC * 10)))
+            stream.start()
+            self._stream = stream
             return True
         except Exception as e:
             self._stream = None
-            self._on_status(f"マイクエラー: {e}")
+            self._on_status(f"マイクを開けませんでした（{e}）。設定の「声・音声」でマイクを選び直してください")
             return False
+
+    def _to_16k(self, audio):
+        if self._rate == SR or len(audio) == 0:
+            return audio
+        n = int(len(audio) * SR / self._rate)
+        return np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio).astype(np.float32)
 
     def _callback(self, indata, frames, time_info, status):
         mono = indata[:, 0].copy()
-        if self._manual:
-            self._buf.append(mono)
-        elif self._wake:
+        self._ring.append(mono)
+        with self._lock:
+            if self._manual:
+                self._buf.append(mono)
+                return
+        if self._wake:
             self._vad(mono)
 
     def _vad(self, mono):
@@ -83,31 +155,53 @@ class VoiceInput:
         self._seg.append(mono)
         self._silence = 0 if loud else self._silence + len(mono)
         total = sum(len(s) for s in self._seg)
-        sr = config.SAMPLE_RATE
+        sr = self._rate
         if self._silence >= config.VAD_SILENCE_SEC * sr or total >= config.VAD_MAX_SEC * sr:
             seg, self._seg = self._seg, None
             if (total - self._silence) >= config.VAD_MIN_SEC * sr:
-                self._jobs.put((self._gen, np.concatenate(seg), False))
+                self._jobs.put((self._gen, self._to_16k(np.concatenate(seg)), False))
+
+    # ---- 文字起こし ----
+    def _load(self, name):
+        from faster_whisper import WhisperModel
+        import runtime
+        return WhisperModel(name, device=config.WHISPER_DEVICE, compute_type=config.WHISPER_COMPUTE,
+                            download_root=runtime.WHISPER_DIR)
 
     def _transcriber(self):
-        try:
-            from faster_whisper import WhisperModel
-            import runtime
-            model = WhisperModel(config.WHISPER_MODEL, device=config.WHISPER_DEVICE,
-                                 compute_type=config.WHISPER_COMPUTE, download_root=runtime.WHISPER_DIR)
-        except Exception as e:
-            self._on_status(f"Whisper読み込みエラー: {e}")
-            return
+        model, loaded = None, None
         while True:
             gen, audio, from_button = self._jobs.get()
             if gen != self._gen:
                 continue
-            try:
-                segs, _ = model.transcribe(audio, language=config.LANGUAGE, beam_size=1,
-                                           vad_filter=True, condition_on_previous_text=False)
-                text = "".join(s.text for s in segs).strip()
-            except Exception as e:
-                self._on_status(f"音声認識エラー: {e}")
+            want = (config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)
+            if loaded != want:  # 設定を変えたら読み込み直す(再起動は不要)
+                try:
+                    model, loaded = self._load(config.WHISPER_MODEL), want
+                except Exception as e:
+                    self._on_status(f"音声認識(Whisper)を読み込めませんでした: {e}")
+                    continue
+            text = self.transcribe(model, audio, from_button)
+            if gen != self._gen:
                 continue
-            if text and gen == self._gen:
+            if text:
                 self._on_text(text, from_button)
+            elif from_button:
+                self._on_status("聞き取れませんでした。マイクに近づいて、もう一度話してください")
+
+    @staticmethod
+    def transcribe(model, audio, from_button):
+        if len(audio) < SR * 0.3:
+            return ""
+        peak = float(np.max(np.abs(audio)))
+        if peak < 0.003:  # ほぼ無音(マイクが拾っていない)
+            return ""
+        audio = audio * min(0.9 / peak, 20.0)  # 小さい声は音量をそろえる
+        segs, _ = model.transcribe(
+            audio, language=config.LANGUAGE, beam_size=5, temperature=0.0,
+            condition_on_previous_text=False,
+            vad_filter=not from_button,  # ボタン・話すキーで録った音は話している前提なので切り落とさない
+            initial_prompt=f"{config.AI_NAME}。",  # AI名を正しく聞き取りやすくする
+        )
+        text = "".join(s.text for s in segs).strip()
+        return "" if _HALLUCINATIONS.match(text) else text
