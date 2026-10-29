@@ -90,10 +90,33 @@ def open_url(url):
     return f"{url} を開きました"
 
 
-@tool("ブラウザでキーワード検索する", query=("string", "検索キーワード", True))
+@tool("ブラウザで検索結果のページを開く(「ブラウザで検索して」など画面で見たいとき)",
+      query=("string", "検索キーワード", True))
 def web_search(query):
     _open(config.SEARCH_URL.format(urllib.parse.quote_plus(query)))
     return f"「{query}」を検索しました"
+
+
+@tool("Webで調べて結果を要約して答える(「〜について調べて」「〜を教えて」など)",
+      query=("string", "調べる内容", True))
+def search_summary(query):
+    import llm
+    import websearch
+    results = websearch.search(query)
+    if not results:
+        return f"「{query}」の検索結果を取得できませんでした"
+    docs = websearch.read_pages(results)
+    summary = llm.summarize(query, results[:len(docs)], docs) or results[0]["snippet"]
+    links = "\n".join(f"[{i}] {r['title']}\n{r['url']}" for i, r in enumerate(results[:len(docs)], 1))
+    return summary + llm.SOURCES + links
+
+
+# ---------------- アプリ ----------------
+@tool("PCにインストールされたアプリやソフトを名前で起動する(例: Excel、メモ帳、Spotify)",
+      name=("string", "アプリの名前", True))
+def launch_app(name):
+    import apps
+    return apps.launch(name)
 
 
 # ---------------- ファイル・フォルダ ----------------

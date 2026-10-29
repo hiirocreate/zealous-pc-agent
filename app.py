@@ -18,6 +18,7 @@ import voicevox
 import shortcut
 import theme as T
 from agent_worker import AgentWorker
+from llm import SOURCES
 from settings_window import SettingsWindow
 from tts import Speaker
 from voice import VoiceInput
@@ -209,7 +210,7 @@ class App(ctk.CTk):
         self.hint.bind("<Button-1>", lambda e: self.entry.focus_set())
         self.send_btn = self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER)
         self.send_btn.grid(row=0, column=2, padx=3, pady=3, sticky="s")
-        tip = ctk.CTkLabel(p, text="Enter で送信 ・ Shift+Enter で改行", font=T.font(9), text_color=T.SUB,
+        self.tip = tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB,
                            height=12)
         tip.grid(row=3, column=0, sticky="w", padx=22)
 
@@ -316,6 +317,18 @@ class App(ctk.CTk):
         if self.typing.winfo_manager():
             self.typing.grid_configure(row=len(self._bubbles))  # 入力中表示は常に最後尾
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+
+    def _log_sources(self, sources):
+        """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
+        import webbrowser
+        box = ctk.CTkFrame(self.chat, fg_color="transparent")
+        lines = sources.strip().split("\n")
+        for title, url in zip(lines[0::2], lines[1::2]):
+            link = ctk.CTkLabel(box, text=f"↗ {title}", font=T.font(10, "underline"), text_color=T.CYAN,
+                                anchor="w", justify="left", wraplength=230, cursor="hand2")
+            link.pack(anchor="w", padx=8, pady=1)
+            link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+        self._add_widget(box, "w")
 
     def _post_log(self, text):  # 任意のスレッドから呼べる
         self._events.put(lambda: self._log(text, "sys"))
@@ -456,6 +469,19 @@ class App(ctk.CTk):
                 progress(0, err)
         threading.Thread(target=run, daemon=True).start()
 
+    def _apply_ptt(self):
+        """話すキー: どの画面を開いていても、押している間だけ聞き取る(トグル方式なら押すたびに開始/終了)。"""
+        import stopper
+        try:
+            stopper.register_ptt(config.PTT_KEY if config.PTT_ENABLED else None,
+                                 lambda: self._events.put(lambda: self._mic_press(None)),
+                                 lambda: self._events.put(lambda: self._mic_release(None)))
+        except Exception as e:
+            self._log(f"話すキーの登録エラー: {e}")
+        key = stopper.KEY_NAMES.get(config.PTT_KEY, config.PTT_KEY)
+        self.tip.configure(text=(f"{key} を押しながら話す ・ " if config.PTT_ENABLED else "")
+                           + "Enter で送信 ・ Shift+Enter で改行")
+
     def _apply_settings(self):
         self.pill_logo.configure(image=icons.wordmark(config.AI_NAME, 9))
         self.panel_logo.configure(image=icons.wordmark(config.AI_NAME, 13))
@@ -464,6 +490,7 @@ class App(ctk.CTk):
         if self._recording:
             self._stop_rec()
         self.voice.set_wake(config.WAKE_ENABLED)
+        self._apply_ptt()
 
     # ================= アップデート =================
     def check_update(self, manual=False, report=None):
@@ -545,8 +572,11 @@ class App(ctk.CTk):
                 break
         for kind, text in self.worker.poll():
             if kind == "reply":
-                self._log(text, "ai")
-                self.speaker.say(text)
+                body, _, sources = text.partition(SOURCES)
+                self._log(body, "ai")
+                if sources:
+                    self._log_sources(sources)
+                self.speaker.say(body)  # 出典(URL)は読み上げない
             else:
                 self._log(f"エラー: {text}")
         if self._state == "think" and not self.worker.pending:

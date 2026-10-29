@@ -104,3 +104,45 @@ def test_voice_command():
     assert voice_command("ウェイク、Zealous、メモ帳を開いて", True) == "メモ帳を開いて"
     assert voice_command("メモ帳を開いて", False) is None                      # 常時待ち受け: 合図が必要
     assert voice_command("ウェイク、Zealous、メモ帳を開いて", False) == "メモ帳を開いて"
+
+
+def test_search_summary(monkeypatch):
+    import websearch
+    monkeypatch.setattr(websearch, "search", lambda q: [{"title": "A", "url": "https://a", "snippet": "a"},
+                                                        {"title": "B", "url": "https://b", "snippet": "b"}])
+    monkeypatch.setattr(websearch, "read_pages", lambda r: ["本文A", "本文B"])
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: {"content": "要約です"})
+    out = tools.run_tool("search_summary", {"query": "猫"})
+    body, _, sources = out.partition(llm.SOURCES)
+    assert body == "要約です" and sources == "[1] A\nhttps://a\n[2] B\nhttps://b"
+
+
+def test_parse_bing():
+    import base64
+    import websearch
+    url = "https://example.com/page"
+    enc = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+    page = (f'<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&amp;u=a1{enc}&amp;ntb=1">'
+            '<strong>例</strong>のページ</a></h2><p>説明&amp;文</p></li>')
+    assert websearch.parse_bing(page) == [{"title": "例のページ", "url": url, "snippet": "説明&文"}]
+
+
+def test_find_app():
+    import apps
+    found = [{"Name": "Excel", "AppID": "1"}, {"Name": "Excel 2016 Database Compare", "AppID": "2"},
+             {"Name": "Microsoft Edge", "AppID": "3"}]
+    assert apps.find("エクセル", found)["AppID"] == "1"
+    assert apps.find("edge", found)["AppID"] == "3"
+    assert apps.find("存在しないアプリ", found) is None
+
+
+def test_conversation_memory(monkeypatch):
+    seen = []
+    monkeypatch.setattr(config, "CONTEXT_TURNS", 1)
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: (seen.append(m), {"content": "はい"})[1])
+    llm._history.clear()
+    llm.ask("一つ目")
+    llm.ask("二つ目")
+    llm.ask("三つ目")
+    contents = [m["content"] for m in seen[-1]]
+    assert "二つ目" in contents and "一つ目" not in contents   # 直前の1往復だけ覚えている

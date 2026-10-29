@@ -13,6 +13,8 @@ DEFAULTS = {
     "WAKE_WORDS": ["ウェイク", "ウエイク", "うぇいく", "Wake"],
     "WAKE_ENABLED": False,
     "INPUT_MODE": "トランシーバー",
+    "PTT_ENABLED": True,             # 話すキー(押している間だけ聞き取る)を使う
+    "PTT_KEY": "right ctrl",         # 話すキー
     "AUTOSTART": False,              # PC起動時に自動起動
     "WINDOW_POS": None,
     "SETUP_DONE": False,
@@ -29,7 +31,9 @@ DEFAULTS = {
     "OLLAMA_URL": "http://localhost:11434/api/chat",
     "OLLAMA_MODEL": "qwen2.5:1.5b",
     "OLLAMA_TIMEOUT": 60,
-    "MAX_TOOL_STEPS": 3,             # 1命令あたりの関数呼び出し上限(ループ防止)
+    "MAX_TOOL_STEPS": 3,
+    "CONTEXT_TURNS": 4,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
+    "CONTEXT_RESET_MIN": 10,         # この分数だけ話しかけなければ記憶を消す             # 1命令あたりの関数呼び出し上限(ループ防止)
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)
     # ---- 音声合成 (VOICEVOX) ----
