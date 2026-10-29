@@ -1,5 +1,6 @@
-"""初回セットアップ(ダブルクリックで起動)。コマンドプロンプトを使わずに
-部品のインストール・AIモデルの取得・ショートカット作成を行う。標準ライブラリのみで動く。"""
+"""インストール(ダブルクリックで起動)。コマンドプロンプトを使わずに
+部品のインストール・AIモデルの取得・ショートカット作成・「アプリ」一覧への登録を行う。
+標準ライブラリのみで動く。"""
 import os
 import subprocess
 import sys
@@ -18,13 +19,13 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 class Setup(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Zealous セットアップ")
+        self.title("Zealous インストール")
         self.geometry("520x420")
         if os.name == "nt":
             self.iconbitmap(shortcut.ICON)
         self.desktop = tk.BooleanVar(value=True)
         self.autostart = tk.BooleanVar(value=config.AUTOSTART)
-        tk.Label(self, text="Zealous のセットアップ", font=("", 13, "bold")).pack(pady=(10, 2))
+        tk.Label(self, text="Zealous のインストール", font=("", 13, "bold")).pack(pady=(10, 2))
         tk.Label(self, text="事前に Ollama と VOICEVOX をインストールして起動しておいてください").pack()
         tk.Checkbutton(self, text="デスクトップにショートカットを作る", variable=self.desktop).pack(anchor="w", padx=12)
         tk.Checkbutton(self, text="PC起動時に自動で起動する", variable=self.autostart).pack(anchor="w", padx=12)
@@ -32,7 +33,7 @@ class Setup(tk.Tk):
         self.log.pack(fill="both", expand=True, padx=12, pady=6)
         row = tk.Frame(self)
         row.pack(pady=(0, 10))
-        self.btn = tk.Button(row, text="セットアップ開始", width=16, command=self.start)
+        self.btn = tk.Button(row, text="インストール", width=16, command=self.start)
         self.btn.pack(side="left", padx=4)
         self.run_btn = tk.Button(row, text="Zealous を起動", width=16, state="disabled", command=self.launch)
         self.run_btn.pack(side="left", padx=4)
@@ -82,10 +83,12 @@ class Setup(tk.Tk):
             self.write("③ VOICEVOX を確認中…")
             self.write("   " + services.check_voicevox()[1] + "(未起動でも読み上げ以外は動きます)")
 
-            self.write("④ ショートカットを作成中…")
+            self.write("④ ショートカットを作成・アプリ一覧へ登録中…")
             if self.desktop.get():
                 shortcut.create(config.DESKTOP)
+            shortcut.create(shortcut.START_MENU_DIR)
             shortcut.set_autostart(self.autostart.get())
+            shortcut.register_app()
             config.save({"AUTOSTART": self.autostart.get()})
             self.write("完了しました。" if ok else "一部未完了ですが起動できます。")
             self.after(0, lambda: self.run_btn.configure(state="normal"))

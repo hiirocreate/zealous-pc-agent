@@ -49,3 +49,19 @@ def test_ask_with_mock(monkeypatch):
     monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True: {
         "tool_calls": [{"function": {"name": "open_url", "arguments": {"url": "example.com"}}}]})
     assert llm.ask("example.comを開いて").startswith("[DRY] open_url")
+
+
+def test_folder_ops(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    tools.run_tool("create_folder", {"name": "A"})
+    tools.run_tool("create_text_file", {"name": "m", "content": "x"})
+    assert "[A]" in tools.run_tool("list_folder", {"path": str(tmp_path)})
+    tools.run_tool("rename_item", {"name": "m.txt", "new_name": "n.txt"})
+    tools.run_tool("move_item", {"name": "n.txt", "dest": str(tmp_path / "A")})
+    assert (tmp_path / "A" / "n.txt").exists()
+    tools.run_tool("copy_item", {"name": "A", "dest": str(tmp_path / "B")})
+    assert (tmp_path / "B" / "A" / "n.txt").exists()
+    # ホームフォルダそのものや設定で禁止された操作は拒否
+    assert "エラー" in tools.run_tool("rename_item", {"name": os.path.expanduser("~"), "new_name": "x"})
+    monkeypatch.setattr(config, "FOLDER_OPS_ENABLED", False)
+    assert "無効" in tools.run_tool("create_folder", {"name": "C"})

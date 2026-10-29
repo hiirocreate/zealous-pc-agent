@@ -15,6 +15,9 @@ DEFAULTS = {
     "INPUT_MODE": "トランシーバー",
     "AUTOSTART": False,              # PC起動時に自動起動
     "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
+    # ---- フォルダ操作の権限 ----
+    "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
+    "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",
     "SEARCH_URL": "https://www.google.com/search?q={}",

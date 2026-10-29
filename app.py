@@ -2,6 +2,7 @@
 待機中は横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐し、ドラッグで移動できる。
 会話パネルは常駐位置に応じて、画面の内側へ向かって展開する。
 緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
+import math
 import multiprocessing as mp
 import queue
 
@@ -18,7 +19,7 @@ from wakeword import strip_wake_word
 
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
-PILL_W, PILL_H = 212, 52
+PILL_W, PILL_H = 200, 52
 PANEL_W, PANEL_H = 300, 400
 INPUT_MAX_LINES = 4
 MAX_BUBBLES = 40
@@ -28,7 +29,7 @@ STATES = {
     "idle": ("待機中", T.OK, False),
     "listen": ("聞き取り中", T.DANGER, True),
     "recog": ("認識中", T.CYAN, True),
-    "think": ("実行中", T.ACCENT, True),
+    "think": ("応答待ち", T.ACCENT, False),
     "stop": ("停止しました", T.WARN, False),
 }
 BUSY = ("think",)  # 緊急停止ボタンを出す状態
@@ -41,6 +42,25 @@ class RoundButton(ctk.CTkButton):
         super()._create_grid()
         for c in (0, 4):
             self.grid_columnconfigure(c, minsize=0)
+
+
+class DotSpinner(ctk.CTkCanvas):
+    """3つのドットが波打つローディング表示。tick() を一定間隔で呼んで動かす。"""
+
+    def __init__(self, master, bg, dot=5, gap=4):
+        self._d, self._g = dot, gap
+        super().__init__(master, width=dot * 3 + gap * 2, height=dot * 3, bg=bg, highlightthickness=0)
+        self._t = 0
+
+    def tick(self):
+        self._t += 1
+        self.delete("all")
+        d, h = self._d, self._d * 3
+        for i, col in enumerate((T.ACCENT, "#5b8cff", T.CYAN)):
+            lift = max(0.0, math.sin(self._t * 0.35 - i * 0.9))  # 順番に跳ねる
+            y = h - d - lift * d * 1.6
+            x = i * (d + self._g)
+            self.create_oval(x, y, x + d, y + d, fill=col, outline="")
 
 
 class App(ctk.CTk):
@@ -117,9 +137,15 @@ class App(ctk.CTk):
         self.pill_logo.grid(row=0, column=1, sticky="sw")
         row, self.pill_dot, self.pill_status = self._status_row(self.center)
         row.grid(row=1, column=1, sticky="nw", pady=(2, 0))
-        self.pill_stop = self._stop(self.pill, text=f"■ 停止\n{HOTKEY}", width=PILL_W - 2 * PILL_H + 8,
-                                    height=PILL_H - 14, font=T.font(9, "bold"))
-        for w in (self.pill, self.center, emb, self.pill_logo, row, self.pill_dot, self.pill_status):
+        self.pill_busy = ctk.CTkFrame(self.pill, fg_color="transparent")
+        self.pill_spin = DotSpinner(self.pill_busy, T.BG, dot=6, gap=5)
+        self.pill_spin.pack(pady=(0, 3))
+        self.pill_stop = self._stop(self.pill_busy, text=f"■ 停止  {HOTKEY}", width=PILL_W - 2 * PILL_H + 4,
+                                    height=18, font=T.font(8, "bold"))
+        self.pill_stop.configure(corner_radius=9)
+        self.pill_stop.pack()
+        for w in (self.pill, self.center, emb, self.pill_logo, row, self.pill_dot, self.pill_status,
+                  self.pill_busy, self.pill_spin):
             self._draggable(w)
 
         # ---- 会話パネル ----
@@ -138,6 +164,7 @@ class App(ctk.CTk):
         self.panel_logo.grid(row=0, column=1, sticky="sw")
         row2, self.dot, self.status = self._status_row(head)
         row2.grid(row=1, column=1, sticky="nw", pady=(3, 0))
+        self.head_spin = DotSpinner(row2, T.BG, dot=4, gap=3)
         self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=2, rowspan=2)
         for w in (head, emb2, self.panel_logo, row2, self.dot, self.status):
             self._draggable(w)
@@ -146,6 +173,9 @@ class App(ctk.CTk):
         self.chat.grid(row=1, column=0, sticky="nsew", padx=6)
         self.chat.grid_columnconfigure(0, weight=1)
         self._bubbles = []
+        self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
+        self.typing_spin = DotSpinner(self.typing, T.SURFACE, dot=6, gap=5)
+        self.typing_spin.pack(padx=14, pady=10)
 
         box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=18)
         box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
@@ -161,10 +191,8 @@ class App(ctk.CTk):
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
         self.hint.bind("<Button-1>", lambda e: self.entry.focus_set())
-        self.send_btn = ctk.CTkButton(box, text="送信", image=icons.send(13), compound="left", width=62, height=32,
-                                      corner_radius=16, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                                      text_color="white", font=T.font(11, "bold"), command=self._send_entry)
-        self.send_btn.grid(row=0, column=2, padx=4, pady=4, sticky="s")
+        self.send_btn = self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER)
+        self.send_btn.grid(row=0, column=2, padx=3, pady=3, sticky="s")
         tip = ctk.CTkLabel(p, text="Enter で送信 ・ Shift+Enter で改行", font=T.font(9), text_color=T.SUB,
                            height=12)
         tip.grid(row=3, column=0, sticky="w", padx=22)
@@ -258,8 +286,12 @@ class App(ctk.CTk):
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
         self._bubbles.append(w)
-        if len(self._bubbles) > MAX_BUBBLES:
+        if len(self._bubbles) > MAX_BUBBLES:  # 古いものを消し、行を詰め直す
             self._bubbles.pop(0).destroy()
+            for i, b in enumerate(self._bubbles):
+                b.grid_configure(row=i)
+        if self.typing.winfo_manager():
+            self.typing.grid_configure(row=len(self._bubbles))  # 入力中表示は常に最後尾
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
     def _post_log(self, text):  # 任意のスレッドから呼べる
@@ -273,16 +305,26 @@ class App(ctk.CTk):
         for d in (self.dot, self.pill_dot):
             d.configure(text_color=color)
         busy = state in BUSY
-        if busy:  # 操作中だけ緊急停止ボタンを出す
+        if busy:  # 操作中だけ緊急停止ボタンとローディング表示を出す
             self.center.grid_remove()
-            self.pill_stop.grid(row=0, column=1)
+            self.pill_busy.grid(row=0, column=1)
             self.panel_stop.grid(row=0, column=0, sticky="ew")
+            self.dot.pack_forget()
+            self.head_spin.pack(side="left", padx=(0, 5), before=self.status)
+            self.typing.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
+            self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
         else:
-            self.pill_stop.grid_remove()
+            self.pill_busy.grid_remove()
             self.panel_stop.grid_remove()
             self.center.grid()
+            self.head_spin.pack_forget()
+            self.dot.pack(side="left", padx=(0, 4), before=self.status)
+            self.typing.grid_remove()
 
     def _animate(self):
+        if self._state in BUSY:
+            for sp in (self.pill_spin, self.head_spin, self.typing_spin):
+                sp.tick()
         _, color, blink = STATES[self._state]
         self._blink = (self._blink + 1) % 16
         c = T.BORDER if blink and self._blink >= 8 else color

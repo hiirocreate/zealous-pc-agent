@@ -79,11 +79,10 @@ def chat(size=18, color="white"):
 
 
 @functools.lru_cache(maxsize=None)
-def send(size=16, color="white"):
-    """紙飛行機。"""
+def send(size=18, color="white"):
+    """紙飛行機(右向き)。尾の切れ込みで飛行機らしく見せる。"""
     img, d = _canvas()
-    d.polygon([(24, 118), (232, 28), (150, 232), (116, 148)], fill=color)
-    d.line((116, 148, 232, 28), fill=(0, 0, 0, 0), width=14)  # 折り目
+    d.polygon([(30, 36), (232, 128), (30, 220), (30, 150), (150, 128), (30, 106)], fill=color)
     return _img(img, size, size)
 
 

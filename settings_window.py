@@ -17,6 +17,9 @@ FIELDS = [
     ("WAKE_ENABLED", "ウェイクワードで起動 (常時待ち受け)", "bool"),
     ("INPUT_MODE", "マイクの入力方式", "choice", ["トランシーバー", "トグル"]),
     ("AUTOSTART", "PC起動時に自動起動", "bool"),
+    ("—", "権限"),
+    ("FOLDER_OPS_ENABLED", "ファイル・フォルダ操作を許可", "bool"),
+    ("FOLDER_DELETE_ENABLED", "削除(ごみ箱へ)を許可", "bool"),
     ("—", "ブラウザ"),
     ("BROWSER", "使用ブラウザ", "choice", ["chrome", "edge", "firefox", "default"]),
     ("SEARCH_URL", "検索URL ({} に語句)", "str"),
@@ -102,8 +105,11 @@ class SettingsWindow(ctk.CTkToplevel):
         foot.grid_columnconfigure(0, weight=1)
         self.msg = ctk.CTkLabel(foot, text="", text_color="#e76f51")
         self.msg.grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(foot, text=f"{config.AI_NAME}を終了", width=90, fg_color="transparent", border_width=1,
-                      border_color="gray40", command=on_quit).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        sub = ctk.CTkFrame(foot, fg_color="transparent")
+        sub.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        for text, cmd in ((f"{config.AI_NAME}を終了", on_quit), ("アンインストール", lambda: self._uninstall(on_quit))):
+            ctk.CTkButton(sub, text=text, width=90, fg_color="transparent", border_width=1,
+                          border_color="gray40", command=cmd).pack(side="left", padx=(0, 6))
         ctk.CTkButton(foot, text="既定に戻す", width=90, fg_color="gray40",
                       command=self._reset).grid(row=0, column=1, padx=4)
         ctk.CTkButton(foot, text="保存", width=80, command=self._save).grid(row=0, column=2)
@@ -128,6 +134,11 @@ class SettingsWindow(ctk.CTkToplevel):
     def _pull(self):
         self._show(f"{config.OLLAMA_MODEL} を取得中…")
         self._bg(lambda: services.pull_model(self._show))
+
+    def _uninstall(self, on_quit):
+        import subprocess
+        subprocess.Popen([shortcut.pythonw(), shortcut.UNINSTALLER], cwd=shortcut.HERE)
+        on_quit()
 
     def _fill(self, values):
         for key, (kind, var) in self._vars.items():

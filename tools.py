@@ -97,15 +97,52 @@ def web_search(query):
 
 
 # ---------------- ファイル・フォルダ ----------------
-def _resolve(name, path):
-    base = os.path.expandvars(os.path.expanduser(path)) if path else config.DESKTOP
-    return os.path.join(base, name)
+_HOME = os.path.expanduser("~")
+_KNOWN = {  # よく使うフォルダの呼び名
+    "デスクトップ": config.DESKTOP, "desktop": config.DESKTOP,
+    "ドキュメント": os.path.join(_HOME, "Documents"), "documents": os.path.join(_HOME, "Documents"),
+    "ダウンロード": os.path.join(_HOME, "Downloads"), "downloads": os.path.join(_HOME, "Downloads"),
+    "ピクチャ": os.path.join(_HOME, "Pictures"), "画像": os.path.join(_HOME, "Pictures"),
+    "ミュージック": os.path.join(_HOME, "Music"), "ビデオ": os.path.join(_HOME, "Videos"),
+}
+
+
+def _base(path):
+    if not path:
+        return config.DESKTOP
+    return _KNOWN.get(path.strip().lower(), os.path.expandvars(os.path.expanduser(path)))
+
+
+def _resolve(name, path=""):
+    if not path and name.strip().lower() in _KNOWN:
+        return _KNOWN[name.strip().lower()]
+    return os.path.abspath(os.path.join(_base(path), name))
+
+
+def _guard(p, delete=False):
+    """OS・アプリ本体・ドライブ直下など、壊すと危険な場所への操作を拒否する。"""
+    if not config.FOLDER_OPS_ENABLED:
+        raise PermissionError("フォルダ操作は設定で無効になっています")
+    if delete and not config.FOLDER_DELETE_ENABLED:
+        raise PermissionError("削除は設定で無効になっています")
+    p = os.path.normcase(os.path.abspath(p))
+    here = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
+    blocked = [os.environ.get(k, "") for k in ("WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramData")]
+    if p == os.path.normcase(os.path.splitdrive(p)[0] + os.sep) or p == os.path.normcase(_HOME):
+        raise PermissionError(f"{p} は操作できません")
+    for b in [here] + [x for x in blocked if x]:
+        b = os.path.normcase(os.path.abspath(b))
+        if p == b or p.startswith(b + os.sep):
+            raise PermissionError(f"{p} は保護されているため操作できません")
+    if delete and os.path.normcase(os.path.abspath(p)) in {os.path.normcase(v) for v in _KNOWN.values()}:
+        raise PermissionError(f"{p} は削除できません")
+    return p
 
 
 @tool("フォルダを作成する(場所の指定が無ければデスクトップ)",
       name=("string", "フォルダ名", True), path=("string", "作成場所のパス", False))
 def create_folder(name, path=""):
-    p = _resolve(name, path)
+    p = _guard(_resolve(name, path))
     os.makedirs(p, exist_ok=True)
     return f"フォルダ {p} を作成しました"
 
@@ -116,7 +153,7 @@ def create_folder(name, path=""):
 def create_text_file(name, content="", path=""):
     if not name.lower().endswith(".txt"):
         name += ".txt"
-    p = _resolve(name, path)
+    p = _guard(_resolve(name, path))
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         f.write(content)
@@ -133,6 +170,77 @@ def append_text_file(name, content, path=""):
     with open(p, "a", encoding="utf-8") as f:
         f.write(content + "\n")
     return f"{p} に追記しました"
+
+
+@tool("フォルダをエクスプローラーで開く(デスクトップ・ドキュメント・ダウンロード等の名前も可)",
+      path=("string", "フォルダのパスまたは名前", True))
+def open_folder(path):
+    p = _resolve(path)
+    if not os.path.isdir(p):
+        return f"フォルダ {p} が見つかりません"
+    os.startfile(p)
+    return f"{p} を開きました"
+
+
+@tool("フォルダの中身を一覧する", path=("string", "フォルダのパスまたは名前", False))
+def list_folder(path=""):
+    p = _resolve(path) if path else config.DESKTOP
+    items = sorted(os.listdir(p), key=str.lower)
+    dirs = [f"[{n}]" for n in items if os.path.isdir(os.path.join(p, n))]
+    files = [n for n in items if not os.path.isdir(os.path.join(p, n))]
+    shown = (dirs + files)[:30]
+    more = f" ほか{len(items) - 30}件" if len(items) > 30 else ""
+    return f"{p}: " + (", ".join(shown) + more if shown else "空です")
+
+
+@tool("ファイルまたはフォルダの名前を変更する",
+      name=("string", "今の名前", True), new_name=("string", "新しい名前", True),
+      path=("string", "ある場所のパス", False))
+def rename_item(name, new_name, path=""):
+    src = _guard(_resolve(name, path))
+    dst = _guard(os.path.join(os.path.dirname(src), new_name))
+    if os.path.exists(dst):
+        return f"{new_name} はすでに存在します"
+    os.rename(src, dst)
+    return f"{name} を {new_name} に変更しました"
+
+
+@tool("ファイルまたはフォルダを別のフォルダへ移動する",
+      name=("string", "移動するもの", True), dest=("string", "移動先フォルダのパスまたは名前", True),
+      path=("string", "今ある場所のパス", False))
+def move_item(name, dest, path=""):
+    import shutil
+    src = _guard(_resolve(name, path))
+    dst_dir = _guard(_resolve(dest))
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.move(src, os.path.join(dst_dir, os.path.basename(src)))
+    return f"{name} を {dst_dir} へ移動しました"
+
+
+@tool("ファイルまたはフォルダを別のフォルダへコピーする",
+      name=("string", "コピーするもの", True), dest=("string", "コピー先フォルダのパスまたは名前", True),
+      path=("string", "今ある場所のパス", False))
+def copy_item(name, dest, path=""):
+    import shutil
+    src = _resolve(name, path)
+    dst_dir = _guard(_resolve(dest))
+    dst = os.path.join(dst_dir, os.path.basename(src))
+    os.makedirs(dst_dir, exist_ok=True)
+    (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, dst)
+    return f"{name} を {dst_dir} へコピーしました"
+
+
+@tool("ファイルまたはフォルダをごみ箱へ移動する(完全には消さない)",
+      name=("string", "削除するもの", True), path=("string", "ある場所のパス", False))
+def delete_item(name, path=""):
+    p = _guard(_resolve(name, path), delete=True)
+    if not os.path.exists(p):
+        return f"{p} が見つかりません"
+    kind = "Directory" if os.path.isdir(p) else "File"
+    out = _powershell("Add-Type -AssemblyName Microsoft.VisualBasic;"
+                      f"[Microsoft.VisualBasic.FileIO.FileSystem]::Delete{kind}('{p.replace(chr(39), chr(39) * 2)}',"
+                      "'OnlyErrorDialogs','SendToRecycleBin')")
+    return f"エラー: {out}" if os.path.exists(p) else f"{os.path.basename(p)} をごみ箱へ移動しました"
 
 
 # ---------------- PC基本制御 ----------------
