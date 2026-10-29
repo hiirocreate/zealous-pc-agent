@@ -9,9 +9,9 @@ SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 DEFAULTS = {
     # ---- AI名・ウェイクワード「ウェイク、<AI名>」 ----
     "AI_NAME": "Zealous",
-    "AI_NAME_ALIASES": ["ゼラス", "ぜらす", "ジーラス", "ゼーラス"],  # 音声認識での表記ゆれ
-    "WAKE_WORDS": ["ウェイク", "ウエイク", "うぇいく", "Wake"],
-    "WAKE_ENABLED": False,
+    "AI_NAME_ALIASES": ["ゼラス", "ぜらす", "ジーラス", "ゼーラス", "セラス", "ゼラズ", "Zelas", "Zeras"],  # 音声認識での表記ゆれ
+    "WAKE_WORDS": ["ウェイク", "ウエイク", "ウェーク", "ウエーク", "うぇいく", "Wake"],
+    "WAKE_ENABLED": True,             # 待機中も「ウェイク、<AI名>」を聞き取る
     "INPUT_MODE": "トランシーバー",
     "PTT_ENABLED": True,             # 話すキー(押している間だけ聞き取る)を使う
     "PTT_KEY": "right ctrl",         # 話すキー
@@ -25,6 +25,7 @@ DEFAULTS = {
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
     "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)
+    "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可
@@ -80,7 +81,12 @@ def load():
     values = dict(DEFAULTS)
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
-            values.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
+            saved = json.load(f)
+        values.update({k: v for k, v in saved.items() if k in DEFAULTS})
+        if saved.get("SETTINGS_VERSION", 1) < 2:  # 以前の版は合図の言葉での起動が既定で OFF だった
+            values["WAKE_ENABLED"] = True
+            for key, new in (("WAKE_WORDS", DEFAULTS["WAKE_WORDS"]), ("AI_NAME_ALIASES", DEFAULTS["AI_NAME_ALIASES"])):
+                values[key] = list(dict.fromkeys(list(values[key]) + new))
     except (OSError, ValueError):
         pass
     globals().update(values)

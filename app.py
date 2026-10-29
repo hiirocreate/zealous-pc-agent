@@ -8,6 +8,7 @@ import os
 import queue
 import re
 import threading
+import time
 
 import customtkinter as ctk
 import tkinter as tk
@@ -28,7 +29,7 @@ from llm import split_reply
 from settings_window import SettingsWindow
 from tts import Speaker
 from voice import VoiceInput
-from wakeword import voice_command
+from wakeword import strip_wake_word
 
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
@@ -51,6 +52,7 @@ STATES = {
     "stop": ("停止しました", T.WARN, False),
 }
 BUSY = ("think",)  # 緊急停止ボタンを出す状態
+FOLLOW_SEC = 8    # 合図の言葉の後、続けて話しかけられる秒数(返事の読み上げが終わるたびに延長)
 
 
 def _autohide_scrollbar(frame):
@@ -133,6 +135,7 @@ class App(ctk.CTk):
             config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
         self.speaker = Speaker(on_error=self._post_log)
+        self._voice_session, self._follow_until = False, 0  # 合図の言葉で始めた音声の会話
         self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
         try:
@@ -296,7 +299,8 @@ class App(ctk.CTk):
         self.typing_spin = DotSpinner(self.typing, dot=7, gap=5)
         self.typing_spin.pack(padx=14, pady=10)
 
-        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=18)
+        # 1行のときの高さ(ボタン32 + 上下の余白4×2 = 40)のちょうど半分の丸みにして、両端をきれいな半円にする
+        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
         box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
         box.grid_columnconfigure(1, weight=1)
         self.mic = self._mic(box, 32)
@@ -464,6 +468,7 @@ class App(ctk.CTk):
         step(1)
 
     def _show_pill(self, animate=True):
+        self._end_follow()
         self._close_drawer()
         if self._maximized:  # 全画面のまま折りたたむときは、外枠を戻して元の大きさから縮める
             self._maximized = False
@@ -839,6 +844,8 @@ class App(ctk.CTk):
                 self._log_sources(sources)
         self._stream = None
         self._refresh_threads()
+        if self._voice_session:  # 声で会話しているときは、読み上げが終わったらまた聞き取る
+            self.after(300, self._start_follow)
 
     def _log_sources(self, sources):
         """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
@@ -920,6 +927,7 @@ class App(ctk.CTk):
     def _send_entry(self):
         text = self.entry.get("1.0", "end").strip()
         if text:
+            self._end_follow(idle=False)  # 文字で入力したら、声の会話は終える
             self.entry.delete("1.0", "end")
             self._fit_input()
             self._submit(text)
@@ -950,12 +958,66 @@ class App(ctk.CTk):
         self._refresh_threads()
 
     def _on_voice(self, text, from_button):
-        cmd = voice_command(text, from_button)
-        if not cmd:
-            self._log(f"(無視) {text}")
-            self._set_state("idle")
+        """聞き取った文を処理する。
+        - マイクボタン・話すキー: そのまま命令にする(合図の言葉は不要)
+        - 待機中の常時聞き取り: 「ウェイク、<AI名>」で始まるときだけ。チャット画面を開き、
+          そのまま続けて話しかけられる状態にする(以後は合図の言葉なしで会話を続けられる)"""
+        cmd = strip_wake_word(text)
+        if from_button:
+            self._end_follow(idle=False)
+            self._submit(cmd or text)
             return
+        if self.speaker.busy and cmd is None:
+            return  # 読み上げ中は、自分の声を拾っただけなので無視
+        if cmd is not None:  # 合図の言葉を聞き取った
+            self.speaker.stop()
+            self._wake_up()
+            if not cmd:
+                self._start_follow()
+                return
+        elif not self._following():
+            return  # 合図の言葉がない周りの会話は無視(チャット欄にも出さない)
+        else:
+            cmd = text
+        self._follow_until = 0
         self._submit(cmd)
+
+    def _wake_up(self):
+        """合図の言葉で呼ばれたとき: ウィジェットを表に出してチャット画面を開く。"""
+        self._voice_session = True
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self._show_panel()
+
+    def _following(self):
+        return self._voice_session and time.monotonic() < self._follow_until
+
+    def _start_follow(self):
+        """続けて話しかけられる状態にする(マイクボタンを押さなくても聞き取る)。"""
+        if not self._voice_session or not config.WAKE_ENABLED:
+            return
+        if self.speaker.busy:  # 読み上げが終わってから聞き始める
+            self.after(300, self._start_follow)
+            return
+        if self._state == "think":
+            return
+        self._follow_until = time.monotonic() + FOLLOW_SEC
+        self._paint_mic(True)
+        self._set_state("listen")
+        self.after(int(FOLLOW_SEC * 1000) + 100, self._follow_timeout)
+
+    def _follow_timeout(self):
+        if self._voice_session and self._follow_until and time.monotonic() >= self._follow_until:
+            self._end_follow()
+
+    def _end_follow(self, idle=True):
+        was = self._voice_session
+        self._voice_session, self._follow_until = False, 0
+        if was and not self._recording:
+            self._paint_mic(False)
+            if idle and self._state == "listen":
+                self._set_state("idle")
 
     def _mic_press(self, _):
         if config.INPUT_MODE == MODE_HOLD or not self._recording:
@@ -1133,6 +1195,7 @@ class App(ctk.CTk):
         self._events.put(self._after_stop)
 
     def _after_stop(self):
+        self._end_follow()
         self._stream = None
         self._recording = False
         self._paint_mic(False)

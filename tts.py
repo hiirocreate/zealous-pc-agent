@@ -24,6 +24,8 @@ class Speaker:
         self._on_error = on_error
         self._buf = ""
         self._last_error = -1e9
+        self._playing = self._synthing = False
+        self._quiet_since = 0.0
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
 
@@ -52,6 +54,12 @@ class Speaker:
         """WAVデータをそのまま鳴らす(声の試聴用)。読み上げ中なら止めてから。"""
         self.stop()
         self._audio.put((self._gen, _decode(data)))
+
+    @property
+    def busy(self):
+        """読み上げ中(または読み上げ待ち)か。終わった直後の少しの間も含める(マイクが自分の声を拾わないように)。"""
+        return (self._playing or self._synthing or not self._texts.empty() or not self._audio.empty()
+                or time.monotonic() - self._quiet_since < 0.6)
 
     def stop(self):
         self._gen += 1
@@ -89,13 +97,15 @@ class Speaker:
             gen, text = self._texts.get()
             if gen != self._gen:
                 continue
+            self._synthing = True
             try:
                 audio = self._synth(text)
+                if gen == self._gen:
+                    self._audio.put((gen, audio))
             except Exception as e:
                 self._report(e)
-                continue
-            if gen == self._gen:
-                self._audio.put((gen, audio))
+            finally:
+                self._synthing = False
 
     def _play_loop(self):
         import sounddevice as sd
@@ -103,8 +113,13 @@ class Speaker:
             gen, (data, rate) = self._audio.get()
             if gen != self._gen:
                 continue
-            sd.play(data, rate)
-            sd.wait()
+            self._playing = True
+            try:
+                sd.play(data, rate)
+                sd.wait()
+            finally:
+                self._playing = False
+                self._quiet_since = time.monotonic()
 
 
 def _decode(data):

@@ -309,3 +309,10 @@ def test_image_queries():
     import websearch
     assert websearch.image_queries("きれいなりんご") == ["りんご きれい", "りんご 高画質"]
     assert llm.quick_route("きれいなりんごの画像調べて") == ("image_search", {"query": "きれいなりんご"})
+
+
+def test_wake_only_opens_chat():
+    from wakeword import strip_wake_word
+    assert strip_wake_word("ウェイク、ゼラス。") == ""
+    assert strip_wake_word("ウェーク ゼラス、天気を教えて") == "天気を教えて"
+    assert strip_wake_word("今日はいい天気") is None
