@@ -1,0 +1,8 @@
+customtkinter
+requests
+pyaudio
+sounddevice
+numpy
+faster-whisper
+pyautogui
+keyboard
