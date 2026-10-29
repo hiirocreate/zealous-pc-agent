@@ -107,7 +107,13 @@ def parse_tool_calls(message):
     return []
 
 
-def ask(text):
+def ask(text, history=None):
+    """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。"""
+    global _last
+    if history is not None:
+        _history.clear()
+        _history.extend(history)
+        _last = time.monotonic()  # スレッドの会話は時間が空いても忘れない
     reply = _ask(text)
     _remember(text, reply)
     return reply

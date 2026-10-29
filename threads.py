@@ -1,0 +1,86 @@
+"""チャットのスレッド(会話のまとまり)の保存と読み出し。1スレッド = 1ファイル(JSON)。"""
+import json
+import os
+import time
+import uuid
+
+import config
+
+DIR = os.path.join(config.APP_DIR, "threads")
+
+
+def _path(tid):
+    return os.path.join(DIR, f"{tid}.json")
+
+
+def new():
+    now = time.time()
+    return {"id": uuid.uuid4().hex[:12], "title": "新しいチャット", "created": now, "updated": now, "messages": []}
+
+
+def save(thread):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = _path(thread["id"]) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(thread, f, ensure_ascii=False)
+    os.replace(tmp, _path(thread["id"]))
+
+
+def load(tid):
+    try:
+        with open(_path(tid), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def listing():
+    """一覧 [{"id", "title", "updated"}](新しい順)。空のスレッドは出さない。"""
+    out = []
+    if os.path.isdir(DIR):
+        for name in os.listdir(DIR):
+            if name.endswith(".json"):
+                t = load(name[:-5])
+                if t and t["messages"]:
+                    out.append({"id": t["id"], "title": t["title"], "updated": t["updated"]})
+    return sorted(out, key=lambda t: -t["updated"])
+
+
+def delete(tid):
+    try:
+        os.remove(_path(tid))
+    except OSError:
+        pass
+
+
+def add(thread, role, text, sources="", images=None):
+    """メッセージを足して保存する。最初の発言をスレッド名にする。"""
+    msg = {"role": role, "text": text, "time": time.time()}
+    if sources:
+        msg["sources"] = sources
+    if images:
+        msg["images"] = images
+    thread["messages"].append(msg)
+    if role == "user" and thread["title"] == "新しいチャット":
+        line = " ".join(text.split())
+        thread["title"] = line[:24] + ("…" if len(line) > 24 else "")
+    thread["updated"] = msg["time"]
+    save(thread)
+
+
+def history(thread, turns):
+    """AI に渡す直前のやりとり [(ユーザーの発言, 返事)](新しいものから turns 往復まで)。"""
+    pairs, user = [], None
+    for m in thread["messages"]:
+        if m["role"] == "user":
+            user = m["text"]
+        elif m["role"] == "ai" and user is not None:
+            pairs.append((user, m["text"][:300]))
+            user = None
+    return pairs[-turns:] if turns > 0 else []
+
+
+def when(ts):
+    """一覧に出す日時(今日なら時刻、それ以外は日付)。"""
+    t, now = time.localtime(ts), time.localtime()
+    return time.strftime("%H:%M" if t[:3] == now[:3] else "%m/%d", t)

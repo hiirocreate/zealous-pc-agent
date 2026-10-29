@@ -1,6 +1,7 @@
-"""常駐型UI。起動: zealous.pyw をダブルクリック
-待機中は横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐し、ドラッグで移動できる。
-会話パネルは常駐位置に応じて、画面の内側へ向かって展開する。
+"""常駐型UI。起動: zealous.pyw をダブルクリック(Zealous は1つだけ起動する)
+待機中は横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐し、ドラッグでどのモニターにも移動できる。
+会話パネルは常駐位置から画面の内側へ、なめらかに広がる。大きさは端をドラッグして自由に変えられ、全画面にもできる。
+チャットはスレッド(話題ごとの会話)で管理し、パネルが広いときは左に一覧、狭いときは ☰ で一覧を開く。
 緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
 import multiprocessing as mp
 import os
@@ -9,16 +10,19 @@ import re
 import threading
 
 import customtkinter as ctk
+import tkinter as tk
 
 import config
 import icons
 import runtime
 import services
-import updater
-import voicevox
 import shortcut
 import theme as T
+import threads
 import tools
+import updater
+import voicevox
+import winutil
 from agent_worker import AgentWorker
 from llm import split_reply
 from settings_window import SettingsWindow
@@ -29,9 +33,14 @@ from wakeword import voice_command
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
 PILL_W, PILL_H = 200, 52
-PANEL_W, PANEL_H = 300, 400
+PANEL_MIN_W, PANEL_MIN_H = 300, 380
+PANEL_R = 18           # パネルの角の丸み
+SIDEBAR_W = 210        # スレッド一覧の幅
+WIDE = 600             # パネルの幅がこれ以上なら、スレッド一覧を常に左に出す
+GRIP = 6               # 端をつかんで大きさを変えられる幅
 INPUT_MAX_LINES = 4
-MAX_BUBBLES = 40
+MAX_BUBBLES = 60
+ANIM_FRAMES, ANIM_MS = 9, 15   # 展開・折りたたみの動き(コマ数・1コマの間隔)
 
 # 状態 -> (表示, 色, 点滅するか)
 STATES = {
@@ -57,7 +66,7 @@ class DotSpinner(ctk.CTkLabel):
     """3つのドットが波打つローディング表示(なめらかに描いたコマ画像を順に切り替える)。
     tick() を一定間隔で呼んで動かす。"""
 
-    def __init__(self, master, bg=None, dot=5, gap=4):
+    def __init__(self, master, dot=5, gap=4):
         self._frames = icons.dot_frames(dot, gap)
         super().__init__(master, text="", image=self._frames[0], fg_color="transparent")
         self._t = 0
@@ -74,17 +83,30 @@ class App(ctk.CTk):
         self._events = queue.Queue()  # 他スレッド -> UIスレッドへの処理依頼
         self._recording = False
         self._expanded = False
+        self._maximized = False
+        self._animating = False
         self._state = "idle"
         self._blink = 0
+        self._stream = None           # 書きかけの返事 [吹き出し, ここまでの文字]
+        self._pending_tid = None      # 返事を待っているスレッド
+        self._update_info = None
+        self.thread = threads.new()   # いま表示しているスレッド(最初の発言で保存される)
 
         self.overrideredirect(True)
         self.attributes("-topmost", True)
-        try:
-            self.attributes("-transparentcolor", T.KEY)  # Windows: 角丸の外側を透過
-        except Exception:
-            pass
+        # Windows: 外枠(角丸・縁・影)はなめらかに描いた画像を後ろに重ね、本体は内側で切り抜く。
+        # それ以外: 角の外側を透過色で抜く(縁は少し粗い)
+        self.shell = winutil.Shell(self, T.BG, T.BORDER, enabled=config.SMOOTH_FRAME)
+        self._bg = T.BG if self.shell.ok else T.KEY
+        self.configure(fg_color=self._bg)
+        if not self.shell.ok:
+            try:
+                self.attributes("-transparentcolor", T.KEY)
+            except tk.TclError:
+                pass
         self._build()
-        self._show_pill()
+        self._show_pill(animate=False)
+        self.after(300, lambda: self._apply(*self._current_rect()))  # 画面に出た後に外枠(Windows)を整える
 
         # Ollama / VOICEVOX を裏で起動し、AIモデルと声を先に読み込んでおく(最初の返事を速くする)
         threading.Thread(target=lambda: (runtime.start_services(), runtime.warm_up()), daemon=True).start()
@@ -101,13 +123,12 @@ class App(ctk.CTk):
             self._log(f"ショートカット登録エラー: {e}")
         self._apply_settings()
         self._set_state("idle")
-        self._update_info = None
-        self._stream = None  # 書きかけの返事 [吹き出し, ここまでの文字]
+        self._refresh_threads()
         if config.AUTO_UPDATE and updater.FROZEN:
             self.after(5000, self.check_update)
         self.after(50, self._pump)
 
-    # ================= 画面 =================
+    # ================= 画面の部品 =================
     def _round(self, master, size, image, cmd=None, fg="transparent", hover=T.SURFACE):
         return RoundButton(master, text="", image=image, width=size, height=size, corner_radius=size // 2,
                            fg_color=fg, hover_color=hover, command=cmd)
@@ -124,26 +145,28 @@ class App(ctk.CTk):
 
     def _status_row(self, master):
         row = ctk.CTkFrame(master, fg_color="transparent")
-        dot = ctk.CTkLabel(row, text="●", font=T.font(8), text_color=T.OK, width=8, height=12)
-        dot.pack(side="left", padx=(0, 4))
+        dot = ctk.CTkLabel(row, text="", image=icons.dot(T.OK), width=8, height=12)
+        dot.pack(side="left", padx=(0, 5))
         text = ctk.CTkLabel(row, text="", font=T.font(10), text_color=T.SUB, height=12)
         text.pack(side="left")
         return row, dot, text
 
+    def _card(self, radius):
+        # Windows では外枠(縁・影)を後ろの画像が描くので、こちらは縁なし
+        return ctk.CTkFrame(self, fg_color=T.BG, bg_color=self._bg, corner_radius=radius,
+                            border_width=0 if self.shell.ok else 1, border_color=T.BORDER)
+
     def _build(self):
         # ---- 待機スタイル: 横長の楕円 ----
-        self.pill = ctk.CTkFrame(self, fg_color=T.BG, bg_color=T.KEY, corner_radius=PILL_H // 2,
-                                 border_width=1, border_color=T.BORDER)
+        self.pill = self._card(PILL_H // 2)
         self.pill.grid_columnconfigure(1, weight=1)
         self.pill.grid_rowconfigure(0, weight=1)
         self.pill_mic = self._mic(self.pill, PILL_H - 12)
         self.pill_mic.grid(row=0, column=0, padx=(6, 0))
-        chat_btn = self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
-                               hover=T.BORDER)
-        chat_btn.grid(row=0, column=2, padx=(0, 6))
+        self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
+                    hover=T.BORDER).grid(row=0, column=2, padx=(0, 6))
         # アップデートがあるときに会話ボタンの右上に出す印
-        self.badge = ctk.CTkLabel(self.pill, text="●", font=T.font(10), text_color=T.CYAN,
-                                  fg_color="transparent", width=10, height=10)
+        self.badge = ctk.CTkLabel(self.pill, text="", image=icons.dot(T.CYAN, 9), width=9, height=9)
 
         self.center = ctk.CTkFrame(self.pill, fg_color="transparent")
         self.center.grid(row=0, column=1)
@@ -154,7 +177,7 @@ class App(ctk.CTk):
         row, self.pill_dot, self.pill_status = self._status_row(self.center)
         row.grid(row=1, column=1, sticky="nw", pady=(2, 0))
         self.pill_busy = ctk.CTkFrame(self.pill, fg_color="transparent")
-        self.pill_spin = DotSpinner(self.pill_busy, T.BG, dot=6, gap=5)
+        self.pill_spin = DotSpinner(self.pill_busy, dot=6, gap=5)
         self.pill_spin.pack(pady=(0, 3))
         self.pill_stop = self._stop(self.pill_busy, text=f"■ 停止  {HOTKEY}", width=PILL_W - 2 * PILL_H + 4,
                                     height=18, font=T.font(8, "bold"))
@@ -164,33 +187,86 @@ class App(ctk.CTk):
                   self.pill_busy, self.pill_spin):
             self._draggable(w)
 
-        # ---- 会話パネル ----
-        self.panel = ctk.CTkFrame(self, fg_color=T.BG, bg_color=T.KEY, corner_radius=20,
-                                  border_width=1, border_color=T.BORDER)
-        p = self.panel
+        # ---- 展開・折りたたみ中に見せる、中身のない下地 ----
+        self.morph = self._card(PANEL_R)
+
+        # ---- 会話パネル: 左にスレッド一覧、右にチャット ----
+        self.panel = self._card(PANEL_R)
+        self.panel.grid_columnconfigure(1, weight=1)
+        self.panel.grid_rowconfigure(0, weight=1)
+        self.side = self._build_sidebar(self.panel)
+        self.main = ctk.CTkFrame(self.panel, fg_color="transparent")
+        self.main.grid(row=0, column=1, sticky="nsew")
+        self._build_chat(self.main)
+        self._side_mode = None
+        self.panel.bind("<Configure>", self._on_panel_resize, add="+")
+
+        # ---- 端をつかんで大きさを変える(パネル表示中だけ) ----
+        cursors = {"n": "sb_v_double_arrow", "s": "sb_v_double_arrow", "e": "sb_h_double_arrow",
+                   "w": "sb_h_double_arrow", "nw": "top_left_corner", "ne": "top_right_corner",
+                   "sw": "bottom_left_corner", "se": "bottom_right_corner"}
+        self._grips = {}
+        for edge, cursor in cursors.items():
+            g = tk.Frame(self, bg=T.BG, cursor=cursor, highlightthickness=0, bd=0)
+            g.bind("<ButtonPress-1>", lambda e, ed=edge: self._resize_start(e, ed))
+            g.bind("<B1-Motion>", self._resize_move)
+            g.bind("<ButtonRelease-1>", self._resize_end)
+            self._grips[edge] = g
+
+    def _build_sidebar(self, master):
+        side = ctk.CTkFrame(master, fg_color=T.SURFACE, corner_radius=PANEL_R if self.shell.ok else 14,
+                            width=SIDEBAR_W)
+        side.grid_propagate(False)
+        side.grid_columnconfigure(0, weight=1)
+        side.grid_rowconfigure(1, weight=1)
+        top = ctk.CTkFrame(side, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=10, pady=(14, 6))
+        top.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(top, text="チャット", font=T.font(13, "bold"), text_color=T.TEXT).grid(row=0, column=0,
+                                                                                         sticky="w", padx=4)
+        ctk.CTkButton(top, text="新しいチャット", image=icons.plus(12), compound="left", width=110, height=28,
+                      corner_radius=14, font=T.font(11), fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                      command=self._new_thread).grid(row=0, column=1)
+        self.thread_list = ctk.CTkScrollableFrame(side, fg_color="transparent", scrollbar_button_color=T.BORDER)
+        self.thread_list.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 10))
+        self.thread_list.grid_columnconfigure(0, weight=1)
+        return side
+
+    def _build_chat(self, p):
         p.grid_columnconfigure(0, weight=1)
         p.grid_rowconfigure(1, weight=1)
 
         head = ctk.CTkFrame(p, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
-        head.grid_columnconfigure(1, weight=1)
-        emb2 = ctk.CTkLabel(head, text="", image=icons.emblem(34), width=34)
-        emb2.grid(row=0, column=0, rowspan=2, padx=(0, 8))
+        head.grid(row=0, column=0, sticky="ew", padx=(10, 12), pady=(12, 4))
+        head.grid_columnconfigure(2, weight=1)
+        self.menu_btn = self._round(head, 30, icons.menu(16), self._toggle_drawer)
+        self.menu_btn.grid(row=0, column=0, rowspan=2, padx=(0, 4))
+        emb2 = ctk.CTkLabel(head, text="", image=icons.emblem(32), width=32)
+        emb2.grid(row=0, column=1, rowspan=2, padx=(2, 8))
         self.panel_logo = ctk.CTkLabel(head, text="", height=14)
-        self.panel_logo.grid(row=0, column=1, sticky="sw")
+        self.panel_logo.grid(row=0, column=2, sticky="sw")
         row2, self.dot, self.status = self._status_row(head)
-        row2.grid(row=1, column=1, sticky="nw", pady=(3, 0))
-        self.head_spin = DotSpinner(row2, T.BG, dot=5, gap=3)
-        self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=2, rowspan=2)
+        row2.grid(row=1, column=2, sticky="nw", pady=(3, 0))
+        self.head_spin = DotSpinner(row2, dot=5, gap=3)
+        buttons = ctk.CTkFrame(head, fg_color="transparent")
+        buttons.grid(row=0, column=3, rowspan=2)
+        self._round(buttons, 30, icons.plus(15), self._new_thread).pack(side="left")
+        self.max_btn = self._round(buttons, 30, icons.maximize(14), self._toggle_max)
+        self.max_btn.pack(side="left")
+        self._round(buttons, 30, icons.gear(18), self.open_settings).pack(side="left")
         for w in (head, emb2, self.panel_logo, row2, self.dot, self.status):
             self._draggable(w)
+        for w in (head, self.panel_logo, self.status):
+            w.bind("<Double-Button-1>", lambda e: self._toggle_max(), add="+")
 
         self.chat = ctk.CTkScrollableFrame(p, fg_color="transparent", scrollbar_button_color=T.BORDER)
         self.chat.grid(row=1, column=0, sticky="nsew", padx=6)
         self.chat.grid_columnconfigure(0, weight=1)
+        self.chat.bind("<Configure>", self._on_chat_resize, add="+")
         self._bubbles = []
+        self._wrap = 220
         self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
-        self.typing_spin = DotSpinner(self.typing, T.SURFACE, dot=7, gap=5)
+        self.typing_spin = DotSpinner(self.typing, dot=7, gap=5)
         self.typing_spin.pack(padx=14, pady=10)
 
         box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=18)
@@ -209,11 +285,10 @@ class App(ctk.CTk):
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
         self.hint.bind("<Button-1>", lambda e: self.entry.focus_set())
-        self.send_btn = self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER)
-        self.send_btn.grid(row=0, column=2, padx=3, pady=3, sticky="s")
-        self.tip = tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB,
-                           height=12)
-        tip.grid(row=3, column=0, sticky="w", padx=22)
+        self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
+            row=0, column=2, padx=3, pady=3, sticky="s")
+        self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
+        self.tip.grid(row=3, column=0, sticky="w", padx=22)
 
         foot = ctk.CTkFrame(p, fg_color="transparent", height=36)
         foot.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 10))
@@ -227,109 +302,348 @@ class App(ctk.CTk):
         w.bind("<B1-Motion>", self._drag_move, add="+")
         w.bind("<ButtonRelease-1>", self._drag_end, add="+")
 
+    # ================= 位置と大きさ =================
+    # 位置は画面の実ピクセル、大きさは CTk の論理ピクセル(×scaling で実ピクセル)で扱う
     def _scaling(self):
         try:
             return ctk.ScalingTracker.get_window_scaling(self)
         except Exception:
             return 1.0
 
-    # 位置は画面の実ピクセル、サイズは CTk の論理ピクセル(×scaling で実ピクセル)で扱う
     def _px(self, v):
         return round(v * self._scaling())
 
-    def _screen(self):
-        return self.winfo_screenwidth(), self.winfo_screenheight()
+    def _logical(self, v):
+        return round(v / self._scaling())
 
-    def _clamp(self, x, y, w, h):
-        sw, sh = self._screen()
-        return max(0, min(x, sw - w)), max(0, min(y, sh - h))
+    def _work(self, x, y):
+        """点(x, y)があるモニターの、タスクバーを除いた範囲 (左, 上, 右, 下)。"""
+        return winutil.work_area(x, y, (0, 0, self.winfo_screenwidth(), self.winfo_screenheight()))
 
-    def _default_pos(self):
-        sw, sh = self._screen()
-        return (sw - self._px(PILL_W + config.MARGIN_X), sh - self._px(PILL_H + config.MARGIN_Y))
+    def _clamp(self, x, y, w, h, area):
+        l, t, r, b = area
+        return max(l, min(x, r - w)), max(t, min(y, b - h))
 
-    def _show_pill(self):
-        self._expanded = False
-        self.panel.pack_forget()
-        self.pill.pack(fill="both", expand=True)
+    def _apply(self, x, y, w, h, radius, fast=False):
+        """窓を (x, y) に 論理サイズ w×h で置き、外枠(Windows)も合わせる。"""
+        self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
+        self.shell.update(int(x), int(y), self._px(w), self._px(h), self._px(radius), fast)
+
+    def _pill_rect(self):
         if getattr(self, "_pos", None) is None:
             pos = config.WINDOW_POS
-            self._pos = tuple(pos) if pos else self._default_pos()
-        self._pos = self._clamp(*self._pos, self._px(PILL_W), self._px(PILL_H))
-        self.geometry(f"{PILL_W}x{PILL_H}+{self._pos[0]}+{self._pos[1]}")
+            if pos:
+                self._pos = tuple(pos)
+            else:  # 初回はメインモニターの右下(タスクバーの上)
+                l, t, r, b = self._work(1, 1)
+                self._pos = (r - self._px(PILL_W + 12), b - self._px(PILL_H + 12))
+        w, h = self._px(PILL_W), self._px(PILL_H)
+        cx, cy = self._pos[0] + w // 2, self._pos[1] + h // 2
+        self._pos = self._clamp(*self._pos, w, h, self._work(cx, cy))  # 外されたモニターに取り残さない
+        return (*self._pos, PILL_W, PILL_H, PILL_H // 2)
 
-    def _panel_origin(self):
-        """常駐位置が画面のどちら側にあるかで、パネルの伸びる向きを決める。"""
-        sw, sh = self._screen()
-        (x, y), pw, ph = self._pos, self._px(PILL_W), self._px(PILL_H)
-        w, h = self._px(PANEL_W), self._px(PANEL_H)
-        px = x + pw - w if x + pw / 2 > sw / 2 else x   # 右寄りなら右端を揃えて左へ
-        py = y + ph - h if y + ph / 2 > sh / 2 else y   # 下寄りなら下端を揃えて上へ
-        return self._clamp(px, py, w, h)
+    def _panel_size(self):
+        w, h = config.PANEL_SIZE
+        return max(PANEL_MIN_W, w), max(PANEL_MIN_H, h)
 
-    def _show_panel(self):
-        self._expanded = True
+    def _panel_rect(self):
+        """常駐位置がモニターのどちら側にあるかで、パネルの伸びる向きを決める。"""
+        x, y, _, _, _ = self._pill_rect()
+        pw, ph = self._px(PILL_W), self._px(PILL_H)
+        area = self._work(x + pw // 2, y + ph // 2)
+        l, t, r, b = area
+        w, h = self._panel_size()
+        w, h = min(w, self._logical(r - l)), min(h, self._logical(b - t))
+        W, H = self._px(w), self._px(h)
+        px = x + pw - W if x + pw / 2 > (l + r) / 2 else x   # 右寄りなら右端を揃えて左へ
+        py = y + ph - H if y + ph / 2 > (t + b) / 2 else y   # 下寄りなら下端を揃えて上へ
+        return (*self._clamp(px, py, W, H, area), w, h, PANEL_R)
+
+    def _current_rect(self):
+        r = PANEL_R if self._expanded else PILL_H // 2
+        return (self.winfo_x(), self.winfo_y(), self._logical(self.winfo_width()),
+                self._logical(self.winfo_height()), r)
+
+    # ================= 展開・折りたたみ(なめらかに大きさを変える) =================
+    def _morph(self, start, end, done):
+        """start から end へ、少しずつ大きさを変える。途中は中身のない下地を見せ、最後に中身を出す。"""
+        self._animating = True
+        for w in (self.pill, self.panel):
+            w.pack_forget()
+        self._hide_grips()
+        self.morph.pack(fill="both", expand=True)
+
+        def step(i):
+            t = i / ANIM_FRAMES
+            e = 1 - (1 - t) ** 3  # 最初は速く、最後はゆっくり止まる
+            rect = [a + (b - a) * e for a, b in zip(start, end)]
+            self.morph.configure(corner_radius=int(min(rect[4], rect[3] / 2)))
+            last = i >= ANIM_FRAMES
+            self._apply(*rect, fast=not last)
+            if last:
+                self.morph.pack_forget()
+                self._animating = False
+                done()
+            else:
+                self.after(ANIM_MS, step, i + 1)
+        step(1)
+
+    def _show_pill(self, animate=True):
+        self._close_drawer()
+        end = self._pill_rect()
+
+        def done():
+            self._expanded = self._maximized = False
+            self.max_btn.configure(image=icons.maximize(14))
+            self.pill.pack(fill="both", expand=True)
+            self._apply(*end)
+        if animate and self._expanded and not self._animating:
+            self._morph(self._current_rect(), end, done)
+        else:
+            self.panel.pack_forget()
+            done()
+
+    def _show_panel(self, animate=True):
+        if self._expanded or self._animating:
+            return
         self.badge.place_forget()  # 更新のお知らせはパネル内のカードで確認できる
-        self.pill.pack_forget()
-        self.panel.pack(fill="both", expand=True)
-        x, y = self._panel_origin()
-        self.geometry(f"{PANEL_W}x{PANEL_H}+{x}+{y}")
-        self.entry.focus_set()
+        end = self._panel_rect()
 
+        def done():
+            self._expanded = True
+            self.panel.pack(fill="both", expand=True)
+            self._apply(*end)
+            self._show_grips()
+            self.entry.focus_set()
+        if animate:
+            self._morph(self._current_rect(), end, done)
+        else:
+            self.pill.pack_forget()
+            done()
+
+    def bring_to_front(self):
+        """2つ目の起動から呼ばれる(別スレッド)。ウィジェットを表に出して会話パネルを開く。"""
+        def front():
+            self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self._show_panel()
+        self._events.put(front)
+
+    def _toggle_max(self):
+        """会話パネルの全画面(いまのモニターのタスクバーを除いた範囲)と元の大きさを切り替える。"""
+        if not self._expanded or self._animating:
+            return
+        if self._maximized:
+            self._maximized = False
+            self._apply(*self._restore_rect)
+            self._show_grips()
+        else:
+            self._restore_rect = self._current_rect()
+            x, y, w, h, _ = self._restore_rect
+            l, t, r, b = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
+            m = self._px(8)
+            self._maximized = True
+            self._hide_grips()
+            self._apply(l + m, t + m, self._logical(r - l - 2 * m), self._logical(b - t - 2 * m), PANEL_R)
+        self.max_btn.configure(image=icons.maximize(14, restore=self._maximized))
+
+    # ---- 移動(ドラッグ) ----
     def _drag_start(self, e):
+        if self._maximized or self._animating:
+            self._drag = None
+            return
         self._drag = (e.x_root, e.y_root, self.winfo_x(), self.winfo_y(), self._pos)
 
     def _drag_move(self, e):
+        if not getattr(self, "_drag", None):
+            return
         sx, sy, wx, wy, (px, py) = self._drag
-        dx, dy = e.x_root - sx, e.y_root - sy
-        x, y = self._clamp(wx + dx, wy + dy, self.winfo_width(), self.winfo_height())
+        w, h = self.winfo_width(), self.winfo_height()
+        # 移動中は、すべてのモニターを合わせた範囲で動かせる(デュアルスクリーン対応)
+        x, y = self._clamp(wx + e.x_root - sx, wy + e.y_root - sy, w, h,
+                           winutil.virtual_bounds((0, 0, self.winfo_screenwidth(), self.winfo_screenheight())))
         self.geometry(f"+{x}+{y}")
+        self.shell.move(x, y)
         # パネル表示中に動かした場合も、閉じたときの待機位置を同じだけ動かす
         self._pos = (px + x - wx, py + y - wy)
 
     def _drag_end(self, _):
-        if getattr(self, "_drag", None):
-            self._drag = None
-            config.save({"WINDOW_POS": list(self._pos)})
+        if not getattr(self, "_drag", None):
+            return
+        self._drag = None
+        # 離した場所のモニターからはみ出していれば、内側に収める
+        x, y, w, h, r = self._current_rect()
+        area = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
+        nx, ny = self._clamp(x, y, self._px(w), self._px(h), area)
+        self._pos = (self._pos[0] + nx - x, self._pos[1] + ny - y)
+        if (nx, ny) != (x, y):
+            self._apply(nx, ny, w, h, r)
+        config.save({"WINDOW_POS": list(self._pos)})
 
-    # ---- 会話表示: kind = user / ai / sys ----
+    # ---- 大きさの変更(端をドラッグ) ----
+    def _show_grips(self):
+        g, c = GRIP, GRIP * 2
+        place = {"n": dict(x=c, y=0, relwidth=1, width=-2 * c, height=g),
+                 "s": dict(x=c, rely=1, y=-g, relwidth=1, width=-2 * c, height=g),
+                 "w": dict(x=0, y=c, relheight=1, height=-2 * c, width=g),
+                 "e": dict(relx=1, x=-g, y=c, relheight=1, height=-2 * c, width=g),
+                 "nw": dict(x=0, y=0, width=c, height=c), "ne": dict(relx=1, x=-c, y=0, width=c, height=c),
+                 "sw": dict(x=0, rely=1, y=-c, width=c, height=c),
+                 "se": dict(relx=1, x=-c, rely=1, y=-c, width=c, height=c)}
+        for edge, grip in self._grips.items():
+            if len(edge) == 2 and not self.shell.ok:
+                continue  # 角を切り抜けない環境では、角のつまみが四角く見えるため出さない
+            grip.place(**place[edge])
+            grip.lift()
+
+    def _hide_grips(self):
+        for grip in self._grips.values():
+            grip.place_forget()
+
+    def _resize_start(self, e, edge):
+        self._resizing = (edge, e.x_root, e.y_root, self.winfo_x(), self.winfo_y(),
+                          self.winfo_width(), self.winfo_height())
+
+    def _resize_move(self, e):
+        edge, sx, sy, x, y, w, h = self._resizing
+        dx, dy = e.x_root - sx, e.y_root - sy
+        mw, mh = self._px(PANEL_MIN_W), self._px(PANEL_MIN_H)
+        if "e" in edge:
+            w = max(mw, w + dx)
+        if "w" in edge:
+            nw = max(mw, w - dx)
+            x, w = x + w - nw, nw
+        if "s" in edge:
+            h = max(mh, h + dy)
+        if "n" in edge:
+            nh = max(mh, h - dy)
+            y, h = y + h - nh, nh
+        self._apply(x, y, self._logical(w), self._logical(h), PANEL_R, fast=True)
+
+    def _resize_end(self, _):
+        x, y, w, h, r = self._current_rect()
+        self._apply(x, y, w, h, r)  # 最後にきれいに描き直す
+        config.save({"PANEL_SIZE": [w, h]})
+
+    # ---- パネルの幅に合わせて、スレッド一覧を左に出す / ☰ で開く ----
+    def _on_panel_resize(self, e):
+        wide = self._logical(e.width) >= WIDE
+        mode = "wide" if wide else "narrow"
+        if mode == self._side_mode:
+            return
+        self._side_mode = mode
+        self._close_drawer()
+        if wide:
+            self.side.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
+            self.menu_btn.grid_remove()
+        else:
+            self.side.grid_forget()
+            self.menu_btn.grid()
+
+    def _toggle_drawer(self):
+        if self._side_mode == "wide":
+            return
+        if self.side.winfo_manager() == "place":
+            self._close_drawer()
+        else:
+            # CTk の部品は place で大きさを渡せないので、高さはパネルに合わせて設定してから重ねる
+            self.side.configure(height=self._logical(self.panel.winfo_height()) - 16)
+            self.side.place(in_=self.panel, x=8, y=8)
+            self.side.lift()
+
+    def _close_drawer(self):
+        if self.side.winfo_manager() == "place":
+            self.side.place_forget()
+
+    def _on_chat_resize(self, e):
+        """チャット欄の幅に合わせて、吹き出しの折り返し幅を変える。"""
+        wrap = max(180, int(self._logical(e.width) * 0.74))
+        if abs(wrap - self._wrap) < 8:
+            return
+        self._wrap = wrap
+        for w in self._bubbles:
+            if getattr(w, "_bubble", False):
+                w.configure(wraplength=wrap)
+
+    # ================= スレッド =================
+    def _refresh_threads(self):
+        for w in self.thread_list.winfo_children():
+            w.destroy()
+        items = threads.listing()
+        if not items:
+            ctk.CTkLabel(self.thread_list, text="まだ会話はありません", font=T.font(10), text_color=T.SUB).grid(
+                row=0, column=0, pady=12)
+        for i, t in enumerate(items):
+            active = t["id"] == self.thread["id"]
+            row = ctk.CTkFrame(self.thread_list, fg_color=T.BG if active else "transparent", corner_radius=10,
+                               cursor="hand2")
+            row.grid(row=i, column=0, sticky="ew", pady=1)
+            row.grid_columnconfigure(0, weight=1)
+            title = ctk.CTkLabel(row, text=t["title"], font=T.font(11, "bold" if active else "normal"),
+                                 text_color=T.TEXT if active else T.SUB, anchor="w")
+            title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=(6, 0))
+            when = ctk.CTkLabel(row, text=threads.when(t["updated"]), font=T.font(9), text_color=T.SUB, anchor="w",
+                                height=12)
+            when.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
+            self._round(row, 24, icons.trash(12), lambda tid=t["id"]: self._delete_thread(tid),
+                        hover=T.BORDER).grid(row=0, column=1, rowspan=2, padx=(0, 4))
+            for w in (row, title, when):
+                w.bind("<Button-1>", lambda e, tid=t["id"]: self._open_thread(tid))
+
+    def _new_thread(self):
+        self._close_drawer()
+        if self.thread["messages"]:
+            self.thread = threads.new()
+            self._clear_chat()
+            self._refresh_threads()
+        self.entry.focus_set()
+
+    def _open_thread(self, tid):
+        self._close_drawer()
+        t = threads.load(tid)
+        if not t:
+            return
+        self.thread = t
+        self._clear_chat()
+        for m in t["messages"]:
+            if m["role"] in ("user", "ai"):
+                self._log(m["text"], m["role"])
+            if m.get("images"):
+                self._log_images(m["images"], auto_open=False)
+            if m.get("sources"):
+                self._log_sources(m["sources"])
+        self._refresh_threads()
+
+    def _delete_thread(self, tid):
+        threads.delete(tid)
+        if tid == self.thread["id"]:
+            self.thread = threads.new()
+            self._clear_chat()
+        self._refresh_threads()
+
+    def _clear_chat(self):
+        self._stream = None
+        for w in self._bubbles:
+            w.destroy()
+        self._bubbles.clear()
+        self.typing.grid_remove()
+
+    # ================= 会話表示: kind = user / ai / sys =================
     def _log(self, text, kind="sys"):
         row = len(self._bubbles)
         if kind == "sys":
-            w = ctk.CTkLabel(self.chat, text=text, font=T.font(10), text_color=T.SUB, wraplength=240)
+            w = ctk.CTkLabel(self.chat, text=text, font=T.font(10), text_color=T.SUB, wraplength=self._wrap)
             w.grid(row=row, column=0, pady=2)
         else:
             user = kind == "user"
-            w = ctk.CTkLabel(self.chat, text=text, font=T.font(12), wraplength=200, justify="left",
+            w = ctk.CTkLabel(self.chat, text=text, font=T.font(12), wraplength=self._wrap, justify="left",
                              fg_color=T.ACCENT if user else T.SURFACE, text_color="white" if user else T.TEXT,
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
+        w._bubble = True
         self._add_widget(w, None)
         return w
-
-    # ---- 返事を書けた分から表示・読み上げ ----
-    def _on_delta(self, piece):
-        if self._stream is None:
-            self.typing.grid_remove()  # 文字が届き始めたら「入力中」のドットは消す
-            self._stream = [self._log("", "ai"), ""]
-        self._stream[1] += piece
-        self._stream[0].configure(text=self._stream[1])
-        self.speaker.feed(piece)  # 一文になったところから話し始める
-        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
-
-    def _on_reply(self, text):
-        body, sources, images = split_reply(text)
-        if self._stream is not None:
-            self._stream[0].configure(text=body)
-            self.speaker.flush()  # 句点で終わっていない最後の部分も読む
-        else:
-            self._log(body, "ai")
-            self.speaker.say(body)  # 出典(URL)や画像は読み上げない
-        self._stream = None
-        if images:
-            self._log_images(images)
-        if sources:
-            self._log_sources(sources)
 
     def _add_widget(self, w, sticky):
         """チャット欄の末尾に部品を追加する(sticky 指定時はここで配置)。"""
@@ -344,18 +658,56 @@ class App(ctk.CTk):
             self.typing.grid_configure(row=len(self._bubbles))  # 入力中表示は常に最後尾
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
+    # ---- 返事を書けた分から表示・読み上げ ----
+    def _showing_pending(self):
+        return self._pending_tid == self.thread["id"]
+
+    def _on_delta(self, piece):
+        self.speaker.feed(piece)  # 一文になったところから話し始める
+        if not self._showing_pending():
+            return
+        if self._stream is None:
+            self.typing.grid_remove()  # 文字が届き始めたら「入力中」のドットは消す
+            self._stream = [self._log("", "ai"), ""]
+        self._stream[1] += piece
+        self._stream[0].configure(text=self._stream[1])
+        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+
+    def _on_reply(self, text):
+        body, sources, images = split_reply(text)
+        streamed = self._stream is not None
+        if streamed:
+            self.speaker.flush()  # 句点で終わっていない最後の部分も読む
+        else:
+            self.speaker.say(body)  # 出典(URL)や画像は読み上げない
+        # 返事は、質問したスレッドに保存する(途中で別のスレッドを開いていても)
+        target = self.thread if self._showing_pending() else threads.load(self._pending_tid)
+        if target is not None:
+            threads.add(target, "ai", body, sources, images)
+        if self._showing_pending():
+            if streamed:
+                self._stream[0].configure(text=body)
+            else:
+                self._log(body, "ai")
+            if images:
+                self._log_images(images)
+            if sources:
+                self._log_sources(sources)
+        self._stream = None
+        self._refresh_threads()
+
     def _log_sources(self, sources):
         """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
         box = ctk.CTkFrame(self.chat, fg_color="transparent")
         lines = sources.strip().split("\n")
         for title, url in zip(lines[0::2], lines[1::2]):
             link = ctk.CTkLabel(box, text=f"↗ {title}", font=T.font(10, "underline"), text_color=T.CYAN,
-                                anchor="w", justify="left", wraplength=230, cursor="hand2")
+                                anchor="w", justify="left", wraplength=self._wrap, cursor="hand2")
             link.pack(anchor="w", padx=8, pady=1)
             link.bind("<Button-1>", lambda e, u=url: tools.open_in_browser(u))
         self._add_widget(box, "w")
 
-    def _log_images(self, images):
+    def _log_images(self, images, auto_open=True):
         """画像のサムネイルを横に並べ、クリックで一覧ウィンドウを開く。画像検索なら一覧も自動で開く。"""
         import gallery
         items = images["items"]
@@ -372,7 +724,7 @@ class App(ctk.CTk):
                       fg_color="transparent", border_width=1, border_color=T.ACCENT, hover_color=T.SURFACE,
                       command=open_all).grid(row=1, column=0, columnspan=4, sticky="w", padx=2, pady=(4, 0))
         self._add_widget(box, "w")
-        if images.get("open"):
+        if auto_open and images.get("open"):
             open_all()
 
     def _post_log(self, text):  # 任意のスレッドから呼べる
@@ -384,22 +736,22 @@ class App(ctk.CTk):
         for t in (self.status, self.pill_status):
             t.configure(text=label)
         for d in (self.dot, self.pill_dot):
-            d.configure(text_color=color)
-        busy = state in BUSY
-        if busy:  # 操作中だけ緊急停止ボタンとローディング表示を出す
+            d.configure(image=icons.dot(color))
+        if state in BUSY:  # 操作中だけ緊急停止ボタンとローディング表示を出す
             self.center.grid_remove()
             self.pill_busy.grid(row=0, column=1)
             self.panel_stop.grid(row=0, column=0, sticky="ew")
             self.dot.pack_forget()
             self.head_spin.pack(side="left", padx=(0, 5), before=self.status)
-            self.typing.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
-            self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+            if self._showing_pending():
+                self.typing.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
+                self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
         else:
             self.pill_busy.grid_remove()
             self.panel_stop.grid_remove()
             self.center.grid()
             self.head_spin.pack_forget()
-            self.dot.pack(side="left", padx=(0, 4), before=self.status)
+            self.dot.pack(side="left", padx=(0, 5), before=self.status)
             self.typing.grid_remove()
 
     def _animate(self):
@@ -408,9 +760,10 @@ class App(ctk.CTk):
                 sp.tick()
         _, color, blink = STATES[self._state]
         self._blink = (self._blink + 1) % 16
-        c = T.BORDER if blink and self._blink >= 8 else color
-        for d in (self.dot, self.pill_dot):
-            d.configure(text_color=c)
+        if blink:
+            c = T.BORDER if self._blink >= 8 else color
+            for d in (self.dot, self.pill_dot):
+                d.configure(image=icons.dot(c))
 
     # ================= 入力 =================
     def _on_return(self, e):
@@ -445,8 +798,12 @@ class App(ctk.CTk):
             self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
             self.open_voice_picker()
             return
-        self.worker.submit(text)
+        history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
+        threads.add(self.thread, "user", text)
+        self._pending_tid = self.thread["id"]
+        self.worker.submit(text, history)
         self._set_state("think")
+        self._refresh_threads()
 
     def _on_voice(self, text, from_button):
         cmd = voice_command(text, from_button)
@@ -518,10 +875,7 @@ class App(ctk.CTk):
 
     def _background(self, label, job):
         """時間のかかる準備を裏で行い、進み具合をチャット欄に表示する。job(progress(割合, 説明))。"""
-        note = ctk.CTkLabel(self.chat, text=f"{label}: 準備中…", font=T.font(10), text_color=T.SUB,
-                            wraplength=240)
-        self._add_widget(note, None)
-        note.grid(row=len(self._bubbles) - 1, column=0, pady=2)
+        note = self._log(f"{label}: 準備中…")
 
         def progress(ratio, text):
             self._events.put(lambda: note.winfo_exists() and note.configure(text=f"{label}: {text}"))
@@ -567,7 +921,8 @@ class App(ctk.CTk):
             except Exception as e:
                 info, msg = None, f"確認できませんでした: {e}"
             else:
-                msg = f"v{info['version']} があります" if info else f"最新版です (v{updater.VERSION})"
+                msg = (f"新しいバージョン v{info['version']} があります（会話パネルから更新できます）" if info
+                       else f"既に最新バージョンです（v{updater.VERSION}）")
             self._events.put(lambda: self._update_found(info, manual))
             if report:
                 report(msg)
@@ -579,7 +934,8 @@ class App(ctk.CTk):
         if not info or (self._update_info and self._update_info["version"] == info["version"] and not manual):
             return
         self._update_info = info
-        self.badge.place(relx=1.0, x=-12, y=6, anchor="ne")
+        if not self._expanded:
+            self.badge.place(relx=1.0, x=-12, y=6, anchor="ne")
         card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.ACCENT)
         ctk.CTkLabel(card, text=f"新しいバージョン v{info['version']} があります", font=T.font(11, "bold"),
                      text_color=T.TEXT).pack(anchor="w", padx=12, pady=(8, 0))

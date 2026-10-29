@@ -16,8 +16,10 @@ DEFAULTS = {
     "PTT_ENABLED": True,             # 話すキー(押している間だけ聞き取る)を使う
     "PTT_KEY": "right ctrl",         # 話すキー
     "AUTOSTART": False,              # PC起動時に自動起動
-    "WINDOW_POS": None,
-    "SETUP_DONE": False,
+    "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
+    "PANEL_SIZE": [340, 500],
+    "SMOOTH_FRAME": True,            # Windows: なめらかな外枠と影を重ねて表示(再起動後に反映)        # 会話パネルの大きさ [幅, 高さ](端のドラッグで更新)
+    "SETUP_DONE": False,             # 初回セットアップ画面を表示済みか
     # ---- アップデート ----
     "AUTO_UPDATE": True,             # 起動時(と1日ごと)に新しい版を確認
     "UPDATE_REPO": "hiirocreate/zealous-releases",  # 配布元(GitHub の owner/repo、公開リポジトリ)             # 初回セットアップ画面を表示済みか              # 常駐位置 [x, y](ドラッグで更新)
@@ -32,10 +34,10 @@ DEFAULTS = {
     "OLLAMA_MODEL": "qwen2.5:1.5b",
     "OLLAMA_TIMEOUT": 60,
     "USE_GPU": True,                 # NVIDIA の GPU があれば使う(GPU 用ライブラリを追加で取得)
-    "MAX_TOOL_STEPS": 3,
+    "MAX_TOOL_STEPS": 3,             # 1命令あたりの関数呼び出し上限(ループ防止)
     "QUICK_ROUTE": True,             # 「〜を調べて」などはAIの判断を待たずに直接実行(速い)
     "CONTEXT_TURNS": 4,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
-    "CONTEXT_RESET_MIN": 10,         # この分数だけ話しかけなければ記憶を消す             # 1命令あたりの関数呼び出し上限(ループ防止)
+    "CONTEXT_RESET_MIN": 10,         # スレッドを使わない呼び出しで、この分数話しかけなければ記憶を消す
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)
     # ---- 音声合成 (VOICEVOX) ----

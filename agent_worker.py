@@ -8,9 +8,9 @@ def _worker_main(inq, outq):
     import llm
     llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
     while True:
-        text = inq.get()
+        text, history = inq.get()
         try:
-            outq.put(("reply", llm.ask(text)))
+            outq.put(("reply", llm.ask(text, history)))
         except Exception as e:
             outq.put(("error", str(e)))
 
@@ -28,10 +28,11 @@ class AgentWorker:
         self._proc = self._ctx.Process(target=_worker_main, args=(self._inq, self._outq), daemon=True)
         self._proc.start()
 
-    def submit(self, text):
+    def submit(self, text, history=None):
+        """history: そのスレッドの直前のやりとり [(発言, 返事)]。None なら作業プロセス側の記憶を使う。"""
         with self._lock:
             self.pending += 1
-            self._inq.put(text)
+            self._inq.put((text, history))
 
     def poll(self):
         out = []

@@ -229,3 +229,20 @@ def test_split_sentences():
     from tts import split_sentences
     assert split_sentences("はい。わかりました！次は？") == ["はい。", "わかりました！", "次は？"]
     assert split_sentences("短い、文。") == ["短い、文。"]
+
+
+def test_threads(tmp_path, monkeypatch):
+    import threads
+    monkeypatch.setattr(threads, "DIR", str(tmp_path))
+    t = threads.new()
+    assert threads.listing() == []                      # まだ何も話していないスレッドは出さない
+    threads.add(t, "user", "ポメラニアンの性格を調べて")
+    threads.add(t, "ai", "明るい性格です。", sources="[1] A\nhttps://a")
+    threads.add(t, "user", "寿命は？")
+    threads.add(t, "ai", "12〜16年ほどです。")
+    assert t["title"] == "ポメラニアンの性格を調べて"
+    assert threads.history(t, 1) == [("寿命は？", "12〜16年ほどです。")]
+    assert threads.load(t["id"])["messages"][1]["sources"] == "[1] A\nhttps://a"
+    assert [x["id"] for x in threads.listing()] == [t["id"]]
+    threads.delete(t["id"])
+    assert threads.listing() == []

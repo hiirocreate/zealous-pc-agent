@@ -29,7 +29,7 @@ def uninstall():
 def selftest(out):
     import importlib
     import traceback
-    mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime", "updater", "gallery", "websearch", "apps", "models", "voicevox", "voice_picker", "ime",
+    mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime", "updater", "gallery", "websearch", "apps", "models", "voicevox", "voice_picker", "ime", "winutil", "single_instance", "threads",
             "faster_whisper", "ctranslate2", "sounddevice", "keyboard", "pyautogui", "customtkinter"]
     errors = []
     for m in mods:
@@ -51,12 +51,26 @@ def main():
         return selftest(sys.argv[sys.argv.index("--selftest") + 1])
     if "--uninstall" in sys.argv:
         return uninstall()
+    import single_instance
+    lock = single_instance.acquire()
+    if lock is None and "--setup" in sys.argv:  # 設定画面から開いたときは、元の Zealous が閉じるのを少し待つ
+        import time
+        for _ in range(40):
+            time.sleep(0.25)
+            lock = single_instance.acquire()
+            if lock:
+                break
+    if lock is None:  # すでに起動中: 新しく出さずに、今あるウィジェットを表に出す
+        single_instance.notify_running()
+        return
     if "--setup" in sys.argv or (not config.SETUP_DONE and not runtime.ready()):
         import setup_wizard
         if not setup_wizard.run():
             return
     from app import App
-    App().mainloop()
+    app = App()
+    single_instance.serve(lock, app.bring_to_front)
+    app.mainloop()
 
 
 if __name__ == "__main__":

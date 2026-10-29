@@ -129,3 +129,50 @@ def dot_frames(dot=6, gap=5, count=28):
             d.ellipse((cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2), fill=(r, g, b, alpha))
         frames.append(_img(img.resize((w * 2, h * 2), Image.LANCZOS), w, h))
     return frames
+
+
+@functools.lru_cache(maxsize=None)
+def dot(color, size=8):
+    """状態を表す小さな丸(文字の「●」より縁がなめらか)。"""
+    k = 8
+    img = Image.new("RGBA", (size * k, size * k), (0, 0, 0, 0))
+    ImageDraw.Draw(img).ellipse((0, 0, size * k - 1, size * k - 1), fill=color)
+    return _img(img.resize((size * 2, size * 2), Image.LANCZOS), size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def menu(size=16, color=(170, 176, 194)):
+    """ハンバーガーメニュー(三本線)。"""
+    img, d = _canvas()
+    for y in (70, 128, 186):
+        d.rounded_rectangle((40, y - 11, 216, y + 11), radius=11, fill=color)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def plus(size=16, color=(170, 176, 194)):
+    img, d = _canvas()
+    d.rounded_rectangle((116, 36, 140, 220), radius=12, fill=color)
+    d.rounded_rectangle((36, 116, 220, 140), radius=12, fill=color)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def maximize(size=16, restore=False, color=(170, 176, 194)):
+    """全画面(四角)/元に戻す(重なった四角)。"""
+    img, d = _canvas()
+    if restore:
+        d.rounded_rectangle((84, 40, 216, 172), radius=22, outline=color, width=18)
+        d.rounded_rectangle((40, 84, 172, 216), radius=22, outline=color, width=18, fill=(0, 0, 0, 0))
+    else:
+        d.rounded_rectangle((44, 44, 212, 212), radius=26, outline=color, width=18)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def trash(size=14, color=(138, 145, 165)):
+    img, d = _canvas()
+    d.rounded_rectangle((52, 70, 204, 90), radius=8, fill=color)
+    d.rounded_rectangle((100, 44, 156, 70), radius=8, outline=color, width=16)
+    d.rounded_rectangle((68, 96, 188, 220), radius=18, outline=color, width=16)
+    return _img(img, size, size)
