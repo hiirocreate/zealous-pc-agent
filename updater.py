@@ -49,9 +49,20 @@ def install(info, progress):
         raise RuntimeError("ソース版は git pull で更新してください")
     dest = os.path.join(tempfile.gettempdir(), f"ZealousSetup-{info['version']}.exe")
     runtime.download(info["url"], dest, progress)
-    # 終了を待ってから上書きし、終わったら自動で起動し直す(installer.iss の [Run] 参照)
-    # 失敗したときは理由が画面に出るよう、メッセージは隠さない。記録は設定フォルダの update.log に残す。
-    # 作業フォルダは一時フォルダにする(インストール先を作業フォルダのまま掴んでいると、入れ替えの邪魔になる)
+    # Zealous が完全に終わってからインストーラーを動かす(動いたままだとファイルを置き換えられない)。
+    # 待つ役は別のプロセス(PowerShell)に任せ、Zealous はこの後すぐ終了する。
+    # 終わったら自動で起動し直す(installer.iss の [Run] 参照)。記録は設定フォルダの update.log に残す。
     log = os.path.join(config.APP_DIR, "update.log")
-    subprocess.Popen([dest, "/SILENT", "/NORESTART", "/NOCLOSEAPPLICATIONS", f"/LOG={log}"],
-                     cwd=tempfile.gettempdir(), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    q = lambda p: "'" + p.replace("'", "''") + "'"
+    log_arg = q('/LOG="' + log + '"')
+    script = (f"Wait-Process -Id {os.getpid()} -Timeout 30 -ErrorAction SilentlyContinue; "
+              "Get-Process -Name Zealous -ErrorAction SilentlyContinue | Stop-Process -Force; "
+              "Start-Sleep -Milliseconds 800; "
+              f"Start-Process -FilePath {q(dest)} -ArgumentList "
+              f"'/SILENT','/NORESTART','/NOCLOSEAPPLICATIONS',{log_arg}")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    import base64  # 引用符の扱いで壊れないよう、命令は符号化して渡す
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                      "-EncodedCommand", encoded],
+                     cwd=tempfile.gettempdir(), creationflags=flags)

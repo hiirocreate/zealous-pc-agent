@@ -63,20 +63,43 @@ Type: files; Name: "{userstartup}\Zealous.lnk"
 // 動いている Zealous(会話のための裏方のプロセスも含む)を止めてから入れ替える。
 // (/T は付けない: アップデートではこのインストーラー自身が Zealous から起動されており、一緒に止めてしまうため)
 // 止まらずにファイルが使用中のままだと「DeleteFile エラー: コード5」や「変更を元に戻しています」となる。
+function PowerShell(Script: String): Integer;
+var
+  Code: Integer;
+begin
+  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+          '-NoProfile -NonInteractive -WindowStyle Hidden -Command "' + Script + '"',
+          '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Result := Code
+  else
+    Result := -1;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code, I: Integer;
 begin
+  Result := '';
   // 動いている Zealous を止め、本当に終わる(ファイルが手放される)まで待つ。
   // taskkill は対象がいなくなると 128 を返すので、それまで繰り返す(最大で約10秒)。
   for I := 1 to 30 do
   begin
     if not Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    begin
+      Log('taskkill を実行できませんでした');
       Break;
+    end;
+    Log('taskkill: ' + IntToStr(Code));
     if Code = 128 then
       Break;
     Sleep(300);
   end;
-  Sleep(300);
-  Result := '';
+  // 念のため別の方法でも止め、残っていないか確かめる(残っていれば、上書きに失敗する前に知らせる)
+  PowerShell('Get-Process -Name Zealous -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500');
+  Code := PowerShell('if (Get-Process -Name Zealous -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }');
+  Log('Zealous の残り確認: ' + IntToStr(Code));
+  if Code = 1 then
+    Result := 'Zealous を終了できませんでした。' + #13#10 +
+              'タスクマネージャー（Ctrl+Shift+Esc）で「Zealous」をすべて終了してから、' +
+              'もう一度インストールしてください。終了できない場合は、PCを再起動してからインストールしてください。';
 end;
