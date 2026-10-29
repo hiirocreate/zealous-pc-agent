@@ -1,7 +1,11 @@
 """各種設定の管理画面。保存すると settings.json に書き込み、即時反映する。"""
+import threading
+
 import customtkinter as ctk
 
 import config
+import services
+import shortcut
 
 # (キー, 表示名, 種類[, 選択肢])  種類: str / int / float / bool / list / choice
 FIELDS = [
@@ -9,6 +13,7 @@ FIELDS = [
     ("AI_NAME", "AI名", "str"),
     ("AI_NAME_ALIASES", "AI名の別表記 (カンマ区切り)", "list"),
     ("WAKE_WORDS", "ウェイク語 (カンマ区切り)", "list"),
+    ("AUTOSTART", "PC起動時に自動起動", "bool"),
     ("—", "ブラウザ"),
     ("BROWSER", "使用ブラウザ", "choice", ["chrome", "edge", "firefox", "default"]),
     ("SEARCH_URL", "検索URL ({} に語句)", "str"),
@@ -56,10 +61,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self.geometry("440x560")
         self.attributes("-topmost", True)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+        bar.grid_columnconfigure(2, weight=1)
+        ctk.CTkButton(bar, text="接続確認", width=80, command=self._check).grid(row=0, column=0)
+        ctk.CTkButton(bar, text="モデル取得", width=80, command=self._pull).grid(row=0, column=1, padx=4)
+        self.svc = ctk.CTkLabel(bar, text="", anchor="w", wraplength=250, justify="left")
+        self.svc.grid(row=0, column=2, sticky="ew")
 
         body = ctk.CTkScrollableFrame(self)
-        body.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        body.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         body.grid_columnconfigure(1, weight=1)
         for r, f in enumerate(FIELDS):
             if f[0] == "—":
@@ -80,7 +93,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self._vars[key] = (kind, var)
 
         foot = ctk.CTkFrame(self, fg_color="transparent")
-        foot.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        foot.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
         foot.grid_columnconfigure(0, weight=1)
         self.msg = ctk.CTkLabel(foot, text="", text_color="#e76f51")
         self.msg.grid(row=0, column=0, sticky="w")
@@ -88,6 +101,26 @@ class SettingsWindow(ctk.CTkToplevel):
                       command=self._reset).grid(row=0, column=1, padx=4)
         ctk.CTkButton(foot, text="保存", width=80, command=self._save).grid(row=0, column=2)
         self._fill(config.current())
+
+    # ---- Ollama / VOICEVOX (別スレッドで実行し画面を止めない) ----
+    def _bg(self, job):
+        def run():
+            try:
+                job()
+            except Exception as e:
+                self._show(f"エラー: {e}")
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show(self, text):
+        self.after(0, lambda: self.winfo_exists() and self.svc.configure(text=text))
+
+    def _check(self):
+        self._show("確認中…")
+        self._bg(lambda: self._show(services.check_ollama()[2] + "\n" + services.check_voicevox()[1]))
+
+    def _pull(self):
+        self._show(f"{config.OLLAMA_MODEL} を取得中…")
+        self._bg(lambda: services.pull_model(self._show))
 
     def _fill(self, values):
         for key, (kind, var) in self._vars.items():
@@ -108,6 +141,11 @@ class SettingsWindow(ctk.CTkToplevel):
                 return
         if not changes["AI_NAME"] or not changes["WAKE_WORDS"]:
             self.msg.configure(text="AI名とウェイク語は必須です", text_color="#e76f51")
+            return
+        try:
+            shortcut.set_autostart(changes["AUTOSTART"])
+        except Exception as e:
+            self.msg.configure(text=f"自動起動の設定に失敗: {e}", text_color="#e76f51")
             return
         config.save(changes)
         self._on_saved()

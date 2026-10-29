@@ -13,6 +13,7 @@ DEFAULTS = {
     "WAKE_WORDS": ["ウェイク", "ウエイク", "うぇいく", "Wake"],
     "WAKE_ENABLED": False,
     "INPUT_MODE": "トランシーバー",
+    "AUTOSTART": False,              # PC起動時に自動起動
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",
     "SEARCH_URL": "https://www.google.com/search?q={}",
