@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
 import llm  # noqa: E402
 import tools  # noqa: E402
-from wakeword import strip_wake_word  # noqa: E402
+from wakeword import strip_wake_word, voice_command  # noqa: E402
 
 
 def test_wake_word():
@@ -97,3 +97,10 @@ def test_settings_fields():
     sw = pytest.importorskip("settings_window")  # 画面部品(tkinter)が無い環境では飛ばす
     assert {f[0] for f in sw.FIELDS} <= set(config.DEFAULTS)
     assert sw.parse("list", "a、b, ,c") == ["a", "b", "c"]
+
+
+def test_voice_command():
+    assert voice_command("メモ帳を開いて", True) == "メモ帳を開いて"            # ボタン: 合図不要
+    assert voice_command("ウェイク、Zealous、メモ帳を開いて", True) == "メモ帳を開いて"
+    assert voice_command("メモ帳を開いて", False) is None                      # 常時待ち受け: 合図が必要
+    assert voice_command("ウェイク、Zealous、メモ帳を開いて", False) == "メモ帳を開いて"

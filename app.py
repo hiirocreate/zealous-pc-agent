@@ -21,7 +21,7 @@ from agent_worker import AgentWorker
 from settings_window import SettingsWindow
 from tts import Speaker
 from voice import VoiceInput
-from wakeword import strip_wake_word
+from wakeword import voice_command
 
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
@@ -93,7 +93,7 @@ class App(ctk.CTk):
             config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
         self.speaker = Speaker(on_error=self._post_log)
-        self.voice = VoiceInput(on_text=lambda t: self._events.put(lambda: self._on_voice(t)),
+        self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
         try:
             import stopper
@@ -386,15 +386,13 @@ class App(ctk.CTk):
         self.worker.submit(text)
         self._set_state("think")
 
-    def _on_voice(self, text):
-        if config.WAKE_ENABLED:
-            cmd = strip_wake_word(text)
-            if not cmd:
-                self._log(f"(無視) {text}")
-                self._set_state("idle")
-                return
-            text = cmd
-        self._submit(text)
+    def _on_voice(self, text, from_button):
+        cmd = voice_command(text, from_button)
+        if not cmd:
+            self._log(f"(無視) {text}")
+            self._set_state("idle")
+            return
+        self._submit(cmd)
 
     def _mic_press(self, _):
         if config.INPUT_MODE == MODE_HOLD or not self._recording:

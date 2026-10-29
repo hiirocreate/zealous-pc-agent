@@ -18,3 +18,11 @@ def strip_wake_word(text):
     names = tuple([config.AI_NAME] + list(config.AI_NAME_ALIASES))
     m = _pattern(tuple(config.WAKE_WORDS), names).match(text)
     return text[m.end():].strip() if m else None
+
+
+def voice_command(text, from_button):
+    """音声から実行する命令を決める。実行しないときは None。
+    マイクボタンで話した内容はそのまま(合図の言葉を言った場合は取り除く)。
+    常時待ち受けで拾った内容は、合図の言葉で始まるものだけ。"""
+    cmd = strip_wake_word(text)
+    return (cmd or text) if from_button else cmd

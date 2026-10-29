@@ -12,7 +12,7 @@ _BLOCK = config.SAMPLE_RATE // 10  # 0.1秒
 
 class VoiceInput:
     def __init__(self, on_text, on_status):
-        self._on_text = on_text        # (text) 認識結果
+        self._on_text = on_text        # (text, from_button) 認識結果と、マイクボタンで録った音声か
         self._on_status = on_status    # (msg) 状態・エラー表示
         self._jobs = queue.Queue()
         self._gen = 0
@@ -35,7 +35,7 @@ class VoiceInput:
             return
         self._manual = False
         if self._buf:
-            self._jobs.put((self._gen, np.concatenate(self._buf)))
+            self._jobs.put((self._gen, np.concatenate(self._buf), True))
         self._buf = []
 
     def set_wake(self, enabled):
@@ -87,7 +87,7 @@ class VoiceInput:
         if self._silence >= config.VAD_SILENCE_SEC * sr or total >= config.VAD_MAX_SEC * sr:
             seg, self._seg = self._seg, None
             if (total - self._silence) >= config.VAD_MIN_SEC * sr:
-                self._jobs.put((self._gen, np.concatenate(seg)))
+                self._jobs.put((self._gen, np.concatenate(seg), False))
 
     def _transcriber(self):
         try:
@@ -99,7 +99,7 @@ class VoiceInput:
             self._on_status(f"Whisper読み込みエラー: {e}")
             return
         while True:
-            gen, audio = self._jobs.get()
+            gen, audio, from_button = self._jobs.get()
             if gen != self._gen:
                 continue
             try:
@@ -110,4 +110,4 @@ class VoiceInput:
                 self._on_status(f"音声認識エラー: {e}")
                 continue
             if text and gen == self._gen:
-                self._on_text(text)
+                self._on_text(text, from_button)
