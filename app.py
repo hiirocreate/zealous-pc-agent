@@ -107,6 +107,7 @@ class App(ctk.CTk):
     # 合図の言葉で始めた音声の会話(起動中の _show_pill からも参照されるので、最初から用意しておく)
     _voice_session = False
     _follow_until = 0
+    _voice_win = None  # 音声会話画面(開いているとき)
 
     def __init__(self):
         ctk.set_appearance_mode("dark")
@@ -153,7 +154,7 @@ class App(ctk.CTk):
                                 on_status=self._post_log)
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
         self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
-        self.voice.command_mode = lambda: self._following()  # 合図の後の会話は命令として正確に聞き取る
+        self.voice.command_mode = lambda: self._following() or self._voice_win is not None  # 合図の後の会話は命令として正確に聞き取る
         self.after(15000, self.voice.preload)  # 命令用の聞き取りAIを前もって準備(初回はダウンロード)
         try:
             import stopper
@@ -173,7 +174,7 @@ class App(ctk.CTk):
                            fg_color=fg, hover_color=hover, command=cmd)
 
     def _mic(self, master, size):
-        b = self._round(master, size, icons.mic(size * 9 // 20), fg=T.ACCENT, hover=T.ACCENT_HOVER)
+        b = self._round(master, size, icons.mic(size * 9 // 20), fg=T.ACCENT, hover=T.ACCENT_LIGHT)
         b.bind("<ButtonPress-1>", self._mic_press)
         b.bind("<ButtonRelease-1>", self._mic_release)
         return b
@@ -200,7 +201,9 @@ class App(ctk.CTk):
         self.pill = self._card(PILL_H // 2)
         self.pill.grid_columnconfigure(1, weight=1)
         self.pill.grid_rowconfigure(0, weight=1)
-        self.pill_mic = self._mic(self.pill, PILL_H - 12)
+        # 待機表示のマイクは、音声会話画面を開く
+        self.pill_mic = self._round(self.pill, PILL_H - 12, icons.mic((PILL_H - 12) * 9 // 20), self.open_voice_mode,
+                                    fg=T.ACCENT, hover=T.ACCENT_LIGHT)
         self.pill_mic.grid(row=0, column=0, padx=(6, 0))
         self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
                     hover=T.BORDER).grid(row=0, column=2, padx=(0, 6))
@@ -224,7 +227,7 @@ class App(ctk.CTk):
         self.pill_stop.pack()
         for w in (self.pill, self.center, emb, self.pill_logo, row, self.pill_dot, self.pill_status,
                   self.pill_busy, self.pill_spin):
-            self._draggable(w)
+            self._draggable(w, on_click=self._show_panel)  # 動かさずにクリックしたら、チャットを開く
 
         # ---- 展開・折りたたみ中に見せる、中身のない下地 ----
         self.morph = self._card(PANEL_R)
@@ -333,9 +336,14 @@ class App(ctk.CTk):
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
-        # 入力欄やその周りをクリックしたら、必ず文字を打てる状態にする
-        for w in (self.entry._textbox, self.hint, box):
+        # 入力欄のどこをクリックしても(「〜にメッセージ…」の文字の上や余白でも)、文字を打てる状態にする
+        def bind_all(w):
+            if isinstance(w, RoundButton):
+                return  # マイク・送信ボタンはそれぞれの動作
             w.bind("<ButtonPress-1>", self._focus_entry, add="+")
+            for c in w.winfo_children():
+                bind_all(c)
+        bind_all(box)
         self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
             row=0, column=2, padx=3, pady=3, sticky="s")
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
@@ -348,8 +356,8 @@ class App(ctk.CTk):
         self._round(foot, 32, icons.close(12), self._show_pill, fg=T.SURFACE,
                     hover=T.BORDER).grid(row=0, column=1, padx=(8, 0))
 
-    def _draggable(self, w):
-        w.bind("<ButtonPress-1>", self._drag_start, add="+")
+    def _draggable(self, w, on_click=None):
+        w.bind("<ButtonPress-1>", lambda e: (setattr(self, "_drag_click", on_click), self._drag_start(e)), add="+")
         w.bind("<B1-Motion>", self._drag_move, add="+")
         w.bind("<ButtonRelease-1>", self._drag_end, add="+")
 
@@ -553,6 +561,11 @@ class App(ctk.CTk):
         winutil.activate(self)
         self.focus_force()
         self.entry._textbox.focus_force()
+        # 窓が前面に出た直後に Windows がフォーカスを戻すことがあるので、少し後にもう一度
+        for ms in (30, 120):
+            self.after(ms, lambda: self.entry._textbox.focus_force())
+        if _ is not None and _.widget is not self.entry._textbox:  # 文字の外を押したときは、文末から打てるように
+            self.entry._textbox.mark_set("insert", "end")
 
     def _toggle_max(self):
         """会話パネルの全画面(いまのモニターのタスクバーを除いた範囲)と元の大きさを切り替える。"""
@@ -608,10 +621,15 @@ class App(ctk.CTk):
         # パネル表示中に動かした場合も、閉じたときの待機位置を同じだけ動かす
         self._pos = (px + x - wx, py + y - wy)
 
-    def _drag_end(self, _):
+    def _drag_end(self, e):
         if not getattr(self, "_drag", None):
             return
+        sx, sy = self._drag[:2]
         self._drag = None
+        click = getattr(self, "_drag_click", None)
+        if click and abs(e.x_root - sx) < 5 and abs(e.y_root - sy) < 5:  # ほとんど動かしていない: クリック
+            self.after(1, click)
+            return
         # 離した場所のモニターからはみ出していれば、内側に収める
         x, y, w, h, r = self._current_rect()
         area = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
@@ -853,6 +871,8 @@ class App(ctk.CTk):
 
     def _on_delta(self, piece):
         self.speaker.feed(piece)  # 一文になったところから話し始める
+        if self._voice_win is not None:
+            self._voice_win.reply_piece(piece)
         if not self._showing_pending():
             return
         if self._stream is None:
@@ -864,6 +884,8 @@ class App(ctk.CTk):
 
     def _on_reply(self, text):
         body, sources, images = split_reply(text)
+        if self._voice_win is not None:
+            self._voice_win.reply_done(body)
         config.VOICE_CONTEXT = (getattr(config, "VOICE_CONTEXT", "") + " " + body)[-200:]
         streamed = self._stream is not None
         if streamed:
@@ -1017,6 +1039,11 @@ class App(ctk.CTk):
         - 待機中の常時聞き取り: 「ウェイク、<AI名>」で始まるときだけ。チャット画面を開き、
           そのまま続けて話しかけられる状態にする(以後は合図の言葉なしで会話を続けられる)"""
         cmd = strip_wake_word(text)
+        if self._voice_win is not None and not from_button:  # 音声会話画面: 話したことはそのまま命令
+            cmd = cmd or text
+            self._voice_win.heard(cmd)
+            self._submit(cmd)
+            return
         if from_button:
             self._end_follow(idle=False)
             self._submit(cmd or text)
@@ -1035,6 +1062,37 @@ class App(ctk.CTk):
             cmd = text
         self._follow_until = 0
         self._submit(cmd)
+
+    # ================= 音声会話画面 =================
+    def open_voice_mode(self):
+        """待機表示のマイクから開く。話しかけるたびに聞き取り、返事を読み上げ、また聞き取る。"""
+        if self._voice_win is not None and self._voice_win.winfo_exists():
+            self._voice_win.lift()
+            return
+        import voice_mode
+        self._end_follow(idle=False)
+        self.speaker.stop()
+        x, y, w, h, _ = self._current_rect()
+        l, t, r, b = self._work(x + self._px(w) // 2, y + self._px(h) // 2)
+        vx = max(l, min(x + self._px(w) - self._px(360), r - self._px(360)))
+        vy = max(t, min(y - self._px(570), b - self._px(560)))
+        self.voice.conversation = True
+        self.voice._ensure_stream()
+        self._voice_win = voice_mode.VoiceMode(self, vx, vy)
+        zlog.note("音声会話画面を開く")
+
+    def voice_mode_closed(self):
+        self._voice_win = None
+        self.voice.conversation = False
+        self.speaker.stop()
+        if self._state == "listen":
+            self._set_state("idle")
+        zlog.note("音声会話画面を閉じる")
+
+    def open_chat(self):
+        self.deiconify()
+        self.lift()
+        self._show_panel()
 
     def _wake_up(self):
         """合図の言葉で呼ばれたとき: ウィジェットを表に出してチャット画面を開く。"""
@@ -1084,8 +1142,11 @@ class App(ctk.CTk):
             self._stop_rec()
 
     def _paint_mic(self, active):
-        for b in (self.mic, self.pill_mic):
-            b.configure(fg_color=T.DANGER if active else T.ACCENT)
+        """マイクの見た目: 止まっている=紫(乗せると明るい紫)、聞き取り中=赤+止める印(乗せると明るい赤)。
+        どの状態でも、乗せたときの色がほかの状態の色と重ならないようにする。"""
+        for b, size in ((self.mic, 32), (self.pill_mic, PILL_H - 12)):
+            b.configure(fg_color=T.LIVE if active else T.ACCENT, hover_color=T.LIVE_HOVER if active else T.ACCENT_LIGHT,
+                        image=icons.mic_live(size * 9 // 20) if active else icons.mic(size * 9 // 20))
 
     def _start_rec(self):
         self.speaker.stop()

@@ -84,6 +84,8 @@ class VoiceInput:
         self.should_listen = lambda: True  # 待機中の聞き取りをしてよいか(考え中・読み上げ中は休む)
         self.command_mode = lambda: False  # 待機中に拾った声を、命令として正確に聞き取るべきか
         self.context = ""  # 直前の会話(聞き取りの手がかりにする)
+        self.conversation = False  # 音声会話画面: 合図の言葉なしで、話すたびに聞き取る
+        self.level = 0.0  # いまのマイクの音の大きさ(0〜1。音声会話画面の球の動きに使う)
         threading.Thread(target=self._transcriber, daemon=True).start()
 
     # ---- 操作 ----
@@ -177,11 +179,13 @@ class VoiceInput:
     def _callback(self, indata, frames, time_info, status):
         mono = indata[:, 0].copy()
         self._ring.append(mono)
+        rms = float(np.sqrt(np.mean(mono ** 2)))
+        self.level = max(min(1.0, rms / max(config.VAD_THRESHOLD * 6, 1e-4)), self.level * 0.85)
         with self._lock:
             if self._manual:
                 self._buf.append(mono)
                 return
-        if self._wake:
+        if self._wake or self.conversation:
             try:
                 listen = self.should_listen()
             except Exception:
@@ -202,7 +206,9 @@ class VoiceInput:
         self._silence = 0 if loud else self._silence + len(mono)
         total = sum(len(s) for s in self._seg)
         sr = self._rate
-        if self._silence >= config.VAD_SILENCE_SEC * sr or total >= config.VAD_MAX_SEC * sr:
+        # 音声会話画面では、話し終わりを早めに判定して、テンポよく返事をする
+        silence = min(config.VAD_SILENCE_SEC, 0.7) if self.conversation else config.VAD_SILENCE_SEC
+        if self._silence >= silence * sr or total >= config.VAD_MAX_SEC * sr:
             seg, self._seg = self._seg, None
             # 文字起こしが追いつかないときは捨てる(たまり続けると重くなり、最後は落ちてしまう)
             if (total - self._silence) >= config.VAD_MIN_SEC * sr and self._jobs.empty():

@@ -149,6 +149,19 @@ def run(out):
             time.sleep(6)
             shot("6_sent")
             note("送信: OK")
+
+            # 待機表示に戻し、マイクから音声会話画面を開いて閉じる
+            on_main(lambda: app._show_pill())
+            time.sleep(1.5)
+            on_main(lambda: app.pill_mic.invoke())
+            time.sleep(2.5)
+            ok = on_main(lambda: app._voice_win is not None and app._voice_win.winfo_exists())
+            if ok:
+                vx, vy, vw, vh = on_main(lambda: (app._voice_win.winfo_rootx(), app._voice_win.winfo_rooty(),
+                                                  app._voice_win.winfo_width(), app._voice_win.winfo_height()))
+                ImageGrab.grab(bbox=(vx, vy, vx + vw, vy + vh), all_screens=True).save(os.path.join(out, "7_voice.png"))
+                on_main(lambda: app._voice_win.close())
+            note(f"音声会話画面: {'OK' if ok else 'NG'}")
             note("ALL DONE")
         except Exception:
             note("エラー: " + traceback.format_exc())

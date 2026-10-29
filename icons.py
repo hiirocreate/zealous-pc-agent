@@ -69,6 +69,35 @@ def mic(size=18, color="white"):
 
 
 @functools.lru_cache(maxsize=None)
+def mic_live(size=18, color="white"):
+    """聞き取り中のマイク: マイクの両側に音の波を描き、「いま聞いている」ことを示す。"""
+    img, d = _canvas()
+    w = 16
+    d.rounded_rectangle((100, 44, 156, 140), radius=28, fill=color)
+    d.arc((76, 76, 180, 172), start=0, end=180, fill=color, width=w)
+    d.line((128, 172, 128, 206), fill=color, width=w)
+    d.line((96, 210, 160, 210), fill=color, width=w)
+    for r in (52, 84):  # 音の波
+        d.arc((128 - r - 20, 92 - r, 128 + r - 20, 92 + r), start=150, end=210, fill=color, width=12)
+        d.arc((128 - r + 20, 92 - r, 128 + r + 20, 92 + r), start=-30, end=30, fill=color, width=12)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
+def mic_off(size=18, color="white"):
+    """マイクを止めている印(マイクに斜線)。"""
+    img, d = _canvas()
+    w = 18
+    d.rounded_rectangle((88, 24, 168, 148), radius=40, fill=color)
+    d.arc((56, 64, 200, 184), start=0, end=180, fill=color, width=w)
+    d.line((128, 184, 128, 224), fill=color, width=w)
+    d.line((84, 226, 172, 226), fill=color, width=w)
+    d.line((52, 40, 204, 208), fill=(0, 0, 0, 0), width=40)  # 斜線の周りを抜いて見やすく
+    d.line((52, 40, 204, 208), fill=color, width=w)
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
 def chat(size=18, color="white"):
     img, d = _canvas()
     d.rounded_rectangle((28, 40, 228, 180), radius=48, fill=color)

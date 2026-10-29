@@ -54,6 +54,8 @@ class Speaker:
         self._playing = False
         self._inflight = 0            # 合成中の数
         self._quiet_since = 0.0
+        self.text = ""                # いま読み上げている文(話の調子を見るため)
+        self._env, self._t0 = None, 0.0  # いま鳴らしている音の大きさの変化(20ミリ秒ごと)
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
 
@@ -84,13 +86,22 @@ class Speaker:
     def play_wav(self, data):
         """WAVデータをそのまま鳴らす(声の試聴用)。読み上げ中なら止めてから。"""
         self.stop()
-        self._audio.put((self._gen, _decode(data)))
+        self._audio.put((self._gen, _decode(data), ""))
 
     @property
     def busy(self):
         """読み上げ中(または読み上げ待ち)か。終わった直後の少しの間も含める(マイクが自分の声を拾わないように)。"""
         return (self._playing or self._inflight > 0 or not self._texts.empty() or not self._audio.empty()
                 or time.monotonic() - self._quiet_since < 0.6)
+
+    @property
+    def level(self):
+        """いま鳴らしている声の強さ(0〜1)。音声会話画面の球の動きに使う。"""
+        env = self._env
+        if not self._playing or env is None:
+            return 0.0
+        i = int((time.monotonic() - self._t0) / 0.02)
+        return float(env[i]) if 0 <= i < len(env) else 0.0
 
     @property
     def _synthing(self):  # 以前の名前(互換用)
@@ -140,12 +151,12 @@ class Speaker:
             self._inflight += 1
             future = self._pool.submit(self._synth, text)
             future.add_done_callback(lambda _: setattr(self, "_inflight", self._inflight - 1))
-            self._audio.put((gen, future))
+            self._audio.put((gen, future, text))
 
     def _play_loop(self):
         import sounddevice as sd
         while True:
-            gen, item = self._audio.get()
+            gen, item, text = self._audio.get()
             if gen != self._gen:
                 continue
             if not isinstance(item, tuple):  # 合成中なら、できあがるのを待つ
@@ -157,13 +168,26 @@ class Speaker:
                 if gen != self._gen:
                     continue
             data, rate = item
+            self.text, self._env = text, _envelope(data, rate)
             self._playing = True
             try:
+                self._t0 = time.monotonic()
                 sd.play(data, rate)
                 sd.wait()
             finally:
                 self._playing = False
                 self._quiet_since = time.monotonic()
+
+
+def _envelope(data, rate):
+    """音の大きさを 20 ミリ秒ごとに 0〜1 で表す。"""
+    step = max(1, int(rate * 0.02))
+    mono = data if data.ndim == 1 else data.mean(axis=1)
+    n = len(mono) // step
+    if n == 0:
+        return np.zeros(1, np.float32)
+    rms = np.sqrt((mono[:n * step].astype(np.float32).reshape(n, step) ** 2).mean(axis=1))
+    return np.clip(rms / (rms.max() + 1e-6), 0, 1) ** 0.8
 
 
 def _decode(data):
