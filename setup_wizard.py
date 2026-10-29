@@ -14,7 +14,7 @@ COLOR = {"wait": T.SUB, "run": T.CYAN, "ok": T.OK, "ng": T.DANGER}
 
 class SetupWizard(ctk.CTk):
     def __init__(self):
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode(T.MODE)
         super().__init__(fg_color=T.BG)
         self.title("Zealous セットアップ")
         self.geometry("460x420")

@@ -116,7 +116,7 @@ class App(ctk.CTk):
     _voice_win = None  # 音声会話画面(開いているとき)
 
     def __init__(self):
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode(T.MODE)
         super().__init__(fg_color=T.KEY)
         self._events = queue.Queue()  # 他スレッド -> UIスレッドへの処理依頼
         self._recording = False
@@ -354,7 +354,7 @@ class App(ctk.CTk):
                 bind_all(c)
         bind_all(box)
         # 音声会話画面へ切り替えるボタン(声の波の印)
-        self._round(box, 34, icons.waves(17), self.open_voice_mode, fg=T.BORDER, hover="#3a4150").grid(
+        self._round(box, 34, icons.waves(17, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED).grid(
             row=0, column=2, padx=(3, 0), pady=3, sticky="s")
         self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
             row=0, column=3, padx=3, pady=3, sticky="s")
@@ -787,7 +787,7 @@ class App(ctk.CTk):
             row.grid_columnconfigure(0, weight=1)
             name = t["title"] if len(t["title"]) <= 13 else t["title"][:12] + "…"
             title = ctk.CTkLabel(row, text=name, font=T.font(11, "bold" if active else "normal"),
-                                 text_color=T.TEXT if active else "#c3c8d6", anchor="w", height=18)
+                                 text_color=T.TEXT if active else T.MUTED_TEXT, anchor="w", height=18)
             title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=(7, 0))
             when = ctk.CTkLabel(row, text=threads.when(t["updated"]), font=T.font(9), text_color=T.SUB, anchor="w",
                                 height=12)

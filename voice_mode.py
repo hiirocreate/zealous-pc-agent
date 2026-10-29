@@ -49,7 +49,7 @@ class VoiceMode(ctk.CTkToplevel):
         self.mute_btn = ctk.CTkButton(bar, text="", width=58, height=58, corner_radius=29, command=self.toggle_mute)
         self._paint_mute()
         self.mute_btn.pack(side="left", padx=10)
-        ctk.CTkButton(bar, text="", image=icons.chat(22), width=58, height=58, corner_radius=29,
+        ctk.CTkButton(bar, text="", image=icons.chat(22, icons.INK), width=58, height=58, corner_radius=29,
                       fg_color=T.SURFACE, hover_color=T.BORDER, command=self.to_chat).pack(side="left", padx=10)
         ctk.CTkButton(bar, text="", image=icons.close(20, (255, 255, 255)), width=58, height=58, corner_radius=29,
                       fg_color=T.DANGER, hover_color=T.DANGER_HOVER, command=self.close).pack(side="left", padx=10)
@@ -130,7 +130,7 @@ class VoiceMode(ctk.CTkToplevel):
         """マイクボタン: 聞き取り中=水色(球と同じ色)、止めている=灰色。乗せたときは少し明るく。"""
         # 印は変えず、色だけで分かるようにする
         if self.muted:
-            self.mute_btn.configure(image=icons.mic(22, "#cbd5e1"), fg_color="#3a4150", hover_color="#4b5466")
+            self.mute_btn.configure(image=icons.mic(22, "#cbd5e1"), fg_color="#64748b", hover_color="#7b8aa0")
         else:
             self.mute_btn.configure(image=icons.mic(22), fg_color="#0e7490", hover_color="#1597b5")
 

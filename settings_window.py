@@ -40,6 +40,8 @@ TABS = [
         ("—", "起動"),
         ("AUTOSTART", "PC起動時に自動で起動", "bool", "Windows にサインインしたら Zealous を立ち上げる"),
         ("—", "表示"),
+        ("UI_THEME", "カラー（画面の配色）", "choice", "画面全体の色合い（保存後、再起動で反映）",
+         [(k, v["LABEL"]) for k, v in T.THEMES.items()]),
         ("UI_FONT", "フォント（画面の文字の書体）", "font", "このPCに入っているフォントから選べます（保存後、再起動で反映）"),
         ("UI_FONT_SCALE", "文字の大きさ", "choice", "画面全体の文字の大きさ（保存後、再起動で反映）",
          [(90, "小さめ（90%）"), (100, "標準（100%）"), (115, "大きめ（115%）"), (130, "特大（130%）")]),
@@ -253,12 +255,13 @@ class SettingsWindow(ctk.CTkToplevel):
                 var = ctk.StringVar()
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
                                 fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
-                                button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
+                                button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, dropdown_text_color=T.TEXT, text_color=T.TEXT,
+                                  font=T.font(11)).grid(**ctl)
             elif kind == "persona":
                 import persona
                 var = ctk.StringVar()
                 box = ctk.CTkTextbox(row, height=74, fg_color=T.BG, border_color=T.BORDER, border_width=1,
-                                     font=T.font(11), wrap="char")
+                                     font=T.font(11), text_color=T.TEXT, wrap="char")
                 box.grid(**ctl)
                 # 入力欄の中身を、ほかの欄と同じように var で読み書きできるようにする
                 def sync(*_, b=box, v=var):
@@ -281,7 +284,7 @@ class SettingsWindow(ctk.CTkToplevel):
                 self._choices[key] = {DEFAULT_LABEL: "", **{n: n for n in fonts}}
                 box = ctk.CTkComboBox(row, values=[DEFAULT_LABEL] + fonts, variable=var, fg_color=T.BG,
                                       border_color=T.BORDER, button_color=T.BG, button_hover_color=T.BORDER,
-                                      dropdown_fg_color=T.SURFACE, font=T.font(11))
+                                      dropdown_fg_color=T.SURFACE, font=T.font(11), text_color=T.TEXT)
                 box.grid(**ctl)
                 preview = ctk.CTkLabel(row, text="", text_color=T.TEXT, anchor="w")
                 preview.grid(row=3, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 10))
@@ -296,11 +299,12 @@ class SettingsWindow(ctk.CTkToplevel):
                 self._choices[key] = {lbl: val for val, lbl in f[4]}
                 ctk.CTkOptionMenu(row, values=options, variable=var, dynamic_resizing=False,
                                   fg_color=T.BG, button_color=T.BG, button_hover_color=T.BORDER,
-                                  dropdown_fg_color=T.SURFACE, font=T.font(11)).grid(**ctl)
+                                  dropdown_fg_color=T.SURFACE, dropdown_text_color=T.TEXT, text_color=T.TEXT,
+                                  font=T.font(11)).grid(**ctl)
             else:
                 var = ctk.StringVar()
                 ctk.CTkEntry(row, textvariable=var, fg_color=T.BG, border_color=T.BORDER,
-                             font=T.font(11)).grid(**ctl)
+                             font=T.font(11), text_color=T.TEXT).grid(**ctl)
             self._vars[key] = (kind, var)
 
     def _action(self, page, title, hint, text, command, danger=False):
@@ -525,11 +529,11 @@ class SettingsWindow(ctk.CTkToplevel):
         except Exception as e:
             self.msg.configure(text=f"自動起動の設定に失敗: {e}", text_color=T.DANGER)
             return
-        restart = any(changes.get(k) != getattr(config, k) for k in ("UI_FONT", "UI_FONT_SCALE"))
+        restart = any(changes.get(k) != getattr(config, k) for k in ("UI_FONT", "UI_FONT_SCALE", "UI_THEME"))
         config.save(changes)
         self._on_saved()
         self.destroy()
         if restart:
             import tkinter.messagebox as mb
-            if mb.askyesno("表示の変更", "フォント・文字の大きさは、再起動すると反映されます。\n今すぐ再起動しますか？"):
+            if mb.askyesno("表示の変更", "カラー・フォント・文字の大きさは、再起動すると反映されます。\n今すぐ再起動しますか？"):
                 self.master.restart_app()

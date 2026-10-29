@@ -7,6 +7,13 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
 _S = 256  # 高解像度で描いて縮小(なめらかにするため)
+import theme as _T
+
+# 細い線の印の色(明るい配色では濃いめの灰色にして見やすく)
+LINE = (107, 114, 134) if _T.MODE == "light" else (170, 176, 194)
+# 文字のように見せる印の色(明るい配色では濃い色)
+INK = (29, 33, 48) if _T.MODE == "light" else (255, 255, 255)
+
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _FONTS = [r"C:\Windows\Fonts\segoeuib.ttf", r"C:\Windows\Fonts\YuGothB.ttc",
           "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -41,7 +48,11 @@ def emblem(size=24):
 def wordmark(name, height=12):
     """AI名のワードマーク。既定名(Zealous)はロゴ画像、変更後は文字を描画する。"""
     if name.lower() == "zealous":
-        img = Image.open(os.path.join(ASSETS, "wordmark.png"))
+        img = Image.open(os.path.join(ASSETS, "wordmark.png")).convert("RGBA")
+        if _T.MODE == "light":  # 明るい配色では、白い文字を濃い色にする(形と縁のなめらかさはそのまま)
+            alpha = img.getchannel("A")
+            img = Image.new("RGBA", img.size, INK + (255,))
+            img.putalpha(alpha)
         return _img(img, round(img.width * height / img.height), height)
     k = 4  # 描画倍率
     h = height * k
@@ -52,7 +63,8 @@ def wordmark(name, height=12):
     img, d = _canvas(sum(widths) + track * (len(text) - 1) + 4, int(h * 1.2))
     x = 0
     for c, cw in zip(text, widths):
-        d.text((x - f.getbbox(c)[0], img.height / 2), c, font=f, fill=(236, 232, 255, 255), anchor="lm")
+        d.text((x - f.getbbox(c)[0], img.height / 2), c, font=f,
+               fill=INK + (255,) if _T.MODE == "light" else (236, 232, 255, 255), anchor="lm")
         x += cw + track
     return _img(img, img.width // k, img.height // k)
 
@@ -125,7 +137,7 @@ def send(size=18, color="white"):
 
 
 @functools.lru_cache(maxsize=None)
-def gear(size=18, color=(170, 176, 194)):
+def gear(size=18, color=LINE):
     img, d = _canvas()
     c, teeth = _S / 2, 8
     pts = []
@@ -139,7 +151,7 @@ def gear(size=18, color=(170, 176, 194)):
 
 
 @functools.lru_cache(maxsize=None)
-def close(size=14, color=(170, 176, 194)):
+def close(size=14, color=LINE):
     img, d = _canvas()
     d.line((56, 56, 200, 200), fill=color, width=26)
     d.line((200, 56, 56, 200), fill=color, width=26)
@@ -202,7 +214,7 @@ def dot(color, size=8):
 
 
 @functools.lru_cache(maxsize=None)
-def menu(size=16, color=(170, 176, 194)):
+def menu(size=16, color=LINE):
     """ハンバーガーメニュー(三本線)。"""
     img, d = _canvas()
     for y in (70, 128, 186):
@@ -211,7 +223,7 @@ def menu(size=16, color=(170, 176, 194)):
 
 
 @functools.lru_cache(maxsize=None)
-def plus(size=16, color=(170, 176, 194)):
+def plus(size=16, color=LINE):
     img, d = _canvas()
     d.rounded_rectangle((116, 36, 140, 220), radius=12, fill=color)
     d.rounded_rectangle((36, 116, 220, 140), radius=12, fill=color)
@@ -219,7 +231,7 @@ def plus(size=16, color=(170, 176, 194)):
 
 
 @functools.lru_cache(maxsize=None)
-def maximize(size=16, restore=False, color=(170, 176, 194)):
+def maximize(size=16, restore=False, color=LINE):
     """全画面(四角)/元に戻す(重なった四角)。"""
     img, d = _canvas()
     if restore:
@@ -240,7 +252,7 @@ def trash(size=14, color=(138, 145, 165)):
 
 
 @functools.lru_cache(maxsize=None)
-def threads(size=17, color=(170, 176, 194)):
+def threads(size=17, color=LINE):
     """スレッド一覧(重なった2つの吹き出し)。"""
     img, d = _canvas()
     d.rounded_rectangle((70, 30, 236, 140), radius=30, outline=color, width=16)       # 奥の吹き出し
