@@ -127,6 +127,8 @@ class App(ctk.CTk):
                 pass
         self._build()
         self._show_pill(animate=False)
+        for ms in (200, 600, 1500):  # 画面に出た後に、位置・大きさ・外枠をもう一度合わせる
+            self.after(ms, self._settle)
         self.after(300, lambda: self._apply(*self._current_rect()))  # 画面に出た後に外枠(Windows)を整える
 
         # Ollama / VOICEVOX を裏で起動し、AIモデルと声を先に読み込んでおく(最初の返事を速くする)
@@ -366,11 +368,27 @@ class App(ctk.CTk):
         W, H = self._px(w), self._px(h)
         if not fast:  # 実際に変わった大きさで外枠と切り抜きを合わせる(ずれ防止)
             self.update_idletasks()
-            W, H = self.winfo_width() or W, self.winfo_height() or H
+            if self.winfo_width() > 1 and self.winfo_height() > 1:  # まだ画面に出ていないときは指定の大きさで
+                W, H = self.winfo_width(), self.winfo_height()
         self.shell.update(int(x), int(y), W, H, self._px(radius), fast)
+
+    def _settle(self):
+        """待機表示の位置・大きさ・外枠が崩れていたら整え直す。
+        (アップデート直後の自動起動などで、画面に出る前の指定が効かず、四角いまま画面の中ほどに
+        出ることがあるため、起動直後と、その後も定期的に確かめる)"""
+        if self._expanded or self._animating or getattr(self, "_drag", None):
+            return
+        if not self.winfo_ismapped():
+            return
+        x, y, w, h, r = self._pill_rect()
+        if (abs(self.winfo_x() - x) > 2 or abs(self.winfo_y() - y) > 2
+                or abs(self.winfo_width() - self._px(w)) > 2 or abs(self.winfo_height() - self._px(h)) > 2):
+            self.shell._last = None  # 外枠と切り抜きも必ず描き直す
+            self._apply(x, y, w, h, r)
 
     def _fit_on_screen(self):
         """ウィジェットがモニターからはみ出していたら(モニターを外した時なども)内側へ戻す。"""
+        self._settle()
         if self._animating or getattr(self, "_drag", None) or getattr(self, "_resizing", None):
             return
         x, y, w, h, r = self._current_rect()
