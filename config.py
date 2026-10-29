@@ -8,8 +8,8 @@ SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 
 DEFAULTS = {
     # ---- AI名・ウェイクワード「ウェイク、<AI名>」 ----
-    "AI_NAME": "ゼラス",
-    "AI_NAME_ALIASES": ["ぜらす", "Zealous", "ジーラス"],  # 音声認識での表記ゆれ
+    "AI_NAME": "Zealous",
+    "AI_NAME_ALIASES": ["ゼラス", "ぜらす", "ジーラス", "ゼーラス"],  # 音声認識での表記ゆれ
     "WAKE_WORDS": ["ウェイク", "ウエイク", "うぇいく", "Wake"],
     "WAKE_ENABLED": False,
     "INPUT_MODE": "トランシーバー",

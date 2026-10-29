@@ -1,5 +1,6 @@
 """常駐型UI。起動: zealous.pyw をダブルクリック
-待機中は右下に小さなピル型で常駐し、▲で会話パネルを展開する。"""
+待機中は右下に横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐する。
+緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
 import multiprocessing as mp
 import queue
 
@@ -14,20 +15,21 @@ from tts import Speaker
 from voice import VoiceInput
 from wakeword import strip_wake_word
 
-MODE_HOLD, MODE_TOGGLE = "トランシーバー", "トグル"
+MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
-PILL_W, PILL_H = 320, 64
-PANEL_W, PANEL_H = 380, 460
+PILL_W, PILL_H = 236, 52
+PANEL_W, PANEL_H = 300, 380
 MAX_BUBBLES = 40
 
 # 状態 -> (表示, 色, 点滅するか)
 STATES = {
     "idle": ("待機中", T.OK, False),
-    "listen": ("聞き取り中…", T.DANGER, True),
-    "recog": ("認識中…", T.CYAN, True),
-    "think": ("考え中…", T.ACCENT, True),
+    "listen": ("聞き取り中", T.DANGER, True),
+    "recog": ("認識中", T.CYAN, True),
+    "think": ("実行中", T.ACCENT, True),
     "stop": ("停止しました", T.WARN, False),
 }
+BUSY = ("think",)  # 緊急停止ボタンを出す状態
 
 
 class RoundButton(ctk.CTkButton):
@@ -66,115 +68,97 @@ class App(ctk.CTk):
             import stopper
             stopper.register(self.emergency_stop)
         except Exception as e:
-            self._log(f"ショートカット登録エラー: {e}", "sys")
-        self._refresh_title()
-        if config.WAKE_ENABLED:
-            self.wake.select()
-            self.voice.set_wake(True)
+            self._log(f"ショートカット登録エラー: {e}")
+        self._apply_settings()
         self._set_state("idle")
         self.after(50, self._pump)
 
     # ================= 画面 =================
-    def _card(self):
-        return ctk.CTkFrame(self, fg_color=T.BG, bg_color=T.KEY, corner_radius=18,
-                            border_width=1, border_color=T.BORDER)
+    def _round(self, master, size, image, cmd=None, fg="transparent", hover=T.SURFACE):
+        return RoundButton(master, text="", image=image, width=size, height=size, corner_radius=size // 2,
+                           fg_color=fg, hover_color=hover, command=cmd)
 
-    def _icon_btn(self, master, text, cmd=None, size=32, fg="transparent", hover=T.SURFACE, color=T.SUB):
-        return RoundButton(master, text=text, width=size, height=size, corner_radius=size // 2,
-                             fg_color=fg, hover_color=hover, text_color=color, font=T.font(14), command=cmd)
-
-    def _stop_btn(self, master, compact):
-        text = f"■ 停止\n{HOTKEY}" if compact else f"■  緊急停止　{HOTKEY}"
-        return ctk.CTkButton(master, text=text, height=40 if compact else 38, width=96 if compact else 0,
-                             corner_radius=12, fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
-                             text_color="white", font=T.font(10 if compact else 12, "bold"),
-                             command=self.emergency_stop)
-
-    def _mic_btn(self, master, size):
-        b = RoundButton(master, text="", image=icons.mic(size // 2), width=size, height=size,
-                          corner_radius=size // 2, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
+    def _mic(self, master, size):
+        b = self._round(master, size, icons.mic(size * 9 // 20), fg=T.ACCENT, hover=T.ACCENT_HOVER)
         b.bind("<ButtonPress-1>", self._mic_press)
         b.bind("<ButtonRelease-1>", self._mic_release)
         return b
 
-    def _orb(self, master):
-        return ctk.CTkLabel(master, text="●", width=18, font=T.font(16), text_color=T.OK)
+    def _stop(self, master, **kw):
+        return ctk.CTkButton(master, corner_radius=14, fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
+                             text_color="white", command=self.emergency_stop, **kw)
+
+    def _status_row(self, master):
+        row = ctk.CTkFrame(master, fg_color="transparent")
+        dot = ctk.CTkLabel(row, text="●", font=T.font(8), text_color=T.OK, width=8, height=12)
+        dot.pack(side="left", padx=(0, 4))
+        text = ctk.CTkLabel(row, text="", font=T.font(10), text_color=T.SUB, height=12)
+        text.pack(side="left")
+        return row, dot, text
 
     def _build(self):
-        # ---- 待機スタイル(ピル型) ----
-        self.pill = self._card()
+        # ---- 待機スタイル: 横長の楕円 ----
+        self.pill = ctk.CTkFrame(self, fg_color=T.BG, bg_color=T.KEY, corner_radius=PILL_H // 2,
+                                 border_width=1, border_color=T.BORDER)
         self.pill.grid_columnconfigure(1, weight=1)
-        self.pill_orb = self._orb(self.pill)
-        self.pill_orb.grid(row=0, column=0, rowspan=2, padx=(16, 8), pady=10)
-        self.pill_name = ctk.CTkLabel(self.pill, text="", font=T.font(14, "bold"), text_color=T.TEXT,
-                                      anchor="w", height=20)
-        self.pill_name.grid(row=0, column=1, sticky="sw", pady=(10, 0))
-        self.pill_status = ctk.CTkLabel(self.pill, text="", font=T.font(11), text_color=T.SUB,
-                                        anchor="w", height=16)
-        self.pill_status.grid(row=1, column=1, sticky="nw", pady=(0, 10))
-        self.pill_mic = self._mic_btn(self.pill, 40)
-        self.pill_mic.grid(row=0, column=2, rowspan=2, padx=4)
-        self._stop_btn(self.pill, True).grid(row=0, column=3, rowspan=2, padx=4)
-        self._icon_btn(self.pill, "▴", self._show_panel, size=28).grid(row=0, column=4, rowspan=2, padx=(0, 10))
-        for w in (self.pill, self.pill_name, self.pill_status, self.pill_orb):
+        self.pill.grid_rowconfigure(0, weight=1)
+        self.pill_mic = self._mic(self.pill, PILL_H - 12)
+        self.pill_mic.grid(row=0, column=0, padx=(6, 0))
+        self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
+                    hover=T.BORDER).grid(row=0, column=2, padx=(0, 6))
+
+        self.center = ctk.CTkFrame(self.pill, fg_color="transparent")
+        self.center.grid(row=0, column=1)
+        self.pill_logo = ctk.CTkLabel(self.center, text="", height=18)
+        self.pill_logo.pack()
+        row, self.pill_dot, self.pill_status = self._status_row(self.center)
+        row.pack(pady=(1, 0))
+        self.pill_stop = self._stop(self.pill, text=f"■ 停止\n{HOTKEY}", width=PILL_W - 2 * PILL_H + 4,
+                                    height=PILL_H - 14, font=T.font(9, "bold"))
+        for w in (self.pill, self.center, self.pill_logo, row, self.pill_status):
             self._draggable(w)
-        self.pill_name.bind("<Double-Button-1>", lambda e: self._show_panel())
 
         # ---- 会話パネル ----
-        self.panel = self._card()
+        self.panel = ctk.CTkFrame(self, fg_color=T.BG, bg_color=T.KEY, corner_radius=20,
+                                  border_width=1, border_color=T.BORDER)
         p = self.panel
         p.grid_columnconfigure(0, weight=1)
         p.grid_rowconfigure(1, weight=1)
 
         head = ctk.CTkFrame(p, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
-        head.grid_columnconfigure(1, weight=1)
-        self.orb = self._orb(head)
-        self.orb.grid(row=0, column=0, rowspan=2, padx=(0, 8))
-        self.title_label = ctk.CTkLabel(head, text="", font=T.font(15, "bold"), text_color=T.TEXT,
-                                        anchor="w", height=20)
-        self.title_label.grid(row=0, column=1, sticky="w")
-        self.status = ctk.CTkLabel(head, text="", font=T.font(11), text_color=T.SUB, anchor="w", height=16)
-        self.status.grid(row=1, column=1, sticky="w")
-        self._icon_btn(head, "⚙", self.open_settings, size=30).grid(row=0, column=2, rowspan=2)
-        self._icon_btn(head, "▾", self._show_pill, size=30).grid(row=0, column=3, rowspan=2)
-        self._icon_btn(head, "✕", self.quit_app, size=30).grid(row=0, column=4, rowspan=2)
-        for w in (head, self.title_label, self.status):
+        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
+        head.grid_columnconfigure(0, weight=1)
+        self.panel_logo = ctk.CTkLabel(head, text="", height=18)
+        self.panel_logo.grid(row=0, column=0, sticky="w")
+        row2, self.dot, self.status = self._status_row(head)
+        row2.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=1, rowspan=2)
+        for w in (head, self.panel_logo, row2, self.status):
             self._draggable(w)
 
         self.chat = ctk.CTkScrollableFrame(p, fg_color="transparent", scrollbar_button_color=T.BORDER)
-        self.chat.grid(row=1, column=0, sticky="nsew", padx=8)
+        self.chat.grid(row=1, column=0, sticky="nsew", padx=6)
         self.chat.grid_columnconfigure(0, weight=1)
         self._bubbles = []
 
-        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=14)
-        box.grid(row=2, column=0, sticky="ew", padx=12, pady=(6, 8))
-        box.grid_columnconfigure(0, weight=1)
-        self.entry = ctk.CTkEntry(box, placeholder_text=f"{config.AI_NAME}に話しかける…", border_width=0,
-                                  fg_color="transparent", font=T.font(12), text_color=T.TEXT, height=36)
-        self.entry.grid(row=0, column=0, sticky="ew", padx=(10, 0))
+        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
+        box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
+        box.grid_columnconfigure(1, weight=1)
+        self.mic = self._mic(box, 32)
+        self.mic.grid(row=0, column=0, padx=4, pady=4)
+        self.entry = ctk.CTkEntry(box, border_width=0, fg_color="transparent", font=T.font(12),
+                                  text_color=T.TEXT, height=32)
+        self.entry.grid(row=0, column=1, sticky="ew", padx=4)
         self.entry.bind("<Return>", lambda e: self._send_entry())
-        send = self._icon_btn(box, "", self._send_entry, size=32, fg=T.ACCENT, hover=T.ACCENT_HOVER)
-        send.configure(image=icons.send())
-        send.grid(row=0, column=1, padx=4, pady=4)
+        self._round(box, 32, icons.send(14), self._send_entry, fg=T.ACCENT,
+                    hover=T.ACCENT_HOVER).grid(row=0, column=2, padx=4, pady=4)
 
-        ctl = ctk.CTkFrame(p, fg_color="transparent")
-        ctl.grid(row=3, column=0, sticky="ew", padx=12)
-        ctl.grid_columnconfigure(1, weight=1)
-        self.mic = self._mic_btn(ctl, 44)
-        self.mic.grid(row=0, column=0, rowspan=2, padx=(0, 10))
-        self.mode = ctk.CTkSegmentedButton(ctl, values=[MODE_HOLD, MODE_TOGGLE], command=self._mode_changed,
-                                           font=T.font(11), height=26, selected_color=T.ACCENT,
-                                           selected_hover_color=T.ACCENT_HOVER, unselected_color=T.SURFACE,
-                                           fg_color=T.SURFACE)
-        self.mode.set(config.INPUT_MODE if config.INPUT_MODE in (MODE_HOLD, MODE_TOGGLE) else MODE_HOLD)
-        self.mode.grid(row=0, column=1, sticky="w")
-        self.wake = ctk.CTkSwitch(ctl, text="ウェイクワードで起動", font=T.font(11), text_color=T.SUB,
-                                  progress_color=T.ACCENT, switch_width=34, switch_height=18,
-                                  command=self._wake_changed)
-        self.wake.grid(row=1, column=1, sticky="w", pady=(4, 0))
-
-        self._stop_btn(p, False).grid(row=4, column=0, sticky="ew", padx=12, pady=(10, 14))
+        foot = ctk.CTkFrame(p, fg_color="transparent", height=36)
+        foot.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+        foot.grid_columnconfigure(0, weight=1)
+        self.panel_stop = self._stop(foot, text=f"■  緊急停止　{HOTKEY}", height=32, font=T.font(11, "bold"))
+        self._round(foot, 32, icons.close(12), self._show_pill, fg=T.SURFACE,
+                    hover=T.BORDER).grid(row=0, column=1, padx=(8, 0))
 
     def _draggable(self, w):
         w.bind("<ButtonPress-1>", self._drag_start, add="+")
@@ -221,16 +205,14 @@ class App(ctk.CTk):
     def _log(self, text, kind="sys"):
         row = len(self._bubbles)
         if kind == "sys":
-            w = ctk.CTkLabel(self.chat, text=text, font=T.font(10), text_color=T.SUB, wraplength=300)
+            w = ctk.CTkLabel(self.chat, text=text, font=T.font(10), text_color=T.SUB, wraplength=240)
             w.grid(row=row, column=0, pady=2)
         else:
             user = kind == "user"
-            w = ctk.CTkLabel(self.chat, text=text, font=T.font(12), wraplength=240, justify="left",
+            w = ctk.CTkLabel(self.chat, text=text, font=T.font(12), wraplength=200, justify="left",
                              fg_color=T.ACCENT if user else T.SURFACE, text_color="white" if user else T.TEXT,
-                             corner_radius=14, padx=12, pady=7)
+                             corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
-            if not user:
-                self.pill_status.configure(text=_short(text))
         self._bubbles.append(w)
         if len(self._bubbles) > MAX_BUBBLES:
             self._bubbles.pop(0).destroy()
@@ -242,18 +224,26 @@ class App(ctk.CTk):
     def _set_state(self, state):
         self._state = state
         label, color, _ = STATES[state]
-        for orb in (self.orb, self.pill_orb):
-            orb.configure(text_color=color)
-        self.status.configure(text=label)
-        if state != "idle" or self.pill_status.cget("text") in ("", *(v[0] for v in STATES.values())):
-            self.pill_status.configure(text=label)
+        for t in (self.status, self.pill_status):
+            t.configure(text=label)
+        for d in (self.dot, self.pill_dot):
+            d.configure(text_color=color)
+        busy = state in BUSY
+        if busy:  # 操作中だけ緊急停止ボタンを出す
+            self.center.grid_remove()
+            self.pill_stop.grid(row=0, column=1)
+            self.panel_stop.grid(row=0, column=0, sticky="ew")
+        else:
+            self.pill_stop.grid_remove()
+            self.panel_stop.grid_remove()
+            self.center.grid()
 
     def _animate(self):
         _, color, blink = STATES[self._state]
         self._blink = (self._blink + 1) % 16
         c = T.BORDER if blink and self._blink >= 8 else color
-        for orb in (self.orb, self.pill_orb):
-            orb.configure(text_color=c)
+        for d in (self.dot, self.pill_dot):
+            d.configure(text_color=c)
 
     # ================= 入力 =================
     def _send_entry(self):
@@ -268,23 +258,23 @@ class App(ctk.CTk):
         self._set_state("think")
 
     def _on_voice(self, text):
-        if self.wake.get():
+        if config.WAKE_ENABLED:
             cmd = strip_wake_word(text)
             if not cmd:
-                self._log(f"(無視) {text}", "sys")
+                self._log(f"(無視) {text}")
                 self._set_state("idle")
                 return
             text = cmd
         self._submit(text)
 
     def _mic_press(self, _):
-        if self.mode.get() == MODE_HOLD or not self._recording:
+        if config.INPUT_MODE == MODE_HOLD or not self._recording:
             self._start_rec()
         else:
             self._stop_rec()
 
     def _mic_release(self, _):
-        if self.mode.get() == MODE_HOLD and self._recording:
+        if config.INPUT_MODE == MODE_HOLD and self._recording:
             self._stop_rec()
 
     def _paint_mic(self, active):
@@ -304,35 +294,26 @@ class App(ctk.CTk):
         self._paint_mic(False)
         self._set_state("recog")
 
-    def _mode_changed(self, value):
-        if self._recording:
-            self._stop_rec()
-        config.save({"INPUT_MODE": value})
-
-    def _wake_changed(self):
-        on = bool(self.wake.get())
-        self.voice.set_wake(on)
-        config.save({"WAKE_ENABLED": on})
-        self._log(f"ウェイクワード ON ─「{config.WAKE_WORDS[0]}、{config.AI_NAME}、〜」" if on
-                  else "ウェイクワード OFF", "sys")
-
     # ================= 設定 =================
     def open_settings(self):
         if getattr(self, "_settings", None) and self._settings.winfo_exists():
             self._settings.focus()
             return
-        self._settings = SettingsWindow(self, on_saved=self._settings_saved)
+        self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app)
 
     def _settings_saved(self):
         self.worker.restart()  # 推論プロセスに新しい設定を読ませる
-        self._refresh_title()
-        self._log("設定を保存しました", "sys")
+        self._apply_settings()
+        self._log("設定を保存しました")
         self._set_state("idle")
 
-    def _refresh_title(self):
-        for w in (self.title_label, self.pill_name):
-            w.configure(text=config.AI_NAME)
+    def _apply_settings(self):
+        self.pill_logo.configure(image=icons.logo(config.AI_NAME, 16))
+        self.panel_logo.configure(image=icons.logo(config.AI_NAME, 18))
         self.entry.configure(placeholder_text=f"{config.AI_NAME}に話しかける…")
+        if self._recording:
+            self._stop_rec()
+        self.voice.set_wake(config.WAKE_ENABLED)
 
     # ================= 緊急停止 =================
     def emergency_stop(self):
@@ -345,7 +326,7 @@ class App(ctk.CTk):
     def _after_stop(self):
         self._recording = False
         self._paint_mic(False)
-        self._log("⚠ 緊急停止しました", "sys")
+        self._log("⚠ 緊急停止しました")
         self._set_state("stop")
 
     # ================= ループ =================
@@ -360,7 +341,7 @@ class App(ctk.CTk):
                 self._log(text, "ai")
                 self.speaker.say(text)
             else:
-                self._log(f"エラー: {text}", "sys")
+                self._log(f"エラー: {text}")
         if self._state == "think" and not self.worker.pending:
             self._set_state("idle")
         self._animate()
@@ -369,11 +350,6 @@ class App(ctk.CTk):
     def quit_app(self):
         self.worker.close()
         self.destroy()
-
-
-def _short(text, n=22):
-    text = text.replace("\n", " ")
-    return text if len(text) <= n else text[:n] + "…"
 
 
 if __name__ == "__main__":

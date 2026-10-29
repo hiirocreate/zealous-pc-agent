@@ -24,7 +24,7 @@ def test_rename_ai(tmp_path, monkeypatch):
     assert strip_wake_word("ウェイク、ゼラス、検索して") is None
     config.reset()
     config.load()
-    assert config.AI_NAME == "ゼラス"
+    assert config.AI_NAME == "Zealous"
 
 
 def test_parse_tool_calls():

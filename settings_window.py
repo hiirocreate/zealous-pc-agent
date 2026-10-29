@@ -13,6 +13,8 @@ FIELDS = [
     ("AI_NAME", "AI名", "str"),
     ("AI_NAME_ALIASES", "AI名の別表記 (カンマ区切り)", "list"),
     ("WAKE_WORDS", "ウェイク語 (カンマ区切り)", "list"),
+    ("WAKE_ENABLED", "ウェイクワードで起動 (常時待ち受け)", "bool"),
+    ("INPUT_MODE", "マイクの入力方式", "choice", ["トランシーバー", "トグル"]),
     ("AUTOSTART", "PC起動時に自動起動", "bool"),
     ("—", "ブラウザ"),
     ("BROWSER", "使用ブラウザ", "choice", ["chrome", "edge", "firefox", "default"]),
@@ -53,7 +55,7 @@ def parse(kind, raw):
 
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_saved):
+    def __init__(self, master, on_saved, on_quit):
         super().__init__(master)
         self._on_saved = on_saved
         self._vars = {}
@@ -97,6 +99,8 @@ class SettingsWindow(ctk.CTkToplevel):
         foot.grid_columnconfigure(0, weight=1)
         self.msg = ctk.CTkLabel(foot, text="", text_color="#e76f51")
         self.msg.grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(foot, text=f"{config.AI_NAME}を終了", width=90, fg_color="transparent", border_width=1,
+                      border_color="gray40", command=on_quit).grid(row=1, column=0, sticky="w", pady=(6, 0))
         ctk.CTkButton(foot, text="既定に戻す", width=90, fg_color="gray40",
                       command=self._reset).grid(row=0, column=1, padx=4)
         ctk.CTkButton(foot, text="保存", width=80, command=self._save).grid(row=0, column=2)
