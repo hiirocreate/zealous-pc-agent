@@ -537,6 +537,17 @@ class App(ctk.CTk):
         if not self._maximized:
             self.shell.resume()
             self._apply(*self._restore_rect)
+        self.after(15, self._repaint)
+
+    def _repaint(self):
+        """全画面との切り替え後、中身を確実に描き直す。透明度を一瞬だけ変えると、
+        Windows が窓の表示を作り直す(これをしないと黒いまま残ることがある)。"""
+        self.lift()  # 外枠の窓より必ず手前に
+        winutil.repaint(self)
+        self.attributes("-alpha", 0.99)
+        self.update_idletasks()
+        self.attributes("-alpha", 1.0)
+        winutil.repaint(self)
 
     # ---- 移動(ドラッグ) ----
     def _drag_start(self, e):

@@ -38,6 +38,7 @@ if WIN:
     user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     user32.SetActiveWindow.argtypes = [wintypes.HWND]
+    user32.RedrawWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
     user32.MonitorFromPoint.restype = wintypes.HANDLE
     user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
     user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
@@ -85,6 +86,17 @@ def activate(win):
         hwnd = hwnd_of(win)
         user32.SetForegroundWindow(hwnd)
         user32.SetActiveWindow(hwnd)
+    except Exception:
+        pass
+
+
+def repaint(win):
+    """窓の中身を Windows にすべて描き直させる(大きさを戻した後に、黒いまま残るのを防ぐ)。"""
+    if not WIN:
+        return
+    try:
+        # RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW
+        user32.RedrawWindow(hwnd_of(win), None, None, 0x1 | 0x4 | 0x400 | 0x80 | 0x100)
     except Exception:
         pass
 
@@ -147,20 +159,21 @@ class Shell:
             self._give_up()
 
     def suspend(self):
-        """外枠を一旦外し、本体を切り抜かずにそのまま見せる(全画面のとき)。"""
+        """外枠を一旦外し、本体を切り抜かずにそのまま見せる(全画面のとき)。
+        外枠の窓は隠さずに画面の外へ移すだけにする(隠して出し直すと、本体より手前に出て黒く覆うことがある)。"""
         if self.ok and self._ready:
             try:
                 user32.SetWindowRgn(self.root_hwnd, None, True)
-                self.win.withdraw()
+                user32.SetWindowPos(self.hwnd, None, -32000, -32000, 0, 0,
+                                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
             except Exception:
                 pass
             self._last = None
             self._suspended = True
 
     def resume(self):
-        if self.ok and self._ready and getattr(self, "_suspended", False):
+        if self.ok and self._ready:
             self._suspended = False
-            self._reveal = True  # 新しい大きさで描き直してから見せる(古い外枠が一瞬残らないように)
 
     def frame(self, x, y, w, h, radius, fast=True):
         """外枠だけを (x, y, w, h) に描く(本体の窓の切り抜きは変えない)。展開・折りたたみの途中用。"""
@@ -201,10 +214,6 @@ class Shell:
             user32.SetWindowRgn(self.root_hwnd, region, True)  # 渡した領域は Windows が管理する
             self._last = key
         self.move(x, y)
-        if getattr(self, "_reveal", False):
-            self._reveal = False
-            self.win.deiconify()
-            self.win.attributes("-topmost", True)
 
     def move(self, x, y):
         if self.ok and self._ready:
