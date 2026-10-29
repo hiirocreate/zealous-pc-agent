@@ -86,6 +86,8 @@ def main():
         if not setup_wizard.run():
             return
     _crash_log(config.APP_DIR)
+    import zlog
+    zlog.note(f"起動 v{__import__('version').VERSION}")
     from app import App
     app = App()
     single_instance.serve(lock, app.bring_to_front)

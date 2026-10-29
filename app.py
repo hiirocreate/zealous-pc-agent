@@ -24,6 +24,7 @@ import tools
 import updater
 import voicevox
 import winutil
+import zlog
 from agent_worker import AgentWorker
 from llm import split_reply
 from settings_window import SettingsWindow
@@ -541,6 +542,7 @@ class App(ctk.CTk):
         self._events.put(front)
 
     def _focus_entry(self, _=None):
+        zlog.note("入力欄にフォーカス")
         winutil.activate(self)
         self.focus_force()
         self.entry._textbox.focus_force()
@@ -976,6 +978,7 @@ class App(ctk.CTk):
             self.hint.grid_remove()
 
     def _submit(self, text):
+        zlog.note(f"送信: {text[:40]!r}")
         self._log(text, "user")
         if re.search(r"声を(?:変え|かえ|選|えら)", text):  # 「声を変えたい」は声選びの画面を開く
             self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
@@ -989,6 +992,7 @@ class App(ctk.CTk):
         self._refresh_threads()
 
     def _on_voice(self, text, from_button):
+        zlog.note(f"聞き取り {'ボタン' if from_button else '待機中'}: {text[:40]!r}")
         """聞き取った文を処理する。
         - マイクボタン・話すキー: そのまま命令にする(合図の言葉は不要)
         - 待機中の常時聞き取り: 「ウェイク、<AI名>」で始まるときだけ。チャット画面を開き、
@@ -1262,6 +1266,7 @@ class App(ctk.CTk):
         _log_error("".join(traceback.format_exception(exc, val, tb)))
 
     def quit_app(self):
+        zlog.note("終了")
         try:
             self.worker.close()  # 裏方のプロセスも確実に止める(残るとアップデートで上書きできない)
         except Exception:
@@ -1271,15 +1276,8 @@ class App(ctk.CTk):
 
 
 def _log_error(text):
-    """エラーを設定フォルダの error.log に残す(落ちた原因を後から調べられるように)。"""
-    try:
-        path = os.path.join(config.APP_DIR, "error.log")
-        if os.path.exists(path) and os.path.getsize(path) > 1_000_000:
-            os.replace(path, path + ".old")
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n{text}\n")
-    except OSError:
-        pass
+    import zlog
+    zlog.error(text)
 
 
 if __name__ == "__main__":

@@ -110,6 +110,15 @@ def run(out):
                     text = VoiceInput.transcribe(m, audio, button)
                     note(f"音声認識({name}, {'ボタン' if button else '待機中'}): OK {text!r}")
 
+            # 本番と同じく、別プロセスの音声認識で試す
+            from whisper_worker import WhisperWorker
+            config.WHISPER_MODEL = "tiny"
+            w = WhisperWorker(note)
+            for button in (False, True):
+                text = w.transcribe(rng.normal(0, 0.05, SR * 2).astype(np.float32), button)
+                note(f"音声認識(別プロセス, {'ボタン' if button else '待機中'}): OK {text!r}")
+            w.close()
+
             # 送信する(AI が動いていなくても、落ちずにエラーを表示できること)
             on_main(lambda: app._send_entry())
             time.sleep(6)

@@ -7,6 +7,8 @@ Tk は変換中の文字を Windows 標準の白い枠で表示してしまう�
 import ctypes
 import os
 
+import zlog
+
 WM_IME_SETCONTEXT = 0x0281
 WM_IME_STARTCOMPOSITION = 0x010D
 WM_IME_ENDCOMPOSITION = 0x010E
@@ -186,6 +188,7 @@ def attach(text, font_family, font_px):
                     if msg == WM_IME_SETCONTEXT and wparam:
                         lparam &= ~ISC_SHOWUICOMPOSITIONWINDOW  # 標準の白い枠を出さない
                     elif msg == WM_IME_STARTCOMPOSITION:
+                        zlog.note("日本語入力 変換開始")
                         place_candidates(h)  # 覚えた位置を使うだけ(入力欄には触らない)
                         return 0
                     elif msg == WM_IME_COMPOSITION:
@@ -197,6 +200,7 @@ def attach(text, font_family, font_px):
                             text.after_idle(lambda: (remember(), place_candidates(h)))
                             return 0
                     elif msg == WM_IME_ENDCOMPOSITION:
+                        zlog.note("日本語入力 変換終了")
                         clear_preedit()
                     elif msg == WM_IME_REQUEST:
                         res = answer_request(h, wparam, lparam)

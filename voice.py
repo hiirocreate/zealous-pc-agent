@@ -31,6 +31,14 @@ def input_devices():
     return list(dict.fromkeys(names))
 
 
+def load_model(name, device, compute):
+    from faster_whisper import WhisperModel
+    import runtime
+    # CPU の半分だけを使う(全部使うと、常時聞き取りの間 PC 全体が重くなる)
+    return WhisperModel(name, device=device, compute_type=compute, download_root=runtime.WHISPER_DIR,
+                        cpu_threads=max(2, (os.cpu_count() or 4) // 2))
+
+
 def _repetitive(text):
     """同じ言い回しを繰り返しているか(雑音を聞き取ろうとしたときによく出る、意味のない文)。"""
     import zlib
@@ -181,30 +189,17 @@ class VoiceInput:
 
     # ---- 文字起こし ----
     def _load(self, name):
-        from faster_whisper import WhisperModel
-        import runtime
-        # CPU の半分だけを使う(全部使うと、常時聞き取りの間 PC 全体が重くなる)
-        return WhisperModel(name, device=config.WHISPER_DEVICE, compute_type=config.WHISPER_COMPUTE,
-                            download_root=runtime.WHISPER_DIR, cpu_threads=max(2, (os.cpu_count() or 4) // 2))
+        return load_model(name, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)
 
     def _transcriber(self):
-        model, loaded = None, None
+        # 文字起こしは別プロセスで行う(音声認識の部品が異常終了しても、本体は落ちない)
+        from whisper_worker import WhisperWorker
+        worker = WhisperWorker(self._on_status)
         while True:
             gen, audio, from_button = self._jobs.get()
             if gen != self._gen:
                 continue
-            want = (config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)
-            if loaded != want:  # 設定を変えたら読み込み直す(再起動は不要)
-                try:
-                    model, loaded = self._load(config.WHISPER_MODEL), want
-                except Exception as e:
-                    self._on_status(f"音声認識(Whisper)を読み込めませんでした: {e}")
-                    continue
-            try:
-                text = self.transcribe(model, audio, from_button)
-            except Exception as e:  # 1回の失敗で聞き取りが止まらないように
-                self._on_status(f"音声認識でエラーが起きました: {e}")
-                continue
+            text = worker.transcribe(audio, from_button)
             if gen != self._gen:
                 continue
             if text:
