@@ -125,18 +125,19 @@ def _guard(p, delete=False):
         raise PermissionError("フォルダ操作は設定で無効になっています")
     if delete and not config.FOLDER_DELETE_ENABLED:
         raise PermissionError("削除は設定で無効になっています")
-    p = os.path.normcase(os.path.abspath(p))
+    original = os.path.abspath(p)
+    p = os.path.normcase(original)  # 比較用(Windows では小文字化される)
     here = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
     blocked = [os.environ.get(k, "") for k in ("WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramData")]
     if p == os.path.normcase(os.path.splitdrive(p)[0] + os.sep) or p == os.path.normcase(_HOME):
-        raise PermissionError(f"{p} は操作できません")
+        raise PermissionError(f"{original} は操作できません")
     for b in [here] + [x for x in blocked if x]:
         b = os.path.normcase(os.path.abspath(b))
         if p == b or p.startswith(b + os.sep):
-            raise PermissionError(f"{p} は保護されているため操作できません")
+            raise PermissionError(f"{original} は保護されているため操作できません")
     if delete and os.path.normcase(os.path.abspath(p)) in {os.path.normcase(v) for v in _KNOWN.values()}:
-        raise PermissionError(f"{p} は削除できません")
-    return p
+        raise PermissionError(f"{original} は削除できません")
+    return original
 
 
 @tool("フォルダを作成する(場所の指定が無ければデスクトップ)",
