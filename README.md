@@ -1,5 +1,9 @@
 # ゼラス（Zealous）— デスクトップ常駐型 AI PCエージェント
 
+| 待機（ピル型） | 会話パネル（▴で展開） |
+|---|---|
+| ![待機](docs/standby.png) | ![パネル](docs/panel.png) |
+
 ## 準備 (Windows 11)・コマンド入力は不要
 1. 各インストーラーで以下を入れて起動
    - Python 3.10以上（https://www.python.org/ ／「Add python.exe to PATH」にチェック）
@@ -14,7 +18,8 @@
 ## 構成
 | ファイル | 役割 |
 |---|---|
-| `app.py` | 常駐UI（右下・最前面・ドラッグ移動可） |
+| `app.py` | 常駐UI（待機はピル型・▴で会話パネル・右下最前面・ドラッグ移動可） |
+| `theme.py` / `icons.py` | 配色・フォント / アイコン描画 |
 | `stopper.py` | 緊急停止ショートカット Ctrl+Shift+E+S |
 | `agent_worker.py` | 推論・PC操作を別プロセスで実行。緊急停止でKill→再起動 |
 | `llm.py` | Ollama Tool Call 判定（上限 `MAX_TOOL_STEPS`） |

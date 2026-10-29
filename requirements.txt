@@ -6,3 +6,4 @@ numpy
 faster-whisper
 pyautogui
 keyboard
+pillow
