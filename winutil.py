@@ -38,6 +38,8 @@ if WIN:
     user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     user32.SetActiveWindow.argtypes = [wintypes.HWND]
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_uint]
     user32.RedrawWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
     user32.MonitorFromPoint.restype = wintypes.HANDLE
     user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
@@ -88,6 +90,17 @@ def activate(win):
         user32.SetActiveWindow(hwnd)
     except Exception:
         pass
+
+
+def set_rect(win, x, y, w, h):
+    """窓の位置と大きさ(実ピクセル)を、Windows に直接、一度に変えさせる(端のドラッグ中用)。
+    位置と大きさを別々に変えると、一瞬だけ両側に広がって見えることがある。"""
+    if not WIN:
+        return False
+    try:
+        return bool(user32.SetWindowPos(hwnd_of(win), None, int(x), int(y), int(w), int(h), 0x4 | 0x10))
+    except Exception:
+        return False
 
 
 def repaint(win):

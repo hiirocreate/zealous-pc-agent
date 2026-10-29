@@ -55,6 +55,8 @@ def _crash_log(folder):
 
 
 def main():
+    # 音声認識などの部品が同じ計算ライブラリ(OpenMP)を別々に持っていても、強制終了しないようにする
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.chdir(_here())
     sys.path.insert(0, os.getcwd())
     import config
@@ -63,6 +65,10 @@ def main():
         return selftest(sys.argv[sys.argv.index("--selftest") + 1])
     if "--uninstall" in sys.argv:
         return uninstall()
+    if "--smoketest" in sys.argv:  # ビルド確認用: 実際に画面を動かして試す(smoketest.py)
+        _crash_log(config.APP_DIR)
+        import smoketest
+        return smoketest.run(sys.argv[sys.argv.index("--smoketest") + 1])
     import single_instance
     lock = single_instance.acquire()
     if lock is None and "--setup" in sys.argv:  # 設定画面から開いたときは、元の Zealous が閉じるのを少し待つ

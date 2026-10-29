@@ -55,7 +55,7 @@ jobs:
           --collect-all customtkinter --collect-all faster_whisper --collect-all ctranslate2
           --collect-all _sounddevice_data
           --hidden-import llm --hidden-import tools --hidden-import app --hidden-import setup_wizard
-          --hidden-import updater
+          --hidden-import updater --hidden-import smoketest
 
       - name: 起動確認(すべての部品が exe から読み込めるか)
         shell: pwsh
@@ -63,6 +63,21 @@ jobs:
           $p = Start-Process dist\Zealous\Zealous.exe -ArgumentList "--selftest", "$PWD\selftest.txt" -PassThru -Wait
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { throw "読み込みに失敗した部品があります" }
+
+      - name: 動作確認(実際に画面を動かす: 表示・文字入力・端のドラッグ・音声認識・送信)
+        shell: pwsh
+        run: |
+          $out = "$PWD\smoke"
+          $p = Start-Process dist\Zealous\Zealous.exe -ArgumentList "--smoketest", $out -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); Write-Host "時間切れ" }
+          if (Test-Path "$out\results.txt") { Get-Content "$out\results.txt" } else { Write-Host "results.txt がありません(強制終了した可能性)" }
+          if (Test-Path "$env:APPDATA\Zealous\crash.log") { Write-Host "--- crash.log"; Get-Content "$env:APPDATA\Zealous\crash.log" }
+          if (Test-Path "$env:APPDATA\Zealous\error.log") { Write-Host "--- error.log"; Get-Content "$env:APPDATA\Zealous\error.log" }
+          python -c "import glob,base64,io;from PIL import Image
+          for f in sorted(glob.glob(r'$out\*.png')):
+              im=Image.open(f).convert('RGB');b=io.BytesIO();im.save(b,'JPEG',quality=70)
+              print('IMG',f.split(chr(92))[-1],base64.b64encode(b.getvalue()).decode())"
+          if (-not (Select-String -Path "$out\results.txt" -Pattern "ALL DONE" -Quiet -ErrorAction SilentlyContinue)) { throw "動作確認が最後まで終わりませんでした" }
 
       - name: インストーラーを作る
         shell: pwsh

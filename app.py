@@ -134,6 +134,8 @@ class App(ctk.CTk):
         for ms in (200, 600, 1500):  # 画面に出た後に、位置・大きさ・外枠をもう一度合わせる
             self.after(ms, self._settle)
         self.after(300, lambda: self._apply(*self._current_rect()))  # 画面に出た後に外枠(Windows)を整える
+        for ms in (450, 1300):  # 画面に出た直後は中身が黒いまま描かれないことがあるので、描き直させる
+            self.after(ms, self._repaint)
 
         # Ollama / VOICEVOX を裏で起動し、AIモデルと声を先に読み込んでおく(最初の返事を速くする)
         threading.Thread(target=lambda: (runtime.start_services(), runtime.warm_up()), daemon=True).start()
@@ -658,9 +660,15 @@ class App(ctk.CTk):
 
     def _resize_flush(self):
         self._resize_queued = False
-        if self._resize_rect:
-            self._apply(*self._resize_rect, fast=True)
-            self.update_idletasks()
+        if not self._resize_rect:
+            return
+        x, y, w, h, r = self._resize_rect
+        # Windows では位置と大きさを一度に変える(Tk 経由だと、ドラッグ中に反対側の辺まで動いて見える)
+        if winutil.set_rect(self, x, y, self._px(w), self._px(h)):
+            self.shell.update(int(x), int(y), self._px(w), self._px(h), self._px(r), True)
+        else:
+            self._apply(x, y, w, h, r, fast=True)
+        self.update_idletasks()
 
     def _resize_end(self, _):
         if not getattr(self, "_resizing", None):

@@ -192,7 +192,11 @@ class VoiceInput:
                 except Exception as e:
                     self._on_status(f"音声認識(Whisper)を読み込めませんでした: {e}")
                     continue
-            text = self.transcribe(model, audio, from_button)
+            try:
+                text = self.transcribe(model, audio, from_button)
+            except Exception as e:  # 1回の失敗で聞き取りが止まらないように
+                self._on_status(f"音声認識でエラーが起きました: {e}")
+                continue
             if gen != self._gen:
                 continue
             if text:
@@ -212,7 +216,9 @@ class VoiceInput:
             # 待機中の聞き取りは軽く(合図の言葉を見つけるだけなので)、ボタンで話したときは正確に
             audio, language=config.LANGUAGE, beam_size=5 if from_button else 1, temperature=0.0,
             condition_on_previous_text=False,
-            vad_filter=not from_button,  # ボタン・話すキーで録った音は話している前提なので切り落とさない
+            # 無音の切り落とし(vad_filter)は使わない。声の区切りはこちらで判定済みで、
+            # 使うと別のAI部品(onnxruntime)が読み込まれ、Whisper の部品とぶつかって強制終了することがある
+            vad_filter=False,
             initial_prompt=f"{config.AI_NAME}。",  # AI名を正しく聞き取りやすくする
         )
         text = "".join(s.text for s in segs).strip()
