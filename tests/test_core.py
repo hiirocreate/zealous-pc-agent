@@ -303,3 +303,9 @@ def test_search_relevance():
     exact = {"title": "株式会社 才 会社概要", "url": "https://sai.example.jp/", "snippet": ""}
     assert websearch.is_relevant("株式会社才", exact) and not websearch.is_relevant("株式会社才", general)
     assert websearch.relevance("株式会社才", exact) > websearch.relevance("株式会社才", general)
+
+
+def test_image_queries():
+    import websearch
+    assert websearch.image_queries("きれいなりんご") == ["りんご きれい", "りんご 高画質"]
+    assert llm.quick_route("きれいなりんごの画像調べて") == ("image_search", {"query": "きれいなりんご"})

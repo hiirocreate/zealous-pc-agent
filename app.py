@@ -512,11 +512,8 @@ class App(ctk.CTk):
         """会話パネルの全画面(いまのモニターのタスクバーを除いた範囲)と元の大きさを切り替える。"""
         if not self._expanded or self._animating:
             return
-        # 切り替えの間は本体を見えなくし、描き終わってから出す(大きな黒い窓が一瞬見えるのを防ぐ)
-        self.attributes("-alpha", 0.0)
         if self._maximized:
             self._maximized = False
-            self.shell.resume()
             self._apply(*self._restore_rect)
             self._show_grips()
         else:
@@ -528,8 +525,11 @@ class App(ctk.CTk):
             self.shell.suspend()  # 全画面では外枠・影を付けず、画面いっぱいの四角で表示
             self._apply(l, t, self._logical(r - l), self._logical(b - t), 0)
         self.max_btn.configure(image=icons.maximize(14, restore=self._maximized))
-        self.update_idletasks()
-        self.after(30, lambda: self.attributes("-alpha", 1.0))
+        # 新しい大きさでの並べ直しと描き直しをその場で済ませる(黒い窓や古い表示を残さない)
+        self.update()
+        if not self._maximized:
+            self.shell.resume()
+            self._apply(*self._restore_rect)
 
     # ---- 移動(ドラッグ) ----
     def _drag_start(self, e):
@@ -604,7 +604,17 @@ class App(ctk.CTk):
         if "n" in edge:
             top = max(t, min(bottom - mh, top + dy))
         self._resize_rect = (left, top, self._logical(right - left), self._logical(bottom - top), PANEL_R)
-        self._apply(*self._resize_rect, fast=True)
+        # マウスの動きのたびに大きさを変えると描き直しが追いつかず古い表示が残るので、
+        # 手が空いたときに最新の大きさだけを反映し、その場で描き直す(ブラウザのように追従)
+        if not getattr(self, "_resize_queued", False):
+            self._resize_queued = True
+            self.after_idle(self._resize_flush)
+
+    def _resize_flush(self):
+        self._resize_queued = False
+        if self._resize_rect:
+            self._apply(*self._resize_rect, fast=True)
+            self.update_idletasks()
 
     def _resize_end(self, _):
         if not getattr(self, "_resizing", None):

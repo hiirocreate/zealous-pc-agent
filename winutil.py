@@ -146,8 +146,7 @@ class Shell:
     def resume(self):
         if self.ok and self._ready and getattr(self, "_suspended", False):
             self._suspended = False
-            self.win.deiconify()
-            self.win.attributes("-topmost", True)
+            self._reveal = True  # 新しい大きさで描き直してから見せる(古い外枠が一瞬残らないように)
 
     def frame(self, x, y, w, h, radius, fast=True):
         """外枠だけを (x, y, w, h) に描く(本体の窓の切り抜きは変えない)。展開・折りたたみの途中用。"""
@@ -188,6 +187,10 @@ class Shell:
             user32.SetWindowRgn(self.root_hwnd, region, True)  # 渡した領域は Windows が管理する
             self._last = key
         self.move(x, y)
+        if getattr(self, "_reveal", False):
+            self._reveal = False
+            self.win.deiconify()
+            self.win.attributes("-topmost", True)
 
     def move(self, x, y):
         if self.ok and self._ready:

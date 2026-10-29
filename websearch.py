@@ -171,18 +171,56 @@ def parse_bing_images(page):
     return out
 
 
-def images(query, limit=30):
-    """画像を検索して [{"thumb", "mid", "full", "title", "page"}] を返す。Yahoo!画像検索、だめなら Bing。"""
+# 画像の見た目を表す言葉(「きれいなりんご」→ りんご + きれい に分けて検索する)
+_LOOKS = ("きれい|綺麗|キレイ|美しい|うつくしい|かわいい|可愛い|カワイイ|かっこいい|カッコいい|格好いい|おしゃれ|"
+          "オシャレ|お洒落|おいしそう|美味しそう|リアル|素敵|すてき|ステキ|幻想的|高画質|高解像度|鮮やか|"
+          "大きい|小さい|赤い|青い|白い|黒い|黄色い|緑の|ピンクの|新鮮|面白い|おもしろい|シンプル|"
+          "レトロ|夜の|朝の|夕方の|冬の|夏の|春の|秋の")
+_LOOKS_RE = re.compile(rf"({_LOOKS})(?:な|の)?")
+_QUALITY = ("高画質", "高解像度")
+
+
+def image_queries(query):
+    """話し言葉の画像の頼み方を、検索しやすい言葉の組み合わせにする。
+    「きれいなりんご」→ ["りんご きれい", "りんご 高画質"]"""
+    looks = [m.group(1).removesuffix("の") for m in _LOOKS_RE.finditer(query)]
+    rest = _LOOKS_RE.sub(" ", query)
+    nouns = [w.strip("のなをはがと、, ") for w in re.split(r"[\s　の、,]+", rest)]
+    nouns = [w for w in nouns if w and w not in ("画像", "写真", "イラスト", "絵")]
+    subject = " ".join(nouns) or query.strip()
+    first = " ".join([subject, *looks])
+    out = [first]
+    if not any(q in looks for q in _QUALITY):
+        out.append(f"{subject} 高画質")
+    return out
+
+
+def _images_one(query, limit):
     q = urllib.parse.quote_plus(query)
     for url, parse in ((f"https://search.yahoo.co.jp/image/search?p={q}", parse_yahoo_images),
                        (f"https://www.bing.com/images/search?q={q}&form=HDRSC2&first=1", parse_bing_images)):
         try:
             found = parse(_get(url))
-        except OSError:
+        except Exception:
             continue
         if found:
             return found[:limit]
     return []
+
+
+def images(query, limit=30):
+    """画像を検索して [{"thumb", "mid", "full", "title", "page"}] を返す。Yahoo!画像検索、だめなら Bing。
+    頼み方を検索しやすい言葉に組み直し、複数の言い方で同時に探して交互に並べる。"""
+    queries = image_queries(query)
+    with ThreadPoolExecutor(len(queries)) as ex:
+        lists = list(ex.map(lambda q: _images_one(q, limit), queries))
+    out, seen = [], set()
+    for i in range(max(map(len, lists), default=0)):
+        for lst in lists:
+            if i < len(lst) and lst[i]["full"] not in seen:
+                seen.add(lst[i]["full"])
+                out.append(lst[i])
+    return out[:limit]
 
 
 def fetch_image(url, timeout=10):
