@@ -7,7 +7,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
 _S = 256  # 高解像度で描いて縮小(なめらかにするため)
-PURPLE, CYAN = (124, 92, 255), (34, 211, 238)
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _FONTS = [r"C:\Windows\Fonts\segoeuib.ttf", r"C:\Windows\Fonts\YuGothB.ttc",
           "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
           "/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf"]
@@ -32,54 +32,29 @@ def _font(size, text):
     return ImageFont.load_default(size)
 
 
-def _gradient(w, h):
-    """左上の紫から右下のシアンへのグラデーション。"""
-    g = Image.new("RGBA", (w, h))
-    px = g.load()
-    for y in range(h):
-        for x in range(w):
-            t = (x + y) / (w + h - 2)
-            px[x, y] = tuple(int(a + (b - a) * t) for a, b in zip(PURPLE, CYAN)) + (255,)
-    return g
-
-
 @functools.lru_cache(maxsize=None)
-def _monogram():
-    """角を落とした六角形のグラデーションに、斜めに切れ込んだ「Z」。"""
-    s = _S
-    mask, d = _canvas()
-    hexagon = [(s / 2 + s * 0.48 * math.cos(math.radians(a)), s / 2 + s * 0.48 * math.sin(math.radians(a)))
-               for a in range(-90, 270, 60)]
-    d.polygon(hexagon, fill="white")
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    img.paste(_gradient(s, s), mask=mask)
-    d = ImageDraw.Draw(img)
-    w = (255, 255, 255, 255)
-    d.polygon([(70, 74), (186, 74), (172, 100), (70, 100)], fill=w)            # 上の横線
-    d.polygon([(158, 100), (186, 100), (98, 156), (70, 156)], fill=w)          # 斜線
-    d.polygon([(84, 156), (186, 156), (186, 182), (70, 182)], fill=w)          # 下の横線
-    d.line((150, 126, 196, 98), fill=(255, 255, 255, 140), width=6)            # 切れ込みの光
-    return img
+def emblem(size=24):
+    return _img(Image.open(os.path.join(ASSETS, "emblem.png")), size, size)
 
 
 @functools.lru_cache(maxsize=8)
-def logo(name, height=18):
-    """モノグラム + 字間を空けたAI名のワードマーク。"""
+def wordmark(name, height=12):
+    """AI名のワードマーク。既定名(Zealous)はロゴ画像、変更後は文字を描画する。"""
+    if name.lower() == "zealous":
+        img = Image.open(os.path.join(ASSETS, "wordmark.png"))
+        return _img(img, round(img.width * height / img.height), height)
     k = 4  # 描画倍率
     h = height * k
     text = name.upper() if name.isascii() else name
-    f = _font(int(h * 0.62), text)
+    f = _font(h, text)
     track = int(h * 0.12) if text.isascii() else 0
     widths = [f.getbbox(c)[2] - f.getbbox(c)[0] for c in text]
-    tw = sum(widths) + track * (len(text) - 1)
-    gap = int(h * 0.35)
-    img, d = _canvas(h + gap + tw + 4, h)
-    img.paste(_monogram().resize((h, h), Image.LANCZOS), (0, 0))
-    x = h + gap
+    img, d = _canvas(sum(widths) + track * (len(text) - 1) + 4, int(h * 1.2))
+    x = 0
     for c, cw in zip(text, widths):
-        d.text((x - f.getbbox(c)[0], h / 2), c, font=f, fill=(236, 238, 245, 255), anchor="lm")
+        d.text((x - f.getbbox(c)[0], img.height / 2), c, font=f, fill=(236, 232, 255, 255), anchor="lm")
         x += cw + track
-    return _img(img, img.width // k, height)
+    return _img(img, img.width // k, img.height // k)
 
 
 @functools.lru_cache(maxsize=None)
@@ -105,8 +80,10 @@ def chat(size=18, color="white"):
 
 @functools.lru_cache(maxsize=None)
 def send(size=16, color="white"):
+    """紙飛行機。"""
     img, d = _canvas()
-    d.polygon([(40, 40), (224, 128), (40, 216), (72, 128)], fill=color)
+    d.polygon([(24, 118), (232, 28), (150, 232), (116, 148)], fill=color)
+    d.line((116, 148, 232, 28), fill=(0, 0, 0, 0), width=14)  # 折り目
     return _img(img, size, size)
 
 

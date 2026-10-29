@@ -1,5 +1,6 @@
 """常駐型UI。起動: zealous.pyw をダブルクリック
-待機中は右下に横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐する。
+待機中は横長の楕円(左:マイク / 中央:ロゴと状態 / 右:会話)で常駐し、ドラッグで移動できる。
+会話パネルは常駐位置に応じて、画面の内側へ向かって展開する。
 緊急停止ボタンは操作中だけ表示する(Ctrl+Shift+E+S は常に有効)。"""
 import multiprocessing as mp
 import queue
@@ -17,8 +18,9 @@ from wakeword import strip_wake_word
 
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
-PILL_W, PILL_H = 236, 52
-PANEL_W, PANEL_H = 300, 380
+PILL_W, PILL_H = 212, 52
+PANEL_W, PANEL_H = 300, 400
+INPUT_MAX_LINES = 4
 MAX_BUBBLES = 40
 
 # 状態 -> (表示, 色, 点滅するか)
@@ -109,13 +111,15 @@ class App(ctk.CTk):
 
         self.center = ctk.CTkFrame(self.pill, fg_color="transparent")
         self.center.grid(row=0, column=1)
-        self.pill_logo = ctk.CTkLabel(self.center, text="", height=18)
-        self.pill_logo.pack()
+        emb = ctk.CTkLabel(self.center, text="", image=icons.emblem(26), width=26)
+        emb.grid(row=0, column=0, rowspan=2, padx=(0, 5))
+        self.pill_logo = ctk.CTkLabel(self.center, text="", height=12)
+        self.pill_logo.grid(row=0, column=1, sticky="sw")
         row, self.pill_dot, self.pill_status = self._status_row(self.center)
-        row.pack(pady=(1, 0))
-        self.pill_stop = self._stop(self.pill, text=f"■ 停止\n{HOTKEY}", width=PILL_W - 2 * PILL_H + 4,
+        row.grid(row=1, column=1, sticky="nw", pady=(2, 0))
+        self.pill_stop = self._stop(self.pill, text=f"■ 停止\n{HOTKEY}", width=PILL_W - 2 * PILL_H + 8,
                                     height=PILL_H - 14, font=T.font(9, "bold"))
-        for w in (self.pill, self.center, self.pill_logo, row, self.pill_status):
+        for w in (self.pill, self.center, emb, self.pill_logo, row, self.pill_dot, self.pill_status):
             self._draggable(w)
 
         # ---- 会話パネル ----
@@ -126,14 +130,16 @@ class App(ctk.CTk):
         p.grid_rowconfigure(1, weight=1)
 
         head = ctk.CTkFrame(p, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
-        head.grid_columnconfigure(0, weight=1)
-        self.panel_logo = ctk.CTkLabel(head, text="", height=18)
-        self.panel_logo.grid(row=0, column=0, sticky="w")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+        head.grid_columnconfigure(1, weight=1)
+        emb2 = ctk.CTkLabel(head, text="", image=icons.emblem(34), width=34)
+        emb2.grid(row=0, column=0, rowspan=2, padx=(0, 8))
+        self.panel_logo = ctk.CTkLabel(head, text="", height=14)
+        self.panel_logo.grid(row=0, column=1, sticky="sw")
         row2, self.dot, self.status = self._status_row(head)
-        row2.grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=1, rowspan=2)
-        for w in (head, self.panel_logo, row2, self.status):
+        row2.grid(row=1, column=1, sticky="nw", pady=(3, 0))
+        self._round(head, 30, icons.gear(18), self.open_settings).grid(row=0, column=2, rowspan=2)
+        for w in (head, emb2, self.panel_logo, row2, self.dot, self.status):
             self._draggable(w)
 
         self.chat = ctk.CTkScrollableFrame(p, fg_color="transparent", scrollbar_button_color=T.BORDER)
@@ -141,20 +147,30 @@ class App(ctk.CTk):
         self.chat.grid_columnconfigure(0, weight=1)
         self._bubbles = []
 
-        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
+        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=18)
         box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
         box.grid_columnconfigure(1, weight=1)
         self.mic = self._mic(box, 32)
-        self.mic.grid(row=0, column=0, padx=4, pady=4)
-        self.entry = ctk.CTkEntry(box, border_width=0, fg_color="transparent", font=T.font(12),
-                                  text_color=T.TEXT, height=32)
-        self.entry.grid(row=0, column=1, sticky="ew", padx=4)
-        self.entry.bind("<Return>", lambda e: self._send_entry())
-        self._round(box, 32, icons.send(14), self._send_entry, fg=T.ACCENT,
-                    hover=T.ACCENT_HOVER).grid(row=0, column=2, padx=4, pady=4)
+        self.mic.grid(row=0, column=0, padx=4, pady=4, sticky="s")
+        self.entry = ctk.CTkTextbox(box, border_width=0, fg_color="transparent", font=T.font(12),
+                                    text_color=T.TEXT, height=30, wrap="char", activate_scrollbars=False)
+        self.entry.grid(row=0, column=1, sticky="ew", padx=2, pady=4)
+        self.entry.bind("<Return>", self._on_return)
+        self.entry.bind("<KeyRelease>", lambda e: self._fit_input())
+        self.entry.bind("<FocusIn>", lambda e: self._fit_input())
+        self.entry.bind("<FocusOut>", lambda e: self._fit_input())
+        self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
+        self.hint.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.send_btn = ctk.CTkButton(box, text="送信", image=icons.send(13), compound="left", width=62, height=32,
+                                      corner_radius=16, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                                      text_color="white", font=T.font(11, "bold"), command=self._send_entry)
+        self.send_btn.grid(row=0, column=2, padx=4, pady=4, sticky="s")
+        tip = ctk.CTkLabel(p, text="Enter で送信 ・ Shift+Enter で改行", font=T.font(9), text_color=T.SUB,
+                           height=12)
+        tip.grid(row=3, column=0, sticky="w", padx=22)
 
         foot = ctk.CTkFrame(p, fg_color="transparent", height=36)
-        foot.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+        foot.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 10))
         foot.grid_columnconfigure(0, weight=1)
         self.panel_stop = self._stop(foot, text=f"■  緊急停止　{HOTKEY}", height=32, font=T.font(11, "bold"))
         self._round(foot, 32, icons.close(12), self._show_pill, fg=T.SURFACE,
@@ -163,6 +179,7 @@ class App(ctk.CTk):
     def _draggable(self, w):
         w.bind("<ButtonPress-1>", self._drag_start, add="+")
         w.bind("<B1-Motion>", self._drag_move, add="+")
+        w.bind("<ButtonRelease-1>", self._drag_end, add="+")
 
     def _scaling(self):
         try:
@@ -170,36 +187,63 @@ class App(ctk.CTk):
         except Exception:
             return 1.0
 
-    def _place(self, w, h):
-        """右下を基準に配置(サイズが変わっても右下の位置を保つ)。"""
-        s = self._scaling()
-        if getattr(self, "_anchor", None) is None:
-            self._anchor = (int(self.winfo_screenwidth() / s) - config.MARGIN_X,
-                            int(self.winfo_screenheight() / s) - config.MARGIN_Y)
-        ax, ay = self._anchor
-        self.geometry(f"{w}x{h}+{ax - w}+{ay - h}")
+    # 位置は画面の実ピクセル、サイズは CTk の論理ピクセル(×scaling で実ピクセル)で扱う
+    def _px(self, v):
+        return round(v * self._scaling())
+
+    def _screen(self):
+        return self.winfo_screenwidth(), self.winfo_screenheight()
+
+    def _clamp(self, x, y, w, h):
+        sw, sh = self._screen()
+        return max(0, min(x, sw - w)), max(0, min(y, sh - h))
+
+    def _default_pos(self):
+        sw, sh = self._screen()
+        return (sw - self._px(PILL_W + config.MARGIN_X), sh - self._px(PILL_H + config.MARGIN_Y))
 
     def _show_pill(self):
         self._expanded = False
         self.panel.pack_forget()
         self.pill.pack(fill="both", expand=True)
-        self._place(PILL_W, PILL_H)
+        if getattr(self, "_pos", None) is None:
+            pos = config.WINDOW_POS
+            self._pos = tuple(pos) if pos else self._default_pos()
+        self._pos = self._clamp(*self._pos, self._px(PILL_W), self._px(PILL_H))
+        self.geometry(f"{PILL_W}x{PILL_H}+{self._pos[0]}+{self._pos[1]}")
+
+    def _panel_origin(self):
+        """常駐位置が画面のどちら側にあるかで、パネルの伸びる向きを決める。"""
+        sw, sh = self._screen()
+        (x, y), pw, ph = self._pos, self._px(PILL_W), self._px(PILL_H)
+        w, h = self._px(PANEL_W), self._px(PANEL_H)
+        px = x + pw - w if x + pw / 2 > sw / 2 else x   # 右寄りなら右端を揃えて左へ
+        py = y + ph - h if y + ph / 2 > sh / 2 else y   # 下寄りなら下端を揃えて上へ
+        return self._clamp(px, py, w, h)
 
     def _show_panel(self):
         self._expanded = True
         self.pill.pack_forget()
         self.panel.pack(fill="both", expand=True)
-        self._place(PANEL_W, PANEL_H)
+        x, y = self._panel_origin()
+        self.geometry(f"{PANEL_W}x{PANEL_H}+{x}+{y}")
         self.entry.focus_set()
 
     def _drag_start(self, e):
-        self._dx, self._dy = e.x_root - self.winfo_x(), e.y_root - self.winfo_y()
+        self._drag = (e.x_root, e.y_root, self.winfo_x(), self.winfo_y(), self._pos)
 
     def _drag_move(self, e):
-        x, y = e.x_root - self._dx, e.y_root - self._dy
+        sx, sy, wx, wy, (px, py) = self._drag
+        dx, dy = e.x_root - sx, e.y_root - sy
+        x, y = self._clamp(wx + dx, wy + dy, self.winfo_width(), self.winfo_height())
         self.geometry(f"+{x}+{y}")
-        s = self._scaling()
-        self._anchor = (int((x + self.winfo_width()) / s), int((y + self.winfo_height()) / s))
+        # パネル表示中に動かした場合も、閉じたときの待機位置を同じだけ動かす
+        self._pos = (px + x - wx, py + y - wy)
+
+    def _drag_end(self, _):
+        if getattr(self, "_drag", None):
+            self._drag = None
+            config.save({"WINDOW_POS": list(self._pos)})
 
     # ---- 会話表示: kind = user / ai / sys ----
     def _log(self, text, kind="sys"):
@@ -246,11 +290,31 @@ class App(ctk.CTk):
             d.configure(text_color=c)
 
     # ================= 入力 =================
+    def _on_return(self, e):
+        if e.state & 0x0001:  # Shift+Enter: 改行(既定の動作)
+            self.after(1, self._fit_input)
+            return None
+        self._send_entry()
+        return "break"
+
     def _send_entry(self):
-        text = self.entry.get().strip()
+        text = self.entry.get("1.0", "end").strip()
         if text:
-            self.entry.delete(0, "end")
+            self.entry.delete("1.0", "end")
+            self._fit_input()
             self._submit(text)
+
+    def _fit_input(self):
+        """入力行数に合わせて高さを変え、空欄ならヒントを表示する。"""
+        tb = self.entry._textbox
+        lines = tb.count("1.0", "end-1c", "displaylines")
+        n = max(1, min(INPUT_MAX_LINES, (lines[0] if lines else 0) + 1))
+        self.entry.configure(height=12 + n * 18)
+        empty = not self.entry.get("1.0", "end").strip()
+        if empty and self.focus_get() is not tb:
+            self.hint.grid(row=0, column=1, sticky="w", padx=8)
+        else:
+            self.hint.grid_remove()
 
     def _submit(self, text):
         self._log(text, "user")
@@ -308,9 +372,10 @@ class App(ctk.CTk):
         self._set_state("idle")
 
     def _apply_settings(self):
-        self.pill_logo.configure(image=icons.logo(config.AI_NAME, 16))
-        self.panel_logo.configure(image=icons.logo(config.AI_NAME, 18))
-        self.entry.configure(placeholder_text=f"{config.AI_NAME}に話しかける…")
+        self.pill_logo.configure(image=icons.wordmark(config.AI_NAME, 9))
+        self.panel_logo.configure(image=icons.wordmark(config.AI_NAME, 13))
+        self.hint.configure(text=f"{config.AI_NAME} にメッセージ…")
+        self._fit_input()
         if self._recording:
             self._stop_rec()
         self.voice.set_wake(config.WAKE_ENABLED)

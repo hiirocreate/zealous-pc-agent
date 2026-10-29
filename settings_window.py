@@ -1,4 +1,5 @@
 """各種設定の管理画面。保存すると settings.json に書き込み、即時反映する。"""
+import os
 import threading
 
 import customtkinter as ctk
@@ -62,6 +63,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.title(f"{config.AI_NAME} 設定")
         self.geometry("440x560")
         self.attributes("-topmost", True)
+        if os.name == "nt":  # CTkToplevel は起動直後に既定アイコンへ戻すため少し待って設定
+            self.after(250, lambda: self.iconbitmap(shortcut.ICON))
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 

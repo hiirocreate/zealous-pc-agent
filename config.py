@@ -14,6 +14,7 @@ DEFAULTS = {
     "WAKE_ENABLED": False,
     "INPUT_MODE": "トランシーバー",
     "AUTOSTART": False,              # PC起動時に自動起動
+    "WINDOW_POS": None,              # 常駐位置 [x, y](ドラッグで更新)
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",
     "SEARCH_URL": "https://www.google.com/search?q={}",

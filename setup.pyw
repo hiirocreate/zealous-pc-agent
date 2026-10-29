@@ -20,6 +20,8 @@ class Setup(tk.Tk):
         super().__init__()
         self.title("Zealous セットアップ")
         self.geometry("520x420")
+        if os.name == "nt":
+            self.iconbitmap(shortcut.ICON)
         self.desktop = tk.BooleanVar(value=True)
         self.autostart = tk.BooleanVar(value=config.AUTOSTART)
         tk.Label(self, text="Zealous のセットアップ", font=("", 13, "bold")).pack(pady=(10, 2))
