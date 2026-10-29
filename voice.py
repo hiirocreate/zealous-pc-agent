@@ -31,6 +31,14 @@ def input_devices():
     return list(dict.fromkeys(names))
 
 
+def _repetitive(text):
+    """同じ言い回しを繰り返しているか(雑音を聞き取ろうとしたときによく出る、意味のない文)。"""
+    import zlib
+    if len(text) < 30:
+        return False
+    return len(text.encode()) / len(zlib.compress(text.encode())) > 2.4
+
+
 class VoiceInput:
     def __init__(self, on_text, on_status):
         self._on_text = on_text        # (text, from_button) 認識結果と、マイクボタンで録った音声か
@@ -221,5 +229,9 @@ class VoiceInput:
             vad_filter=False,
             initial_prompt=f"{config.AI_NAME}。",  # AI名を正しく聞き取りやすくする
         )
-        text = "".join(s.text for s in segs).strip()
-        return "" if _HALLUCINATIONS.match(text) else text
+        # 声らしくない部分(雑音から作られた文)は捨てる
+        text = "".join(s.text for s in segs
+                       if getattr(s, "no_speech_prob", 0) < 0.6 and getattr(s, "avg_logprob", 0) > -1.0).strip()
+        if _HALLUCINATIONS.match(text) or _repetitive(text):
+            return ""
+        return text
