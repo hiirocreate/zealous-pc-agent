@@ -13,7 +13,10 @@ WM_IME_ENDCOMPOSITION = 0x010E
 WM_IME_COMPOSITION = 0x010F
 GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR = 0x0008, 0x0080, 0x0800
 ISC_SHOWUICOMPOSITIONWINDOW = 0x80000000
-CFS_CANDIDATEPOS = 0x0040
+CFS_POINT, CFS_CANDIDATEPOS, CFS_EXCLUDE = 0x0002, 0x0040, 0x0080
+WM_IME_NOTIFY, WM_IME_REQUEST = 0x0282, 0x0288
+IMN_OPENCANDIDATE, IMN_CHANGECANDIDATE = 0x0005, 0x0003
+IMR_COMPOSITIONWINDOW, IMR_CANDIDATEWINDOW, IMR_QUERYCHARPOSITION = 0x0001, 0x0002, 0x0006
 GWLP_WNDPROC = -4
 TAG = "ime_preedit"
 
@@ -33,6 +36,13 @@ def attach(text, font_family, font_px):
         _fields_ = [("dwIndex", wintypes.DWORD), ("dwStyle", wintypes.DWORD),
                     ("ptCurrentPos", wintypes.POINT), ("rcArea", wintypes.RECT)]
 
+    class COMPOSITIONFORM(ctypes.Structure):
+        _fields_ = [("dwStyle", wintypes.DWORD), ("ptCurrentPos", wintypes.POINT), ("rcArea", wintypes.RECT)]
+
+    class IMECHARPOSITION(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("dwCharPos", wintypes.DWORD), ("pt", wintypes.POINT),
+                    ("cLineHeight", wintypes.UINT), ("rcDocument", wintypes.RECT)]
+
     user32.GetFocus.restype = wintypes.HWND
     user32.SendMessageW.restype = LRESULT
     user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -50,6 +60,7 @@ def attach(text, font_family, font_px):
     imm.ImmGetCompositionStringW.restype = ctypes.c_long
     imm.ImmGetCompositionStringW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
     imm.ImmSetCandidateWindow.argtypes = [wintypes.HANDLE, ctypes.POINTER(CANDIDATEFORM)]
+    imm.ImmSetCompositionWindow.argtypes = [wintypes.HANDLE, ctypes.POINTER(COMPOSITIONFORM)]
 
     text.tag_configure(TAG, underline=True)
     state = {"focused": False, "hooked": set()}
@@ -82,17 +93,74 @@ def attach(text, font_family, font_px):
         text.see("insert")
         text.event_generate("<<ImePreedit>>")  # 入力欄の高さの調整などに使う
 
+    def caret_box(index="insert"):
+        """文字の位置と行の高さ(画面上の実ピクセル)。(左, 上, 高さ) を返す。"""
+        box = text.bbox(index) or text.bbox("insert")
+        if not box:
+            return None
+        return text.winfo_rootx() + box[0], text.winfo_rooty() + box[1], box[3]
+
+    def client_rect(hwnd, x, y, h):
+        """画面上の位置を、窓の中の位置に直す。行の上下を (左, 上, 右, 下) で返す。"""
+        pt = wintypes.POINT(x, y)
+        user32.ScreenToClient(hwnd, ctypes.byref(pt))
+        return pt.x, pt.y, pt.x + 2, pt.y + h
+
+    def candidate_form(hwnd):
+        """変換候補・予測候補の一覧が、入力中の行に重ならないようにする指定(行の下、入らなければ上)。"""
+        cb = caret_box()
+        if not cb:
+            return None
+        l, t, r, b = client_rect(hwnd, *cb)
+        return CANDIDATEFORM(0, CFS_EXCLUDE, wintypes.POINT(l, b), wintypes.RECT(l, t, r, b))
+
     def place_candidates(hwnd):
-        box = text.bbox("insert")
         himc = imm.ImmGetContext(hwnd)
-        if not box or not himc:
+        if not himc:
             return
         try:
-            pt = wintypes.POINT(text.winfo_rootx() + box[0], text.winfo_rooty() + box[1] + box[3] + 4)
-            user32.ScreenToClient(hwnd, ctypes.byref(pt))
-            imm.ImmSetCandidateWindow(himc, ctypes.byref(CANDIDATEFORM(0, CFS_CANDIDATEPOS, pt)))
+            form = candidate_form(hwnd)
+            if not form:
+                return
+            # 変換中の文字の場所(入力欄の中)を伝える。予測候補はこの位置を基準に、文字を避けて出る
+            l, t = form.rcArea.left, form.rcArea.top
+            imm.ImmSetCompositionWindow(himc, ctypes.byref(COMPOSITIONFORM(CFS_POINT, wintypes.POINT(l, t))))
+            for i in range(4):
+                form.dwIndex = i
+                imm.ImmSetCandidateWindow(himc, ctypes.byref(form))
         finally:
             imm.ImmReleaseContext(hwnd, himc)
+
+    def answer_request(hwnd, kind, lparam):
+        """新しい日本語入力(Windows 10/11 の Microsoft IME など)からの「文字はどこ？」に答える。
+        答えないと、予測候補が入力欄の上に重なって、打っている文字が見えなくなる。"""
+        if kind == IMR_QUERYCHARPOSITION and lparam:
+            info = IMECHARPOSITION.from_address(lparam)
+            start = text.tag_ranges(TAG)
+            index = f"{start[0]}+{info.dwCharPos}c" if start else "insert"
+            cb = caret_box(index)
+            if not cb:
+                return 0
+            info.pt = wintypes.POINT(cb[0], cb[1])
+            info.cLineHeight = cb[2]
+            x, y = text.winfo_rootx(), text.winfo_rooty()
+            info.rcDocument = wintypes.RECT(x, y, x + text.winfo_width(), y + text.winfo_height())
+            return 1
+        if kind == IMR_CANDIDATEWINDOW and lparam:
+            form = candidate_form(hwnd)
+            if not form:
+                return 0
+            ctypes.memmove(lparam, ctypes.byref(form), ctypes.sizeof(form))
+            return 1
+        if kind == IMR_COMPOSITIONWINDOW and lparam:
+            cb = caret_box()
+            if not cb:
+                return 0
+            l, t, _, _ = client_rect(hwnd, *cb)
+            form = COMPOSITIONFORM(CFS_POINT, wintypes.POINT(l, t))
+            ctypes.memmove(lparam, ctypes.byref(form), ctypes.sizeof(form))
+            return 1
+        return 0
 
     def hook(hwnd):
         """入力を受け取る窓の処理に割り込む(日本語入力の知らせだけを横取りする)。"""
@@ -115,6 +183,12 @@ def attach(text, font_family, font_px):
                             return 0
                     elif msg == WM_IME_ENDCOMPOSITION:
                         clear_preedit()
+                    elif msg == WM_IME_REQUEST:
+                        res = answer_request(h, wparam, lparam)
+                        if res:
+                            return res
+                    elif msg == WM_IME_NOTIFY and wparam in (IMN_OPENCANDIDATE, IMN_CHANGECANDIDATE):
+                        place_candidates(h)
             except Exception:
                 pass  # うまくいかなくても、通常の入力はできるようにする
             return user32.CallWindowProcW(old, h, msg, wparam, lparam)

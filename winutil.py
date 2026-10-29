@@ -36,6 +36,8 @@ if WIN:
 
     user32.GetAncestor.restype = wintypes.HWND
     user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetActiveWindow.argtypes = [wintypes.HWND]
     user32.MonitorFromPoint.restype = wintypes.HANDLE
     user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
     user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
@@ -73,6 +75,18 @@ if WIN:
 def hwnd_of(win):
     """Tk のウィンドウの、Windows 上の本当の窓の番号。"""
     return user32.GetAncestor(win.winfo_id(), GA_ROOT)
+
+
+def activate(win):
+    """窓を前面にして、キーボードの入力を受け取れるようにする(枠なしの窓はクリックだけでは受け取れないことがある)。"""
+    if not WIN:
+        return
+    try:
+        hwnd = hwnd_of(win)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+    except Exception:
+        pass
 
 
 def work_area(x, y, fallback):

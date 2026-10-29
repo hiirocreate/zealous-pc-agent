@@ -312,7 +312,9 @@ class App(ctk.CTk):
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
-        self.hint.bind("<Button-1>", lambda e: self.entry.focus_set())
+        # 入力欄やその周りをクリックしたら、必ず文字を打てる状態にする
+        for w in (self.entry._textbox, self.hint, box):
+            w.bind("<ButtonPress-1>", self._focus_entry, add="+")
         self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
             row=0, column=2, padx=3, pady=3, sticky="s")
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
@@ -493,7 +495,7 @@ class App(ctk.CTk):
             self.panel.pack(fill="both", expand=True)
             self._apply(*end)
             self._show_grips()
-            self.entry.focus_set()
+            self._focus_entry()
         if animate:
             self._morph(self._current_rect(), end, done)
         else:
@@ -507,6 +509,11 @@ class App(ctk.CTk):
             self.attributes("-topmost", True)
             self._show_panel()
         self._events.put(front)
+
+    def _focus_entry(self, _=None):
+        winutil.activate(self)
+        self.focus_force()
+        self.entry._textbox.focus_force()
 
     def _toggle_max(self):
         """会話パネルの全画面(いまのモニターのタスクバーを除いた範囲)と元の大きさを切り替える。"""
