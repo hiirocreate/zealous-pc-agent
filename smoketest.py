@@ -260,7 +260,10 @@ def run(out):
                         "<input type=search placeholder='サイト内検索' onkeydown=\"if(event.key==='Enter')document.body.dataset.q=this.value\">"
                         "<select><option>りんご</option><option>みかん</option></select>"
                         "<button>購入する</button><a href='#next'>次のページへ</a>")
-            handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=out)
+            class Quiet(http.server.SimpleHTTPRequestHandler):
+                def log_message(self, *args):  # 画面だけのアプリには書き出し先(stderr)が無いので、記録しない
+                    pass
+            handler = functools.partial(Quiet, directory=out)
             srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8766), handler)
             threading.Thread(target=srv.serve_forever, daemon=True).start()
             note(f"操作できるブラウザ: {browser.exe()!r}")
