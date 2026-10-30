@@ -53,7 +53,7 @@ jobs:
           pyinstaller zealous.pyw --noconfirm --windowed --name Zealous
           --icon assets/zealous.ico --add-data "assets;assets"
           --collect-all customtkinter --collect-all faster_whisper --collect-all ctranslate2
-          --collect-all _sounddevice_data --collect-all docx --collect-all pptx --collect-all openpyxl --collect-all pypdf
+          --collect-all _sounddevice_data --collect-data docx --collect-data pptx --hidden-import docx --hidden-import pptx --hidden-import openpyxl --hidden-import pypdf
           --hidden-import llm --hidden-import tools --hidden-import app --hidden-import setup_wizard
           --hidden-import updater --hidden-import smoketest --hidden-import whisper_worker --hidden-import zlog --hidden-import voice_mode --hidden-import orb --hidden-import screen --hidden-import persona --hidden-import weather --hidden-import memory --hidden-import reading --hidden-import tooltip --hidden-import browser --hidden-import mail --hidden-import secret --hidden-import mail_ui --hidden-import mictest --hidden-import officedoc --hidden-import fonts --hidden-import attachments --hidden-import dropfiles --hidden-import filecard
 
@@ -105,6 +105,7 @@ jobs:
           # -Wait はインストーラーが起動し直した Zealous の終了まで待ってしまうので、インストーラーだけを待つ
           if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "インストーラーが終わりませんでした" }
           Write-Host "更新にかかった時間: $($t.Elapsed.TotalSeconds) 秒 / 終了コード $($p.ExitCode)"
+          Write-Host "入れ替えたファイルの数: $((Get-ChildItem dist\Zealous -Recurse -File).Count)"
           Select-String -Path install2.log -Pattern "taskkill|残り確認|Error|エラー|DeleteFile" | Select-Object -First 20
           Get-Process | Where-Object { $_.Path -like "$app\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { Get-Content install2.log -Tail 40; throw "Zealous が動いたままでは更新できませんでした" }

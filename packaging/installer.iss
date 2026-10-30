@@ -75,34 +75,21 @@ begin
     Result := -1;
 end;
 
-// Zealous 本体と、Zealous が動かす部品(Ollama・VOICEVOX)の場所で動いているもの
-function OurProcesses(): String;
-begin
-  Result := 'Get-Process | Where-Object { $_.Path -and ($_.Path -like ''' + ExpandConstant('{app}') + '\*'' -or $_.Path -like '''
-    + ExpandConstant('{localappdata}') + '\Zealous\*'') }';
-end;
-
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  Code, I: Integer;
+  Code: Integer;
 begin
   Result := '';
-  // Zealous と部品を止め、本当に終わる(ファイルが手放される)まで待つ。
-  // 部品(Ollama・VOICEVOX)も止める: Zealous のフォルダの部品(msvcp140.dll など)を使っていることがあり、
-  // 動いたままだと上書きできない(「DeleteFile エラー: コード5」になる)。
-  PowerShell(OurProcesses() + ' | Stop-Process -Force');
-  for I := 1 to 30 do
-  begin
-    if not Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Zealous.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) then
-      Break;
-    Log('taskkill: ' + IntToStr(Code));
-    if Code = 128 then
-      Break;
-    Sleep(300);
-  end;
-  // 念のためもう一度止め、残っていないか確かめる(残っていれば、上書きに失敗する前に知らせる)
-  Code := PowerShell(OurProcesses() + ' | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue; '
-    + 'Start-Sleep -Milliseconds 300; if (' + OurProcesses() + ') { exit 1 } else { exit 0 }');
+  // Zealous と部品(Ollama・VOICEVOX)を止め、本当に終わる(ファイルが手放される)まで待つ。1回の PowerShell で行う(速くするため)。
+  // 部品も止める: Zealous のフォルダの部品(msvcp140.dll など)を使っていることがあり、動いたままだと上書きできない。
+  // まず名前で絞って止め(速い)、最後に場所で全体を確かめる(名前の分からないものも止める)。
+  Code := PowerShell('$app=''' + ExpandConstant('{app}') + '\*''; $data=''' + ExpandConstant('{localappdata}') + '\Zealous\*''; '
+    + '$ours = { param($list) $list | Where-Object { $_.Path -and ($_.Path -like $app -or $_.Path -like $data) } }; '
+    + '$p = & $ours (Get-Process -Name Zealous,ollama*,run,VOICEVOX*,engine -ErrorAction SilentlyContinue); '
+    + '$p | Stop-Process -Force -ErrorAction SilentlyContinue; $p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue; '
+    + '$rest = & $ours (Get-Process); '
+    + 'if ($rest) { $rest | Stop-Process -Force -ErrorAction SilentlyContinue; $rest | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue; '
+    + 'Start-Sleep -Milliseconds 300; if (& $ours (Get-Process)) { exit 1 } }; exit 0');
   Log('Zealous と部品の残り確認: ' + IntToStr(Code));
   if Code = 1 then
     Result := 'Zealous を終了できませんでした。' + #13#10 +
