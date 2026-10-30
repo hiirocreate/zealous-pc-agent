@@ -17,7 +17,8 @@ from version import VERSION
 # 項目: (キー, 表示名, 種類, 補足説明[, 選択肢])
 #   種類: str / int / float / bool / list / choice / model
 #   choice の選択肢は (保存する値, 表示名) の組
-TABS = [
+# (項目の説明のもと。画面のタブの並びは下の LAYOUT で決める)
+_SOURCE = [
     ("一般", [
         ("—", "名前と呼びかけ"),
         ("AI_NAME", "AI名", "str", "画面の表示と、呼びかけに使う名前"),
@@ -195,6 +196,39 @@ TABS = [
         ("AUTO_UPDATE", "起動時に新しい版を確認", "bool", "見つかると会話ボタンに印が付きます"),
     ]),
 ]
+_ALL = {f[0]: f for _, fs in _SOURCE for f in fs if f[0] not in ("—", "＊")}
+# 画面のタブ: 1つのタブに詰め込みすぎないよう、目的ごとに分ける。
+#   "—見出し" / "＊部品" / キー。「+」付きのキーは、ふだんは隠す「詳細設定」(押すと開く)
+LAYOUT = [
+    ("基本", ["—名前と呼びかけ", "AI_NAME", "USER_CALL", "HOME_PLACE", "—起動", "AUTOSTART"]),
+    ("見た目", ["—待機中の表示", "PILL_STYLE", "—画面", "UI_THEME", "UI_FONT", "UI_FONT_SCALE",
+             "+IME_INLINE", "+SMOOTH_FRAME"]),
+    ("マイク", ["—マイクテスト", "＊mic_test", "—マイク", "MIC_DEVICE", "INPUT_MODE", "PTT_ENABLED", "PTT_KEY",
+             "—呼びかけ（合図の言葉）", "WAKE_ENABLED", "WAKE_WORDS",
+             "—聞き取りの正確さ", "VOICE_WORDS", "VOICE_REPLACE", "VOICE_SPELL_CHECK", "COMMAND_WHISPER_MODEL",
+             "+AI_NAME_ALIASES", "+WHISPER_MODEL", "+LANGUAGE", "+VAD_THRESHOLD", "+VAD_SILENCE_SEC", "+VAD_MIN_SEC",
+             "+VAD_MAX_SEC", "+WHISPER_DEVICE", "+WHISPER_COMPUTE"]),
+    ("読み上げ", ["—声", "TTS_ENABLED", "＊voice_picker", "TTS_SPEED", "—読み方", "READINGS", "+VOICEVOX_URL"]),
+    ("AI", ["—性格・話し方", "PERSONA", "—覚えていること", "MEMORY", "—AIモデル", "OLLAMA_MODEL", "USE_GPU",
+            "+OLLAMA_URL", "+OLLAMA_TIMEOUT", "+MAX_TOOL_STEPS", "+SUMMARIZE_AFTER_TOOL"]),
+    ("会話", ["—会話の記憶", "CONTEXT_TURNS", "FULL_CONTEXT", "FULL_CONTEXT_LIMIT", "FULL_CONTEXT_COMPRESS",
+            "—テクニカルモード（コード・サーバー・IT）", "TECH_AUTO", "TECH_MODEL"]),
+    ("権限", ["—画面の直接操作", "SCREEN_CONTROL_ENABLED", "SCREEN_ALLOW_CLICK", "SCREEN_ALLOW_TYPE", "SCREEN_ALLOW_KEYS",
+            "SCREEN_ALLOW_SCROLL", "SCREEN_ALLOW_WINDOWS", "SCREEN_WAIT_IDLE",
+            "—ファイル・フォルダ", "FOLDER_OPS_ENABLED", "FOLDER_DELETE_ENABLED", "—確認", "CONFIRM_VOICE_DANGER",
+            "+DRY_RUN"]),
+    ("ブラウザ・検索", ["—Webページの操作", "WEB_CONTROL_ENABLED", "WEB_CONFIRM_RISKY", "BROWSER",
+                 "—調べものの返事", "SAFE_SITES_ONLY", "SOURCE_COUNT", "SEARCH_IMAGE_COUNT", "IMAGE_COUNT",
+                 "+SEARCH_URL"]),
+    ("メール", ["—メールの操作（メールアプリを開かずに行います）", "MAIL_SERVICE", "MAIL_IMAP_HOST", "MAIL_IMAP_USER",
+             "MAIL_IMAP_PASSWORD", "+MAIL_IMAP_PORT"]),
+    ("更新・情報", ["—アップデート（新しい版への更新）", "AUTO_UPDATE"]),
+]
+ADVANCED = {k[1:] for _, keys in LAYOUT for k in keys if k.startswith("+")}
+TABS = [(name, [("—", k[1:]) if k.startswith("—") else ("＊", k[1:]) if k.startswith("＊") else _ALL[k.lstrip("+")]
+                for k in keys]) for name, keys in LAYOUT]
+assert {f[0] for _, fs in TABS for f in fs if f[0] not in ("—", "＊")} == set(_ALL), "設定の項目に漏れ・重複がある"
+
 # 数を「つまみ」で選べる項目: (最小, 最大, 刻み)
 SLIDERS = {
     "TTS_SPEED": (0.5, 2.0, 0.05),
@@ -265,8 +299,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self._items = {}  # ページ -> [(部品, 置き方, 検索用の文字 または None(見出し))]
         self._rows = {}   # キー -> 項目のカード
         self.title(f"{config.AI_NAME} 設定")
-        self.geometry("640x560")
-        self.minsize(560, 440)
+        self.geometry("680x600")
+        self.minsize(580, 540)
+        self._adv_open = {}  # ページ -> 詳細設定を開いているか
+        self._tag = None     # いま作っている項目の種類(None / "adv" 詳細設定 / "toggle" 詳細設定の開閉)
         self.attributes("-topmost", True)
         if os.name == "nt":  # CTkToplevel は起動直後に既定アイコンへ戻すため少し待って設定
             self.after(250, lambda: self.iconbitmap(shortcut.ICON))
@@ -278,7 +314,7 @@ class SettingsWindow(ctk.CTkToplevel):
         side.grid(row=0, column=0, rowspan=2, sticky="ns")
         side.grid_propagate(False)
         brand = ctk.CTkFrame(side, fg_color="transparent")
-        brand.pack(pady=(18, 16), padx=14, anchor="w")
+        brand.pack(pady=(16, 12), padx=14, anchor="w")
         ctk.CTkLabel(brand, text="", image=icons.emblem(26)).pack(side="left", padx=(0, 6))
         ctk.CTkLabel(brand, text="設定", font=T.font(15, "bold"), text_color=T.TEXT).pack(side="left")
         # 設定の検索(項目名・説明に含まれる言葉で絞り込む)
@@ -288,10 +324,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self.search.bind("<KeyRelease>", lambda e: self._filter(self.search.get()))
         self._tab_btns, self._pages = {}, {}
         for name, _ in TABS:
-            b = ctk.CTkButton(side, text=name, anchor="w", height=36, corner_radius=10, font=T.font(12),
+            b = ctk.CTkButton(side, text=name, anchor="w", height=32, corner_radius=10, font=T.font(12),
                               fg_color="transparent", hover_color=T.BORDER, text_color=T.SUB,
                               command=lambda n=name: self._select(n))
-            b.pack(fill="x", padx=10, pady=2)
+            b.pack(fill="x", padx=10, pady=1)
             self._tab_btns[name] = b
         ctk.CTkLabel(side, text=f"バージョン {VERSION}", font=T.font(10), text_color=T.SUB).pack(
             side="bottom", pady=12)
@@ -319,6 +355,7 @@ class SettingsWindow(ctk.CTkToplevel):
                       command=self._save).grid(row=0, column=2)
 
         self._fill(config.current())
+        self._filter("")  # 詳細設定は閉じた状態で見せる
         self._select(TABS[0][0])
         # 変更した項目を目立たせ、保存していない変更の数を出す
         self._save_btn = self._foot.winfo_children()[-1]
@@ -339,23 +376,55 @@ class SettingsWindow(ctk.CTkToplevel):
         w = ctk.CTkLabel(page, text=title, font=T.font(12, "bold"), text_color=T.ACCENT, anchor="w")
         kw = dict(fill="x", padx=8, pady=(14, 4))
         w.pack(**kw)
-        self._items.setdefault(page, []).append((w, kw, None))  # 見出し(検索で、中身が無ければ隠す)
+        self._items.setdefault(page, []).append((w, kw, None, self._tag))  # 見出し(検索で、中身が無ければ隠す)
 
     def _card_row(self, page, search=""):
         row = ctk.CTkFrame(page, fg_color=T.SURFACE, corner_radius=12, border_width=1, border_color=T.SURFACE)
         kw = dict(fill="x", padx=4, pady=3)
         row.pack(**kw)
         row.grid_columnconfigure(0, weight=1)
-        self._items.setdefault(page, []).append((row, kw, search.lower()))
+        self._items.setdefault(page, []).append((row, kw, search.lower(), self._tag))
         return row
 
     def _build_fields(self, page, fields):
+        basic = [f for f in fields if f[0] not in ADVANCED]
+        adv = [f for f in fields if f[0] in ADVANCED]
+        self._tag = None
+        self._add_fields(page, basic)
+        if adv:  # ふだんは使わない項目は「詳細設定」にまとめて隠す
+            self._tag = "toggle"
+            row = self._card_row(page, "")
+            row.configure(fg_color="transparent", border_width=0)
+            btn = ctk.CTkButton(row, text="", height=30, corner_radius=15, font=T.font(11), fg_color="transparent",
+                                border_width=1, border_color=T.BORDER, text_color=T.SUB, hover_color=T.SURFACE,
+                                command=lambda p=page: self._toggle_adv(p))
+            btn.grid(row=0, column=0, sticky="w", padx=4, pady=(10, 4))
+            page._adv_btn, page._adv_count = btn, len(adv)
+            self._tag = "adv"
+            self._section(page, "詳細設定")
+            self._add_fields(page, adv)
+            self._tag = None
+            self._paint_adv(page)
+
+    def _toggle_adv(self, page):
+        self._adv_open[page] = not self._adv_open.get(page, False)
+        self._paint_adv(page)
+        self._filter(self.search.get())
+
+    def _paint_adv(self, page):
+        is_open = self._adv_open.get(page, False)
+        page._adv_btn.configure(text="▴  詳細設定を隠す" if is_open else f"▾  詳細設定を表示（{page._adv_count}項目）")
+
+    def _add_fields(self, page, fields):
         for f in fields:
             if f[0] == "—":
                 self._section(page, f[1])
                 continue
             if f[0] == "＊":
-                self._voice_card(page)
+                if f[1] == "mic_test":
+                    self._mic_test_card(page)
+                else:
+                    self._voice_card(page)
                 continue
             if f[2] == "mic":  # マイクはこのPCにつながっているものから選ぶ
                 import voice
@@ -679,23 +748,25 @@ class SettingsWindow(ctk.CTkToplevel):
         first = None
         for name, page in self._pages.items():
             items = self._items.get(page, [])
-            visible = []
-            for i, (w, kw, text) in enumerate(items):
+            is_open = self._adv_open.get(page, False)
+            # 項目: 検索に合うもの。詳細設定は、開いているときか検索中だけ。開閉のボタンは検索中は隠す
+            visible = [None if text is None else (not q) if tag == "toggle" else
+                       (not q or q in text) and (bool(q) or tag != "adv" or is_open)
+                       for w, kw, text, tag in items]
+            for i, (w, kw, text, tag) in enumerate(items):
                 if text is None:  # 見出し: 次の見出しまでに見える項目があれば見せる
                     rest = []
-                    for w2, _, t2 in items[i + 1:]:
-                        if t2 is None:
+                    for j in range(i + 1, len(items)):
+                        if items[j][2] is None or items[j][3] == "toggle":
                             break
-                        rest.append(t2)
-                    visible.append(not q or any(q in t for t in rest))
-                else:
-                    visible.append(not q or q in text)
-            for w, kw, _ in items:
+                        rest.append(visible[j])
+                    visible[i] = any(rest)
+            for w, kw, _, _ in items:
                 w.pack_forget()
-            for (w, kw, _), show in zip(items, visible):
+            for (w, kw, _, _), show in zip(items, visible):
                 if show:
                     w.pack(**kw)
-            hits = sum(1 for (w, kw, t), show in zip(items, visible) if show and t is not None)
+            hits = sum(1 for (w, kw, t, tag), show in zip(items, visible) if show and t is not None and tag != "toggle")
             base = self._tab_btns[name].cget("text").split("（")[0].split("  ")[0]
             self._tab_btns[name].configure(text=f"{base}（{hits}）" if q else base,
                                            state="normal" if (hits or not q) else "disabled")
@@ -739,6 +810,104 @@ class SettingsWindow(ctk.CTkToplevel):
             return
         subprocess.Popen([exe], cwd=shortcut.HERE)
         self._on_quit()
+
+    def _mic_test_card(self, page):
+        """マイクテスト: 5秒録音して、音の大きさ・雑音・聞き取れた言葉を見せ、録音した声を再生する。"""
+        row = self._card_row(page, "マイクテスト ボイスチェック 録音 再生 音量 感度 聞き取り")
+        ctk.CTkLabel(row, text="マイクテスト（ボイスチェック）", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(9, 0))
+        ctk.CTkLabel(row, text="「テスト開始」を押して、5秒ほど普段どおりに話してください。声の大きさと雑音を確かめ、"
+                               "聞き取れた言葉を表示して、録音した声を再生します（下で選んでいるマイクを使います）",
+                     font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=330).grid(
+            row=1, column=0, sticky="w", padx=12)
+        self.mic_btn = ctk.CTkButton(row, text="テスト開始", width=110, height=34, corner_radius=17, fg_color=T.ACCENT,
+                                     hover_color=T.ACCENT_HOVER, font=T.font(12, "bold"), command=self._mic_test)
+        self.mic_btn.grid(row=0, column=1, rowspan=2, padx=12, pady=8)
+        self.mic_bar = ctk.CTkProgressBar(row, height=10, corner_radius=5, progress_color=T.OK, fg_color=T.BG)
+        self.mic_bar.set(0)
+        self.mic_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 2))
+        self.mic_msg = ctk.CTkLabel(row, text="", font=T.font(11), text_color=T.TEXT, anchor="w", justify="left",
+                                    wraplength=440)
+        self.mic_msg.grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
+        self.mic_fix = ctk.CTkButton(row, text="", height=28, corner_radius=14, font=T.font(10), fg_color="transparent",
+                                     border_width=1, border_color=T.ACCENT, text_color=T.TEXT, hover_color=T.BORDER)
+        self._mic_level, self._mic_busy = 0.0, False
+
+    def _mic_test(self):
+        if self._mic_busy:
+            return
+        import mictest
+        try:
+            device = self._value("MIC_DEVICE")
+        except (KeyError, ValueError):
+            device = config.MIC_DEVICE
+        self._mic_busy = True
+        self.mic_btn.configure(state="disabled", text="録音中…")
+        self.mic_fix.grid_forget()
+        self.mic_msg.configure(text="話してください（5秒）", text_color=T.TEXT)
+        voice = getattr(self.master, "voice", None)
+        listen = voice.should_listen if voice else None
+        if voice:
+            voice.should_listen = lambda: False  # テスト中は、ふだんの聞き取りを休む(命令として扱わない)
+
+        def level(v):
+            self._mic_level = max(v, self._mic_level * 0.8)
+
+        def meter():
+            if self._mic_busy and self.winfo_exists():
+                self.mic_bar.set(self._mic_level)
+                self._mic_level *= 0.85
+                self.after(50, meter)
+        meter()
+
+        def run():
+            try:
+                audio = mictest.record(device, 5.0, level)
+                result = mictest.analyze(audio)
+                self._ui(lambda: self.mic_msg.configure(text=f"{result['advice']}。録音した声を再生しています…"))
+                self._ui(lambda: self.mic_btn.configure(text="再生中…"))
+                mictest.play(audio)
+                self._ui(lambda: self.mic_msg.configure(text=f"{result['advice']}。聞き取りを確かめています…"))
+                self._ui(lambda: self.mic_btn.configure(text="確認中…"))
+                text = mictest.transcribe(audio) if result["peak"] >= 0.01 else ""
+                self._ui(lambda: self._mic_done(result, text))
+            except Exception as e:
+                err = str(e)
+                self._ui(lambda: self._mic_done(None, f"マイクを使えませんでした（{err[:80]}）"))
+            finally:
+                if voice:
+                    voice.should_listen = listen
+        threading.Thread(target=run, daemon=True).start()
+
+    def _ui(self, fn):
+        """別のスレッドから、画面の部品を変える(画面のスレッドで行う)。"""
+        try:
+            self.after(0, lambda: self.winfo_exists() and fn())
+        except RuntimeError:
+            pass
+
+    def _mic_done(self, result, text):
+        import mictest
+        self._mic_busy = False
+        self.mic_bar.set(0)
+        self.mic_btn.configure(state="normal", text="もう一度テスト")
+        if result is None:
+            self.mic_msg.configure(text=text, text_color=T.DANGER)
+            return
+        good = result["advice"] == "よく聞こえています"
+        heard = f"聞き取れた言葉:「{text}」" if text else "言葉は聞き取れませんでした"
+        self.mic_msg.configure(
+            text=f"{'✓ ' if good else '⚠ '}{result['advice']}\n{heard}\n"
+                 f"声の大きさ {result['voice'] * 100:.1f} ／ 雑音 {result['noise'] * 100:.1f}",
+            text_color=T.TEXT if good else T.DANGER)
+        t = result["threshold"]
+        if t and result["peak"] >= 0.01 and not mictest.threshold_ok(result) and "VAD_THRESHOLD" in self._vars:
+            def apply():
+                self._vars["VAD_THRESHOLD"][1].set(str(t))
+                self.mic_fix.grid_forget()
+                self.mic_msg.configure(text=self.mic_msg.cget("text") + f"\n感度を {t} にしました（保存で確定）")
+            self.mic_fix.configure(text=f"待ち受けの感度を、このマイクに合わせる（{t}）", command=apply)
+            self.mic_fix.grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
 
     def _voice_card(self, page):
         """現在の声と「声を選ぶ」ボタン。キャラ一覧の画面で試聴・ダウンロードする。"""

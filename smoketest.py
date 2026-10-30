@@ -348,6 +348,24 @@ def run(out):
             ImageGrab.grab(bbox=on_main(lambda: (win.winfo_rootx(), win.winfo_rooty(), win.winfo_rootx() + win.winfo_width(),
                                                  win.winfo_rooty() + win.winfo_height())), all_screens=True).save(
                 os.path.join(out, "8_settings.png"))
+            # 設定のタブ分け・詳細設定の開閉・マイクテスト(このPCにマイクが無くても落ちないこと)
+            on_main(lambda: win._select("マイク"))
+            hidden = on_main(lambda: not win._rows["VAD_THRESHOLD"].winfo_ismapped())
+            page = on_main(lambda: win._pages["マイク"])
+            on_main(lambda: win._toggle_adv(page))
+            time.sleep(0.5)
+            shown = on_main(lambda: win._rows["VAD_THRESHOLD"].winfo_ismapped())
+            note(f"設定の詳細設定の開閉: {'OK' if hidden and shown else 'NG'} (閉={hidden}, 開={shown})")
+            on_main(lambda: win._toggle_adv(page))
+            on_main(lambda: win._mic_test())
+            time.sleep(8)
+            msg = on_main(lambda: win.mic_msg.cget("text"))
+            busy = on_main(lambda: win._mic_busy)
+            note(f"マイクテスト: {'OK' if not busy and msg else 'NG'} ({msg[:60]!r})")
+            ImageGrab.grab(bbox=on_main(lambda: (win.winfo_rootx(), win.winfo_rooty(), win.winfo_rootx() + win.winfo_width(),
+                                                 win.winfo_rooty() + win.winfo_height())), all_screens=True).save(
+                os.path.join(out, "9_settings_mic.png"))
+            note(f"設定のタブ: {len(on_main(lambda: win._tab_btns))}")
             still = on_main(lambda: win.winfo_exists())
             note(f"設定の保存(画面は閉じない): {'OK' if still else 'NG'} 名前={config.AI_NAME!r}")
             on_main(lambda: win.destroy())
