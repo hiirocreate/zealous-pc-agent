@@ -114,6 +114,7 @@ class App(ctk.CTk):
     _voice_session = False
     _follow_until = 0
     _voice_win = None  # 音声会話画面(開いているとき)
+    _pending_confirm = None  # 実行前の確認を待っている操作 {"tool", "args", "what"}
 
     def __init__(self):
         ctk.set_appearance_mode(T.MODE)
@@ -903,6 +904,10 @@ class App(ctk.CTk):
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
     def _on_reply(self, text):
+        import llm
+        text, confirm = llm.take_confirm(text)
+        if confirm:
+            self.after(1, lambda: self._ask_confirm(confirm))
         body, sources, images = split_reply(text)
         if self._voice_win is not None:
             self._voice_win.reply_done(body)
@@ -1039,7 +1044,9 @@ class App(ctk.CTk):
         else:
             self.hint.grid_remove()
 
-    def _submit(self, text):
+    def _submit(self, text, by_voice=False):
+        if self._pending_confirm is not None and self._answer_confirm(text):
+            return  # 「はい」「いいえ」: 確認待ちの操作への答え
         import persona
         change = persona.parse(text)
         if change:  # 「関西弁で話して」「話し方を元に戻して」など: AIの性格・話し方を変える
@@ -1049,7 +1056,7 @@ class App(ctk.CTk):
             self._standby()
             return
         config.VOICE_CONTEXT = text  # 次の聞き取りの手がかりにする(直前の話題)
-        zlog.note(f"送信: {text[:40]!r}")
+        zlog.note(f"送信: {len(text)}文字{'(声)' if by_voice else ''}")  # 記録には中身を残さない
         self._log(text, "user")
         if re.search(r"声を(?:変え|かえ|選|えら)", text):  # 「声を変えたい」は声選びの画面を開く
             self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
@@ -1058,25 +1065,25 @@ class App(ctk.CTk):
         history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
         threads.add(self.thread, "user", text)
         self._pending_tid = self.thread["id"]
-        self.worker.submit(text, history)
+        self.worker.submit(text, history, by_voice=by_voice)
         self._set_state("think")
         self._refresh_threads()
 
     def _on_voice(self, text, from_button):
-        zlog.note(f"聞き取り {'ボタン' if from_button else '待機中'}: {text[:40]!r}")
         """聞き取った文を処理する。
         - マイクボタン・話すキー: そのまま命令にする(合図の言葉は不要)
         - 待機中の常時聞き取り: 「ウェイク、<AI名>」で始まるときだけ。チャット画面を開き、
           そのまま続けて話しかけられる状態にする(以後は合図の言葉なしで会話を続けられる)"""
+        zlog.note(f"聞き取り {'ボタン' if from_button else '待機中'}: {len(text)}文字")  # 中身は残さない
         cmd = strip_wake_word(text)
         if self._voice_win is not None and not from_button:  # 音声会話画面: 話したことはそのまま命令
             cmd = cmd or text
             self._voice_win.heard(cmd)
-            self._submit(cmd)
+            self._submit(cmd, by_voice=True)
             return
         if from_button:
             self._end_follow(idle=False)
-            self._submit(cmd or text)
+            self._submit(cmd or text, by_voice=True)
             return
         if self.speaker.busy and cmd is None:
             return  # 読み上げ中は、自分の声を拾っただけなので無視
@@ -1091,7 +1098,7 @@ class App(ctk.CTk):
         else:
             cmd = text
         self._follow_until = 0
-        self._submit(cmd)
+        self._submit(cmd, by_voice=True)
 
     # ================= 音声会話画面 =================
     def open_voice_mode(self):
@@ -1125,6 +1132,53 @@ class App(ctk.CTk):
         self.deiconify()
         self.lift()
         self._show_panel()
+
+    # ================= 危険な操作の確認 =================
+    YES = re.compile(r"^(?:はい|うん|ええ|お願い|おねがい|実行|いいよ|いいです|オッケー|ok|どうぞ|やって|大丈夫|そう)", re.I)
+    NO = re.compile(r"^(?:いいえ|いや|やめ|だめ|ダメ|キャンセル|中止|ストップ|しないで|やらないで|ノー|no|待って)", re.I)
+
+    def _ask_confirm(self, confirm):
+        """声で頼まれた危険な操作を、実行する前に確かめる(画面のボタンでも、声で「はい/いいえ」でも答えられる)。"""
+        self._pending_confirm = confirm
+        card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.WARN)
+        ctk.CTkLabel(card, text=f"{confirm['what']}しますか？", font=T.font(11, "bold"), text_color=T.TEXT,
+                     wraplength=240, justify="left").pack(anchor="w", padx=12, pady=(8, 4))
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=(0, 10))
+        ctk.CTkButton(row, text="実行する", height=28, corner_radius=14, fg_color=T.DANGER,
+                      hover_color=T.DANGER_HOVER, font=T.font(11, "bold"),
+                      command=lambda: self._answer_confirm("はい")).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(row, text="やめる", height=28, corner_radius=14, fg_color="transparent", border_width=1,
+                      border_color=T.BORDER, text_color=T.TEXT, hover_color=T.BORDER, font=T.font(11),
+                      command=lambda: self._answer_confirm("いいえ")).pack(side="left")
+        self._confirm_card = card
+        self._add_widget(card, "w")
+
+    def _answer_confirm(self, text):
+        """確認への答えなら処理して True。違う話なら確認を取り下げて False(ふつうの依頼として扱う)。"""
+        t = text.strip()
+        confirm, self._pending_confirm = self._pending_confirm, None
+        card = getattr(self, "_confirm_card", None)
+        if card is not None and card.winfo_exists():
+            self._remove_widget(card)
+        if self.YES.match(t):
+            self._log(t, "user")
+            self.worker.run_confirmed(confirm["tool"], confirm["args"])
+            self._set_state("think")
+            return True
+        if self.NO.match(t):
+            self._log(t, "user")
+            self._log("わかりました、やめておきますね。", "ai")
+            self.speaker.say("わかりました、やめておきますね。")
+            return True
+        return False
+
+    def _history_cleared(self):
+        """会話の履歴を消したあと: 画面の会話も消し、新しいチャットにする。"""
+        for b in list(self._bubbles):
+            self._remove_widget(b)
+        self._new_thread()
+        config.VOICE_CONTEXT = ""
 
     def _change_persona(self, text, change):
         import persona
@@ -1225,7 +1279,7 @@ class App(ctk.CTk):
             return
         self._settings = SettingsWindow(self, on_saved=self._settings_saved, on_quit=self.quit_app,
                                         on_check_update=lambda report: self.check_update(True, report),
-                                        on_update=self.start_update,
+                                        on_update=self.start_update, on_clear_history=self._history_cleared,
                                         on_pick_voice=self.open_voice_picker)
 
     def open_voice_picker(self, on_changed=None):

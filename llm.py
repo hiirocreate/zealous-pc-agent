@@ -26,6 +26,12 @@ def friendly(error):
     return "すみません、うまくお答えできませんでした。少し言い方を変えて、もう一度お願いできますか？"
 
 
+def take_confirm(reply):
+    """返事から「確認待ちの操作」を取り出す。(残りの返事, 操作 または None)"""
+    body, sep, data = reply.partition(tools.CONFIRM)
+    return (body, json.loads(data)) if sep else (reply, None)
+
+
 def split_reply(reply):
     """返答を (本文, 出典の行, 画像 {"query", "items"} または None) に分ける。"""
     reply, _, images = reply.partition(IMAGES)
@@ -197,6 +203,8 @@ def _ask(text):
         messages.append(msg)
         for name, args in calls:
             res = tools.run_tool(name, args)
+            if tools.CONFIRM in res:  # 声で頼まれた危険な操作: 実行せずに確認を返す
+                return res
             results.append(res)
             messages.append({"role": "tool", "content": res})
         if not config.SUMMARIZE_AFTER_TOOL:

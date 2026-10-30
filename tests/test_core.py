@@ -341,3 +341,28 @@ def test_persona_parse():
     config.PERSONA = "関西弁で話す"
     assert "関西弁" in llm.system_prompt()
     config.PERSONA = ""
+
+
+def test_voice_danger_needs_confirm(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    (tmp_path / "memo.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(tools, "REQUIRE_CONFIRM", True)
+    res = tools.run_tool("delete_item", {"name": "memo.txt"})
+    body, confirm = llm.take_confirm(res)
+    assert confirm["tool"] == "delete_item" and "はい" in body
+    assert (tmp_path / "memo.txt").exists()  # 確認前なので消えていない
+    assert tools.CONFIRM not in tools.run_tool("create_folder", {"name": "a"})  # 危なくない操作はそのまま
+    monkeypatch.setattr(tools, "REQUIRE_CONFIRM", False)
+    assert tools.CONFIRM not in tools.run_tool("shutdown_pc", {"cancel": True})
+
+
+def test_open_url_rejects_bad(monkeypatch):
+    import websearch
+    monkeypatch.setattr(websearch, "host_is_safe", lambda h: h != "bad.example")
+    opened = []
+    monkeypatch.setattr(tools, "_browser_path", lambda: None)
+    monkeypatch.setattr(tools.webbrowser, "open", lambda u: opened.append(u))
+    assert "開きませんでした" in tools.run_tool("open_url", {"url": "https://bad.example/x"})
+    assert "開きませんでした" in tools.run_tool("open_url", {"url": "http://1.2.3.4/"})
+    tools.run_tool("open_url", {"url": "https://ok.example/"})
+    assert opened == ["https://ok.example/"]

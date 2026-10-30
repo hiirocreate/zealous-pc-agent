@@ -13,6 +13,9 @@ from version import VERSION
 
 FROZEN = getattr(sys, "frozen", False)
 ASSET = "ZealousSetup.exe"
+HASH_ASSET = ASSET + ".sha256"  # インストーラーの指紋(SHA-256)。取得したファイルが本物か確かめる
+# 配布元はプログラムに固定する(設定ファイルを書き換えられても、別の場所から更新させない)
+RELEASE_REPO = "hiirocreate/zealous-releases"
 
 
 def _ver(text):
@@ -25,7 +28,7 @@ def _ver(text):
 
 def check():
     """新しい版があれば {"version", "url", "notes"} を、無ければ None を返す。"""
-    req = urllib.request.Request(f"https://api.github.com/repos/{config.UPDATE_REPO}/releases/latest",
+    req = urllib.request.Request(f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest",
                                  headers={"Accept": "application/vnd.github+json", "User-Agent": "Zealous"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -37,10 +40,33 @@ def check():
     latest = rel.get("tag_name", "")
     if _ver(latest) <= _ver(VERSION):
         return None
-    url = next((a["browser_download_url"] for a in rel.get("assets", []) if a["name"] == ASSET), None)
-    if not url:
+    assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
+    if ASSET not in assets:
         return None
-    return {"version": latest.lstrip("vV"), "url": url, "notes": (rel.get("body") or "").strip()}
+    return {"version": latest.lstrip("vV"), "url": assets[ASSET], "hash_url": assets.get(HASH_ASSET),
+            "notes": (rel.get("body") or "").strip()}
+
+
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def verify(path, hash_url):
+    """取得したインストーラーが、公開されたものと同じか(途中で壊れたりすり替えられたりしていないか)確かめる。"""
+    if not hash_url:
+        raise RuntimeError("この版には確認用の指紋(SHA-256)がないため、安全のため自動更新を中止しました。"
+                           "配布ページから手動で入れてください")
+    req = urllib.request.Request(hash_url, headers={"User-Agent": "Zealous"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        expected = r.read(200).decode("ascii", "ignore").split()[0].strip().lower()
+    if _sha256(path) != expected:
+        os.remove(path)
+        raise RuntimeError("取得したファイルが公開されたものと一致しないため、安全のため更新を中止しました")
 
 
 def install(info, progress):
@@ -49,6 +75,7 @@ def install(info, progress):
         raise RuntimeError("ソース版は git pull で更新してください")
     dest = os.path.join(tempfile.gettempdir(), f"ZealousSetup-{info['version']}.exe")
     runtime.download(info["url"], dest, progress)
+    verify(dest, info.get("hash_url"))
     # Zealous が完全に終わってからインストーラーを動かす(動いたままだとファイルを置き換えられない)。
     # 待つ役は別のプロセス(PowerShell)に任せ、Zealous はこの後すぐ終了する。
     # 終わったら自動で起動し直す(installer.iss の [Run] 参照)。記録は設定フォルダの update.log に残す。

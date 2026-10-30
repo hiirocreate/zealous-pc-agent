@@ -33,7 +33,25 @@ def schemas():
     return [s for _, s in TOOLS.values()]
 
 
-def run_tool(name, args):
+# 取り返しがつきにくい操作。声で頼まれたときは、実行する前に「はい/いいえ」で確かめる
+# (近くの人の声や、テレビ・動画の音声で勝手に実行されないように)
+DANGEROUS = {
+    "delete_item": "「{name}」をごみ箱へ移動",
+    "move_item": "「{name}」を「{dest}」へ移動",
+    "rename_item": "「{name}」の名前を「{new_name}」に変更",
+    "shutdown_pc": "PCをシャットダウン",
+}
+REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロセスが依頼ごとに設定する)
+CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
+
+
+def needs_confirm(name, args):
+    if not (REQUIRE_CONFIRM and getattr(config, "CONFIRM_VOICE_DANGER", True)) or name not in DANGEROUS:
+        return False
+    return not (name == "shutdown_pc" and str(args.get("cancel", "")).lower() in ("true", "1"))
+
+
+def run_tool(name, args, confirmed=False):
     if name not in TOOLS:
         return "すみません、その操作にはまだ対応していません。"
     func, schema = TOOLS[name]
@@ -41,6 +59,11 @@ def run_tool(name, args):
     args = {k: v for k, v in (args or {}).items() if k in props}
     if config.DRY_RUN:
         return f"[DRY] {name}({args})"
+    if not confirmed and needs_confirm(name, args):
+        import json
+        what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name")})
+        return (f"{what}してよいですか？「はい」か「いいえ」で答えてください。"
+                + CONFIRM + json.dumps({"tool": name, "args": args, "what": what}, ensure_ascii=False))
     try:
         return func(**args)
     except Exception as e:  # 関数の失敗は、自然な言い方で返す(中身は記録へ)
@@ -81,7 +104,14 @@ def _browser_path():
 
 
 def open_in_browser(url):
-    """設定で選んだブラウザで開く(検索結果のリンクや画像の元ページもこれで開く)。"""
+    """設定で選んだブラウザで開く(検索結果のリンクや画像の元ページもこれで開く)。
+    危険と判定されたサイトや、http(s) 以外のアドレスは開かない。"""
+    import websearch
+    url = str(url).strip()
+    host = websearch._host(url)
+    if websearch._looks_bad(url, host) or (getattr(config, "SAFE_SITES_ONLY", True)
+                                           and not websearch.host_is_safe(host)):
+        raise PermissionError(f"安全でない可能性があるため開きませんでした: {host or url[:40]}")
     path = _browser_path()
     if path:
         subprocess.Popen([path, url])

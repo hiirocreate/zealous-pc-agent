@@ -53,6 +53,16 @@ def delete(tid):
         pass
 
 
+def delete_all():
+    """会話の履歴をすべて消す。"""
+    import glob
+    for f in glob.glob(os.path.join(DIR, "*.json")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
 def add(thread, role, text, sources="", images=None):
     """メッセージを足して保存する。最初の発言をスレッド名にする。"""
     msg = {"role": role, "text": text, "time": time.time()}

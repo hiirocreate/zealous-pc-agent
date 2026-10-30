@@ -37,7 +37,8 @@ DEFAULTS = {
     "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
-    "FOLDER_DELETE_ENABLED": True,   # 削除(ごみ箱へ移動)を許可
+    "FOLDER_DELETE_ENABLED": True,
+    "CONFIRM_VOICE_DANGER": True,    # 声で頼まれた削除・移動・名前変更・シャットダウンは、実行前に確認する   # 削除(ごみ箱へ移動)を許可
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",
     "SEARCH_URL": "https://www.google.com/search?q={}",

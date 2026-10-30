@@ -54,6 +54,9 @@ TABS = [
         ("—", "AIに任せる操作"),
         ("FOLDER_OPS_ENABLED", "ファイル・フォルダ操作を許可", "bool", "作成・名前変更・移動・コピー・一覧"),
         ("FOLDER_DELETE_ENABLED", "削除を許可", "bool", "削除はごみ箱へ移動するだけで、完全には消しません"),
+        ("CONFIRM_VOICE_DANGER", "声での危険な操作は確認する", "bool",
+         "声で頼まれた削除・移動・名前変更・シャットダウンは、実行する前に「はい/いいえ」で確かめます"
+         "（近くの人やテレビの音声で勝手に実行されないように）"),
         ("DRY_RUN", "お試しモード", "bool", "実際には操作せず、何をするつもりかだけ表示"),
         ("—", "ブラウザ"),
         ("BROWSER", "使うブラウザ", "choice", "Webページを開くときのブラウザ",
@@ -152,11 +155,12 @@ def font_choices(widget):
 
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_saved, on_quit, on_check_update, on_pick_voice, on_update):
+    def __init__(self, master, on_saved, on_quit, on_check_update, on_pick_voice, on_update, on_clear_history=None):
         super().__init__(master, fg_color=T.BG)
         self._on_saved, self._on_quit, self._on_check_update = on_saved, on_quit, on_check_update
         self._on_pick_voice = on_pick_voice
         self._on_update = on_update
+        self._on_clear_history = on_clear_history
         self._vars = {}
         self._choices = {}  # キー -> {表示名: 値}
         self.title(f"{config.AI_NAME} 設定")
@@ -351,6 +355,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._section(page, "その他")
         self._action(page, f"{config.AI_NAME} を終了", "常駐をやめます（次回はアイコンから起動）", "終了する",
                      self._on_quit)
+        self._action(page, "会話の履歴を消す", "これまでのチャット・音声会話の記録と、動きの記録をすべて消します",
+                     "すべて消す", self._clear_history, danger=True)
         self._action(page, "アンインストール（削除）", "Zealous をこのPCから取り除きます", "アンインストール",
                      self._uninstall, danger=True)
 
@@ -417,6 +423,22 @@ class SettingsWindow(ctk.CTkToplevel):
         import subprocess
         subprocess.Popen(shortcut.command("--setup"), cwd=shortcut.HERE)
         self._on_quit()
+
+    def _clear_history(self):
+        import tkinter.messagebox as mb
+        if not mb.askyesno("会話の履歴を消す", "これまでの会話の記録をすべて消します。元には戻せません。よろしいですか？",
+                           parent=self):
+            return
+        import threads
+        threads.delete_all()
+        for name in ("trace.log", "trace.log.old"):  # 動きの記録も消す
+            try:
+                os.remove(os.path.join(config.APP_DIR, name))
+            except OSError:
+                pass
+        if self._on_clear_history:
+            self._on_clear_history()
+        self._show("会話の履歴を消しました")
 
     def _uninstall(self):
         import subprocess
