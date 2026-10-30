@@ -772,3 +772,34 @@ def test_office_files(monkeypatch, tmp_path):
     ws = load_workbook(tmp_path / "提案書.xlsx").active
     assert ws["B4"].value == 1200 and ws["C4"].value == 0.12 and ws["A4"].number_format == "0"
     assert llm.quick_route("新サービスの提案資料をパワポで作って")[0] == "make_office_file"
+
+
+def test_document_research_review_and_images(monkeypatch, tmp_path):
+    import officedoc
+    import websearch
+    monkeypatch.setattr(websearch, "search", lambda q, n=5: [{"title": "白書", "url": "https://example.go.jp/a",
+                                                              "snippet": "導入率は30%"}])
+    monkeypatch.setattr(websearch, "read_pages", lambda r, count=3, limit=1500: ["本文"])
+    calls = []
+
+    def fake(messages, model, temperature):
+        calls.append(messages[0]["content"])
+        if "校正" in messages[0]["content"]:
+            return "# 題名\n## 背景\n- 導入率は30%\n## まとめ\n- 小さく始める"
+        return "# 題名\n## 背景\n- 導入率わ30%\n- 導入率わ30%\n## まとめ\n- 小さく始める\n!画像: office"
+    monkeypatch.setattr(llm, "_doc_chat", fake)
+    text = llm.write_document("pptx", "生成AIの導入についての提案資料をパワポで作って")
+    assert "【調べた情報】\n" in calls[0] and "導入率は30%" in calls[0]  # 調べた内容だけを根拠にする
+    assert "校正" in calls[1] and text.endswith("## 出典\n- 白書 https://example.go.jp/a")
+    assert llm.doc_topic("生成AIの導入についての提案資料をパワポで作って") == "生成AIの導入についての提案資料"
+    calls.clear()
+    llm.write_document("docx", "今の内容をWordにまとめて")  # 会話の内容から作るときは調べない
+    assert "【調べた情報】\n" not in calls[0]
+    # 重複は1つに、出典は最後の一覧に
+    doc = officedoc.parse("# T\n## A\n- 同じ\n- 同じ。\n## B\n- 別\n## 出典\n- 白書 https://x")
+    assert [b for _, b in doc["sections"][0]["blocks"]] == [(0, "同じ")] and doc["sources"] == ["白書 https://x"]
+    # 写真は許可の明記されたものだけ(取れなければその行を使わない)
+    monkeypatch.setattr(officedoc, "commons_image", lambda q, folder: None)
+    doc = officedoc.parse("# T\n## A\n- a\n!画像: cat")
+    officedoc.attach_images(doc, str(tmp_path))
+    assert all(k != "image" for k, _ in doc["sections"][0]["blocks"])

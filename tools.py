@@ -986,6 +986,12 @@ def make_office_file(kind, request, name="", path=""):
     doc = officedoc.parse(llm.write_document(kind, request))
     if not doc["sections"]:
         return "資料の中身をうまく作れませんでした。何についての資料か、もう少し詳しく教えてください"
+    if getattr(config, "OFFICE_IMAGES", True) and kind != "xlsx":
+        # 写真は、使ってよい許可が明記されたもの(Wikimedia Commons)だけ。作者とライセンスを資料に書き添える
+        officedoc.attach_images(doc, os.path.join(config.APP_DIR, "office_images"))
+    else:
+        for sec in doc["sections"]:
+            sec["blocks"] = [(k, b) for k, b in sec["blocks"] if k != "image"]
     folder = _guard(_base(path))
     p = officedoc.save_path(folder, os.path.splitext(name)[0] if name else doc["title"], "." + kind)
     count = officedoc.MAKERS[kind](doc, p)

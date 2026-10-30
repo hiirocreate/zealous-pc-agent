@@ -42,6 +42,7 @@ _history = deque()  # 直前のやりとり [(ユーザーの発言, 返答)]
 _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 on_summary = None    # 長い会話の古い部分を圧縮したときに知らせる関数(スレッド番号, 要約, 要約した往復数)
+on_status = None     # 時間のかかる作業の途中経過を、画面の状態の表示へ出す関数(「調べています」など)
 _full = False        # このスレッドの会話をすべて参照するモード
 on_retract = None    # 書き始めた返事を取り消す関数(返事の途中で操作を始めたとき。「開きます」などを話さないように)
 _streamed = False    # 直前の問い合わせで、返事を画面と読み上げへ流したか
@@ -252,20 +253,76 @@ _DOC_GUIDE = {
 }
 
 
-def write_document(kind, request):
-    """Word・PowerPoint・Excel の中身を、決まった書式で書く(これまでの会話の内容も使う)。"""
-    rule = ("あなたは資料作成のプロです。" + _DOC_GUIDE[kind] +
-            f"{answer_language()}で、正確で具体的な内容にしてください。前置き・説明・```は書かず、資料の中身だけを書いてください。")
-    messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
-    model = getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL
+_DOC_QUALITY = (
+    "【品質の決まり】"
+    "・誤字脱字のない自然な{lang}で書く。同じ内容を別の場所で繰り返さない。"
+    "・1つのページ(スライド・章)では1つのことを伝え、見出しは内容が分かる具体的な言葉にする。"
+    "・数字・統計・日付・会社名・制度名などの事実は、【調べた情報】か、これまでの会話に書かれているものだけを使う。"
+    "根拠の無い数字や事実は作らない(分からないところは、数字を使わずに書く)。"
+    "・写真が理解を助けるページにだけ「!画像: 英語の検索語(例: !画像: solar panels on roof)」を1行入れる(全体で2つまで)。"
+    "・前置き・あいさつ・説明・```は書かず、資料の中身だけを書く。")
+_REVIEW = ("次の資料を校正してください。誤字脱字・表記ゆれ・同じ内容の重複・不自然な言い回し・根拠の無い断定を直し、"
+           "見出しや箇条書きの書式(# / ## / ### / - / 1. / 表 / > / !画像:)はそのまま残してください。"
+           "内容を勝手に増やさず、校正後の資料だけを書いてください。")
+_ABOUT_CHAT = re.compile(r"今の|この(?:内容|会話|話|回答|返事)|さっき|上の|これまで|会話|回答|返事")
+
+
+def doc_topic(request):
+    """「〇〇についての提案資料をパワポで作って」→「〇〇についての提案資料」(調べる言葉)"""
+    t = _OFFICE.split(request)[0] if _OFFICE.search(request) else request
+    return re.sub(r"(?:を|の|で|に)$", "", t.strip(" 、,。")).strip() or request
+
+
+def _status(text):
+    if on_status:
+        on_status(text)
+
+
+def _doc_chat(messages, model, temperature):
     try:
-        msg = _chat(messages, use_tools=False, model=model, temperature=0.4)
+        return _chat(messages, use_tools=False, model=model, temperature=temperature).get("content") or ""
     except requests.HTTPError as e:
         if model == config.OLLAMA_MODEL or "404" not in str(e):
             raise
         _start_pull(model)  # 資料づくり向けのモデルがまだ無い: 裏で準備し、今回はいつものモデルで
-        msg = _chat(messages, use_tools=False, model=config.OLLAMA_MODEL, temperature=0.4)
-    return msg.get("content") or ""
+        return _chat(messages, use_tools=False, model=config.OLLAMA_MODEL, temperature=temperature).get("content") or ""
+
+
+def write_document(kind, request):
+    """Word・PowerPoint・Excel の中身を書く。事実が要る資料は先に調べ、その情報だけを根拠にして、最後に校正する。
+    (調べたページは「## 出典」として最後に付ける)"""
+    material, sources = "", []
+    if getattr(config, "OFFICE_RESEARCH", True) and not _ABOUT_CHAT.search(request):
+        _status("資料のために調べています…")
+        try:
+            import websearch
+            results = websearch.search(doc_topic(request), 6)
+            pages = websearch.read_pages(results, count=3, limit=1500)
+            material = "\n".join(f"・{r['title']}: {r['snippet']}" for r in results[:6])
+            material += "\n\n" + "\n\n".join(f"[{r['title']}]\n{p}" for r, p in zip(results, pages) if p)
+            sources = [f"{r['title']} {r['url']}" for r in results[:5]]
+        except Exception:
+            material = ""
+    rule = ("あなたは資料作成のプロです。" + _DOC_GUIDE[kind] + _DOC_QUALITY.format(lang=answer_language())
+            + (f"\n\n【調べた情報】\n{material[:6000]}" if material else
+               "\n\n(調べた情報はありません。数字や事実は、これまでの会話にあるものだけを使ってください)"))
+    messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
+    model = getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL
+    _status("資料の中身を書いています…")
+    draft = _doc_chat(messages, model, 0.4)
+    text = draft
+    if getattr(config, "OFFICE_REVIEW", True) and draft.strip():
+        _status("誤字や重複がないか見直しています…")
+        import officedoc
+        checked = _doc_chat([{"role": "system", "content": _REVIEW}, {"role": "user", "content": draft}], model, 0.1)
+        before, after = officedoc.parse(draft), officedoc.parse(checked)
+        # 見直しで章が大きく減った(書き損じた)ときは、元の文を使う
+        if len(after["sections"]) >= max(1, int(len(before["sections"]) * 0.8)):
+            text = checked
+    if sources:
+        text += "\n\n## 出典\n" + "\n".join(f"- {s}" for s in sources)
+    _status("ファイルを作っています…")
+    return text
 
 
 def _start_pull(model):

@@ -67,6 +67,9 @@ DEFAULTS = {
     "WEB_CONTROL_ENABLED": True,     # サイトはゼラス用ブラウザで開き、ページの中の操作(押す・入力・スクロールなど)もする
     "WEB_CONFIRM_RISKY": True,       #   購入・送信・削除などのボタンは、押す前に確かめる
     "CONTEXT_RESET_MIN": 10,
+    "OFFICE_RESEARCH": True,         # Word・PowerPoint・Excel を作るとき、事実が要る内容は先に調べ、出典を付ける
+    "OFFICE_REVIEW": True,           #   書いた中身を見直す(誤字・重複・不自然な言い回し)。少し時間がかかる
+    "OFFICE_IMAGES": True,           #   写真を入れる(使ってよい許可が明記された Wikimedia Commons の写真だけ)
     "TECH_AUTO": True,               # コード・サーバーなど技術的な質問は、テクニカルモードに自動で切り替える
     "TECH_MODEL": "maternion/lfm2:8b-a1b",  # テクニカルモードで使うAIモデル(空なら通常と同じ。初めて使うときに自動で取得)
     # ---- メール(画面を使わずに裏側で操作) ----

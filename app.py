@@ -1776,6 +1776,10 @@ class App(ctk.CTk):
                 self._on_delta(text)
             elif kind == "reply":
                 self._on_reply(text)
+            elif kind == "status":  # 時間のかかる作業の途中経過(「調べています…」など)
+                if self._state == "think":
+                    for t in (self.status, self.pill_status, self.cmp_status):
+                        t.configure(text=text)
             elif kind == "retract":  # 返事の途中で操作を始めた: 書いた分(「開きます」など)を消し、話すのもやめる
                 self.speaker.stop()
                 if self._stream is not None:

@@ -178,6 +178,16 @@ _SOURCE = [
         ("FULL_CONTEXT_COMPRESS", "　上限を超えたら古い部分を要約して使う", "bool",
          "ONなら古いやりとりを要約（圧縮）して参照し続けます。OFFなら上限を超えた古い部分は参照しません"),
     ]),
+    ("資料づくり", [
+        ("OFFICE_RESEARCH", "事実を調べてから書き、出典を付ける", "bool",
+         "数字・制度・会社名などは、ネットで調べた内容だけを根拠にして書き、参考にしたページを最後に「出典」として載せます。"
+         "「今の内容をWordにして」のように会話の内容から作るときは調べません"),
+        ("OFFICE_REVIEW", "書いた中身を見直す", "bool",
+         "誤字脱字・表記ゆれ・同じ内容の重複・不自然な言い回しを、AIがもう一度読んで直します（少し時間がかかります）"),
+        ("OFFICE_IMAGES", "写真を入れる", "bool",
+         "使ってよい許可（CC0・パブリックドメイン・CC BY など）が明記された Wikimedia Commons の写真だけを使い、"
+         "作者とライセンスを資料に書き添えます"),
+    ]),
     ("メール", [
         ("—", "メールの操作（メールアプリを開かずに裏側で行います）"),
         ("MAIL_SERVICE", "使うメール", "choice",
@@ -220,6 +230,7 @@ LAYOUT = [
             "SCREEN_ALLOW_SCROLL", "SCREEN_ALLOW_WINDOWS", "SCREEN_WAIT_IDLE",
             "—ファイル・フォルダ", "FOLDER_OPS_ENABLED", "FOLDER_DELETE_ENABLED", "—確認", "CONFIRM_VOICE_DANGER",
             "+DRY_RUN"]),
+    ("資料づくり", ["—Word・PowerPoint・Excel", "OFFICE_RESEARCH", "OFFICE_REVIEW", "OFFICE_IMAGES"]),
     ("ブラウザ・検索", ["—Webページの操作", "WEB_CONTROL_ENABLED", "WEB_CONFIRM_RISKY", "BROWSER",
                  "—調べものの返事", "SAFE_SITES_ONLY", "SOURCE_COUNT", "SEARCH_IMAGE_COUNT", "IMAGE_COUNT",
                  "+SEARCH_URL"]),

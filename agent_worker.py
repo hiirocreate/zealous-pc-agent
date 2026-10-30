@@ -9,6 +9,7 @@ def _worker_main(inq, outq):
     import tools
     llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
     llm.on_retract = lambda: outq.put(("retract", None))  # 書き始めた返事を取り消す
+    llm.on_status = lambda text: outq.put(("status", text))  # 時間のかかる作業の途中経過
     import os
     if os.name == "nt":  # アプリの一覧を先に読んでおく(「〇〇を開いて」をすぐ判断できるように)
         import apps
