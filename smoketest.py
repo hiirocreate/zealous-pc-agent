@@ -198,8 +198,33 @@ def run(out):
             import screen as _scr
             title = _scr.target_window()[1]
             note(f"ファイルを開く: {'OK' if 'zealous_テンプレ_確認' in title else 'NG'} ({r[:60]!r} / 手前: {title!r})")
-            sp_kill = __import__("subprocess").run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
+            __import__("subprocess").run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
             os.remove(test_file)
+
+            # ファイルの中身で探して開く(名前ではなく、書かれていることで)
+            import llm
+            memo = os.path.join(config.DESKTOP, "zealous_中身テスト.txt")
+            with open(memo, "w", encoding="cp932") as f:  # Windows のメモ帳の古い形式(Shift_JIS)
+                f.write("ゼラスの動作確認。今日の合言葉はぶどう。")
+            route = llm.quick_route("デスクトップにあるメモ帳のファイルから、ぶどうについての記載があるものを開いて")
+            r = tools.run_tool(*route)
+            time.sleep(3)
+            title = _scr.target_window()[1]
+            note(f"中身で探して開く: {'OK' if 'zealous_中身テスト' in title else 'NG'} ({route} → {r[:50]!r} / 手前: {title!r})")
+            __import__("subprocess").run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
+            os.remove(memo)
+            # 名前の変更(フォルダ)。メールの裏側の操作は、アカウントが無いので「設定がまだ」と答えること
+            folder = os.path.join(config.DESKTOP, "zealous_フォルダ")
+            os.makedirs(folder, exist_ok=True)
+            r = tools.run_tool("rename_item", {"name": "zealous_フォルダ", "new_name": "zealous_名前変更"})
+            renamed = os.path.join(config.DESKTOP, "zealous_名前変更")
+            note(f"フォルダの名前を変える: {'OK' if os.path.isdir(renamed) else 'NG'} ({r!r})")
+            os.rmdir(renamed) if os.path.isdir(renamed) else os.rmdir(folder)
+            r = tools.run_tool("mail_mark_read", {"folder": "迷惑メール"})
+            note(f"メール(未設定): {'OK' if '設定' in r else 'NG'} ({r[:40]!r})")
+            import secret
+            enc = secret.protect("テスト用パスワード")
+            note(f"パスワードの暗号化保存: {'OK' if secret.reveal(enc) == 'テスト用パスワード' and 'テスト' not in enc else 'NG'}")
 
             # 画面の直接操作: メモ帳に日本語を入力し、キー操作で選択・コピーして確かめる
             import subprocess as sp

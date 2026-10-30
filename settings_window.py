@@ -105,6 +105,9 @@ TABS = [
          "「行っている」など、文の流れで読み方が変わる言葉は自動で読み分けます"),
         ("VOICEVOX_URL", "VOICEVOX の URL（読み上げソフトの接続先）", "str", "通常は変更不要"),
         ("—", "聞き取り"),
+        ("VOICE_SPELL_CHECK", "名前の書き方を選んでから付ける", "bool",
+         "声でフォルダやファイルを作る・名前を変えるときは、聞き取った名前の書き方（漢字・カタカナ・英語など）の"
+         "候補を出して、正しいものを選んでもらいます"),
         ("MIC_DEVICE", "マイク", "mic", "聞き取れないことが多いときは、使っているマイクを選んでください"),
         ("COMMAND_WHISPER_MODEL", "命令の聞き取りに使うAI（Whisper：声を文字にするAI）", "choice",
          "話しかけた命令を文字にするときに使います。大きいほど正確ですが、返事までが少し遅くなります",
@@ -161,6 +164,21 @@ TABS = [
         ("FULL_CONTEXT_COMPRESS", "　上限を超えたら古い部分を要約して使う", "bool",
          "ONなら古いやりとりを要約（圧縮）して参照し続けます。OFFなら上限を超えた古い部分は参照しません"),
     ]),
+    ("メール", [
+        ("—", "メールの操作（メールアプリを開かずに裏側で行います）"),
+        ("MAIL_SERVICE", "使うメール", "choice",
+         "「迷惑メールを全部既読にして」「仕事フォルダの名前を〇〇に変えて」などに使います",
+         [("auto", "自動（登録したアカウント → 無ければ Outlook）"), ("imap", "IMAP（Gmail・Outlook.com・Yahoo など）"),
+          ("outlook", "Outlook（PCに入っている従来版）")]),
+        ("MAIL_IMAP_HOST", "IMAP サーバー", "str",
+         "Gmail: imap.gmail.com / Outlook.com: outlook.office365.com / Yahoo: imap.mail.yahoo.co.jp / "
+         "iCloud: imap.mail.me.com。Thunderbird で使っているアカウントなら、その受信サーバーと同じ"),
+        ("MAIL_IMAP_PORT", "ポート", "int", "通常は 993"),
+        ("MAIL_IMAP_USER", "アカウント（メールアドレス）", "str", ""),
+        ("MAIL_IMAP_PASSWORD", "アプリパスワード", "secret",
+         "Gmail などは、普段のパスワードではなく「アプリパスワード」を作って入れてください。"
+         "このPCのこのユーザーだけが読める形（暗号化）で保存します"),
+    ]),
     ("更新・情報", [
         ("—", "アップデート（新しい版への更新）"),
         ("AUTO_UPDATE", "起動時に新しい版を確認", "bool", "見つかると会話ボタンに印が付きます"),
@@ -188,6 +206,14 @@ def _digits(step):
 
 FIELDS = [f for _, fields in TABS for f in fields if f[0] not in ("—", "＊")]
 _INFO_TAB = "更新・情報"
+
+
+def _secret_value(key, raw):
+    """パスワード欄: 変わっていなければ保存済みのまま、変わったら暗号化して保存する。"""
+    import secret
+    raw = raw.strip()
+    old = getattr(config, key, "")
+    return old if raw == secret.reveal(old) else secret.protect(raw)
 
 
 def parse(kind, raw):
@@ -457,7 +483,7 @@ class SettingsWindow(ctk.CTkToplevel):
                                   font=T.font(11)).grid(**ctl)
             else:
                 var = ctk.StringVar()
-                ctk.CTkEntry(row, textvariable=var, fg_color=T.BG, border_color=T.BORDER,
+                ctk.CTkEntry(row, textvariable=var, fg_color=T.BG, border_color=T.BORDER, show="•" if kind == "secret" else "",
                              font=T.font(11), text_color=T.TEXT).grid(**ctl)
             self._vars[key] = (kind, var)
 
@@ -587,6 +613,8 @@ class SettingsWindow(ctk.CTkToplevel):
             return self._choices[key][var.get()]
         if kind == "font":
             return self._choices[key].get(var.get(), var.get().strip())
+        if kind == "secret":
+            return _secret_value(key, var.get())
         return parse(kind, var.get())
 
     def _dirty(self):
@@ -739,6 +767,9 @@ class SettingsWindow(ctk.CTkToplevel):
                 var.set(v)
             elif kind == "lines":
                 var.set("\n".join(v))
+            elif kind == "secret":
+                import secret
+                var.set(secret.reveal(v))
             else:
                 var.set(", ".join(v) if kind == "list" else str(v))
 
@@ -758,6 +789,8 @@ class SettingsWindow(ctk.CTkToplevel):
                     changes[key] = self._choices[key][var.get()]
                 elif kind == "font":
                     changes[key] = self._choices[key].get(var.get(), var.get().strip())
+                elif kind == "secret":
+                    changes[key] = _secret_value(key, var.get())
                 else:
                     changes[key] = parse(kind, var.get())
             except (ValueError, KeyError):

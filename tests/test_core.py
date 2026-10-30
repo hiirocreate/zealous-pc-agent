@@ -646,3 +646,81 @@ def test_streamed_text_is_retracted_when_tool_runs(monkeypatch):
     monkeypatch.setattr(config, "SUMMARIZE_AFTER_TOOL", False)
     assert llm._ask("サンダーバード開いて") == "「サンダーバード」というアプリが見つかりませんでした"
     assert sent == ["retract"]
+
+
+def test_mail_routes_and_imap(monkeypatch):
+    import mail
+    assert llm.quick_route("メールのアプリを開いて、迷惑メールフォルダのメールを全て既読にして") == \
+        ("mail_mark_read", {"folder": "迷惑メール"})
+    assert llm.quick_route("メールの仕事フォルダの名前を才コンサルに変えて") == \
+        ("mail_rename_folder", {"folder": "仕事", "new_name": "才コンサル"})
+    assert mail._utf7_decode(mail._utf7_encode("迷惑メール&A")) == "迷惑メール&A"
+
+    class FakeImap:
+        flags = {b"1": False, b"2": False, b"3": True}
+        renamed = []
+
+        def list(self):
+            return "OK", [b'(\\HasNoChildren) "/" "INBOX"',
+                          b'(\\HasNoChildren \\Junk) "/" "[Gmail]/' + mail._utf7_encode("迷惑メール").encode() + b'"',
+                          b'(\\HasNoChildren) "/" "' + mail._utf7_encode("仕事").encode() + b'"']
+
+        def select(self, name):
+            self.selected = name
+
+        def search(self, charset, crit):
+            return "OK", [b" ".join(k for k, seen in self.flags.items() if not seen)]
+
+        def store(self, ids, op, flag):
+            for i in ids.split(","):
+                self.flags[i.encode()] = True
+
+        def rename(self, old, new):
+            self.renamed.append((old, new))
+            return "OK", [b""]
+
+    fake = FakeImap()
+
+    class Ctx:
+        def __enter__(self):
+            return fake
+
+        def __exit__(self, *a):
+            pass
+    monkeypatch.setattr(mail, "_Imap", Ctx)
+    monkeypatch.setattr(config, "MAIL_IMAP_HOST", "imap.example.com")
+    monkeypatch.setattr(config, "MAIL_IMAP_USER", "me@example.com")
+    assert tools.run_tool("mail_mark_read", {"folder": "迷惑メール"}) == "「迷惑メール」の未読メール2通を、すべて既読にしました"
+    assert fake.selected == '"[Gmail]/' + mail._utf7_encode("迷惑メール") + '"'
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "仕事\n私事"})
+    assert tools.run_tool("mail_rename_folder", {"folder": "しごと", "new_name": "才コンサル"}).endswith("「才コンサル」に変えました")
+    assert fake.renamed == [('"' + mail._utf7_encode("仕事") + '"', '"' + mail._utf7_encode("才コンサル") + '"')]
+
+
+def test_find_in_files_by_content(monkeypatch, tmp_path):
+    (tmp_path / "a.txt").write_text("来月の旅行の計画。京都へ行く", encoding="utf-8")
+    (tmp_path / "b.txt").write_bytes("買い物リスト".encode("cp932"))
+    (tmp_path / "c.md").write_text("旅行 リョコウ メモ", encoding="utf-8")
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    monkeypatch.setattr(tools, "_KNOWN", dict(tools._KNOWN, デスクトップ=str(tmp_path)))
+    opened = []
+    monkeypatch.setattr(tools, "open_file", lambda p, path="": opened.append(p) or "開きました")
+    assert [os.path.basename(p) for p, _, _ in tools.search_contents("買い物", "デスクトップ")] == ["b.txt"]
+    assert tools.run_tool("find_in_files", {"text": "京都", "path": "デスクトップ", "kind": "メモ帳", "open": True}) == "開きました"
+    assert tools.run_tool("find_in_files", {"text": "りょこう", "path": "デスクトップ", "open": True}) == "開きました"
+    assert opened[-1].endswith("c.md")  # カタカナで書かれていても見つかる
+    reply = tools.run_tool("find_in_files", {"text": "旅行", "path": "デスクトップ", "open": True})
+    assert "2件" in reply and tools.CHOICE in reply  # 2つ: どれを開くか聞く
+
+
+def test_voice_names_ask_spelling(monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "1. 才コンサル\n2. Sai Consul"})
+    assert tools.spell_options("さいこんさる.txt") == ["さいこんさる.txt", "サイコンサル.txt", "才コンサル.txt", "Sai Consul.txt"]
+    monkeypatch.setattr(tools, "REQUIRE_CONFIRM", True)
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    llm._choice = None
+    reply = llm._run("create_folder", {"name": "さいこんさる"})
+    assert "どの書き方" in reply and llm._choice
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    llm._ask("3番")
+    assert (tmp_path / "才コンサル").is_dir()

@@ -66,7 +66,14 @@ DEFAULTS = {
     "FULL_CONTEXT_COMPRESS": True,   #   上限を超えたら古い部分を要約して使う(OFF なら古い部分は参照しない)
     "WEB_CONTROL_ENABLED": True,     # サイトはゼラス用ブラウザで開き、ページの中の操作(押す・入力・スクロールなど)もする
     "WEB_CONFIRM_RISKY": True,       #   購入・送信・削除などのボタンは、押す前に確かめる
-    "CONTEXT_RESET_MIN": 10,         # スレッドを使わない呼び出しで、この分数話しかけなければ記憶を消す
+    "CONTEXT_RESET_MIN": 10,
+    # ---- メール(画面を使わずに裏側で操作) ----
+    "MAIL_SERVICE": "auto",          # auto / imap / outlook
+    "MAIL_IMAP_HOST": "",            # 例: imap.gmail.com
+    "MAIL_IMAP_PORT": 993,
+    "MAIL_IMAP_USER": "",            # メールアドレス
+    "MAIL_IMAP_PASSWORD": "",        # アプリパスワード(このPCのこのユーザーだけが読める形で保存)
+    "VOICE_SPELL_CHECK": True,       # 声で名前を付けるときは、書き方(漢字・カタカナ・英語など)を選んでもらう         # スレッドを使わない呼び出しで、この分数話しかけなければ記憶を消す
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)
     # ---- 音声合成 (VOICEVOX) ----

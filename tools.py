@@ -72,6 +72,43 @@ def ask_choice(question, tool_name, arg, options, labels=None, args=None):
                          ensure_ascii=False))
 
 
+# 声で名前を付ける操作: 聞き取った名前の書き方(漢字・カタカナ・英語など)を選んでもらう
+SPELL_ARGS = {"create_folder": "name", "create_text_file": "name", "rename_item": "new_name",
+              "mail_rename_folder": "new_name"}
+_SPELLED = set()  # 選んでもらった書き方(もう一度聞かない)
+
+
+def spell_options(text):
+    """聞き取った名前の、考えられる書き方(最初は聞き取ったまま)。"""
+    import re
+    stem, ext = os.path.splitext(text) if re.search(r"\.[A-Za-z0-9]{1,5}$", text) else (text, "")
+    hira = stem.translate({c: c - 0x60 for c in range(0x30A1, 0x30F7)})
+    kata = stem.translate({c: c + 0x60 for c in range(0x3041, 0x3097)})
+    out = [stem, kata, hira]
+    try:  # 漢字や英語の書き方は、AIに考えてもらう
+        import llm
+        msg = llm._chat([{"role": "user", "content": (
+            f"「{stem}」は、音声から聞き取ったファイルやフォルダの名前です。考えられる書き方(漢字・カタカナ・ひらがな・英語など)を"
+            "よく使われる順に最大4つ、1行に1つずつ、名前だけを書いてください。")}], use_tools=False)
+        for line in (msg.get("content") or "").splitlines():
+            line = re.sub(r"^\s*(?:[-・*]|\d+[.)、．])\s*", "", line).strip().strip("「」『』\"'")
+            if line and len(line) <= 40 and not re.search(r'[\\/:*?"<>|]', line):
+                out.append(line)
+    except Exception:
+        pass
+    seen = []
+    for o in out:
+        if o and o not in seen:
+            seen.append(o)
+    return [o + ext for o in seen[:6]]
+
+
+def needs_spelling(name, args):
+    arg = SPELL_ARGS.get(name)
+    value = str(args.get(arg, "")) if arg else ""
+    return bool(value) and REQUIRE_CONFIRM and getattr(config, "VOICE_SPELL_CHECK", True) and value not in _SPELLED
+
+
 def needs_confirm(name, args):
     if name == "web_click" and getattr(config, "WEB_CONFIRM_RISKY", True):
         # 購入・送信・削除などのボタンは、声でも文字でも、押す前に確かめる
@@ -98,6 +135,12 @@ def run_tool(name, args, confirmed=False):
     args = {k: v for k, v in (args or {}).items() if k in props}
     if config.DRY_RUN:
         return f"[DRY] {name}({args})"
+    if not confirmed and needs_spelling(name, args):
+        arg = SPELL_ARGS[name]
+        options = spell_options(str(args[arg]))
+        _SPELLED.update(options)
+        if len(options) > 1:
+            return ask_choice(f"「{args[arg]}」は、どの書き方にしますか？", name, arg, options, args=args)
     if not confirmed and needs_confirm(name, args):
         import json
         what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name", "label", "keys", "target")})
@@ -458,16 +501,40 @@ def list_folder(path=""):
     return f"{p}: " + (", ".join(shown) + more if shown else "空です")
 
 
+def _locate(name, path, tool_name, args):
+    """名前からファイル・フォルダを1つに決める。(パス, None) または 決まらないとき (None, 返事)。
+    その場所に無ければ、よく使う場所から探す(聞き取りの書き方の違いも考える)。"""
+    p = _resolve(name, path)
+    if os.path.exists(p):
+        return p, None
+    found = []
+    for spelling in [name] + spell_options(name)[1:]:
+        key = os.path.splitext(spelling.lower())[0]
+        found += [f for f in find_paths(spelling, path) if f not in found and
+                  os.path.splitext(os.path.basename(f).lower())[0] == key]
+        if found:
+            break
+    if not found:
+        return None, f"「{name}」が見つかりませんでした"
+    if len(found) > 1:
+        return None, ask_choice(f"「{name}」が{len(found)}件あります。どれにしますか？", tool_name, "name", found[:6],
+                                [f"{os.path.basename(f)}（{os.path.dirname(f)}）" for f in found[:6]], args=args)
+    return found[0], None
+
+
 @tool("ファイルまたはフォルダの名前を変更する",
       name=("string", "今の名前", True), new_name=("string", "新しい名前", True),
       path=("string", "ある場所のパス", False))
 def rename_item(name, new_name, path=""):
-    src = _guard(_resolve(name, path))
+    src, reply = _locate(name, path, "rename_item", {"new_name": new_name})
+    if reply:
+        return reply
+    src = _guard(src)
     dst = _guard(os.path.join(os.path.dirname(src), new_name))
     if os.path.exists(dst):
         return f"{new_name} はすでに存在します"
     os.rename(src, dst)
-    return f"{name} を {new_name} に変更しました"
+    return f"{os.path.basename(src)} を {new_name} に変更しました"
 
 
 @tool("ファイルまたはフォルダを別のフォルダへ移動する",
@@ -475,7 +542,10 @@ def rename_item(name, new_name, path=""):
       path=("string", "今ある場所のパス", False))
 def move_item(name, dest, path=""):
     import shutil
-    src = _guard(_resolve(name, path))
+    src, reply = _locate(name, path, "move_item", {"dest": dest})
+    if reply:
+        return reply
+    src = _guard(src)
     dst_dir = _guard(_resolve(dest))
     os.makedirs(dst_dir, exist_ok=True)
     shutil.move(src, os.path.join(dst_dir, os.path.basename(src)))
@@ -487,7 +557,9 @@ def move_item(name, dest, path=""):
       path=("string", "今ある場所のパス", False))
 def copy_item(name, dest, path=""):
     import shutil
-    src = _resolve(name, path)
+    src, reply = _locate(name, path, "copy_item", {"dest": dest})
+    if reply:
+        return reply
     dst_dir = _guard(_resolve(dest))
     dst = os.path.join(dst_dir, os.path.basename(src))
     os.makedirs(dst_dir, exist_ok=True)
@@ -498,9 +570,10 @@ def copy_item(name, dest, path=""):
 @tool("ファイルまたはフォルダをごみ箱へ移動する(完全には消さない)",
       name=("string", "削除するもの", True), path=("string", "ある場所のパス", False))
 def delete_item(name, path=""):
-    p = _guard(_resolve(name, path), delete=True)
-    if not os.path.exists(p):
-        return f"{p} が見つかりません"
+    p, reply = _locate(name, path, "delete_item", {})
+    if reply:
+        return reply
+    p = _guard(p, delete=True)
     kind = "Directory" if os.path.isdir(p) else "File"
     out = _powershell("Add-Type -AssemblyName Microsoft.VisualBasic;"
                       f"[Microsoft.VisualBasic.FileIO.FileSystem]::Delete{kind}('{p.replace(chr(39), chr(39) * 2)}',"
@@ -847,6 +920,126 @@ def web_video(action, seconds=10):
 def web_tab(action, name=""):
     import browser
     return browser.tab(action, name)
+
+
+# ---------------- メール(画面を使わずに裏側で) ----------------
+@tool("メールのフォルダの未読メールを、すべて既読にする(メールアプリの画面は使わずに裏側で行う)。"
+      "例:「迷惑メールを全部既読にして」",
+      folder=("string", "フォルダの名前(例: 迷惑メール、受信トレイ、仕事)", True))
+def mail_mark_read(folder):
+    import mail
+    return mail.mark_read(folder) if mail.backend() else mail.NOT_READY
+
+
+@tool("メールのフォルダの未読メールの数を答える", folder=("string", "フォルダの名前(省略すると受信トレイ)", False))
+def mail_unread(folder=""):
+    import mail
+    return mail.unread(folder) if mail.backend() else mail.NOT_READY
+
+
+@tool("メールのフォルダの名前を変える", folder=("string", "今のフォルダの名前", True),
+      new_name=("string", "新しい名前", True))
+def mail_rename_folder(folder, new_name):
+    import mail
+    return mail.rename(folder, new_name) if mail.backend() else mail.NOT_READY
+
+
+@tool("メールのフォルダの一覧を答える")
+def mail_folders():
+    import mail
+    return mail.listing() if mail.backend() else mail.NOT_READY
+
+
+# ---------------- ファイルの中身で探す ----------------
+_KINDS = {  # 呼び方 → 探すファイルの種類
+    "text": (".txt", ".md", ".log", ".csv", ".tsv", ".json", ".ini", ".xml", ".html", ".htm", ".yaml", ".yml"),
+    "word": (".docx",), "excel": (".xlsx",), "powerpoint": (".pptx",),
+}
+_KIND_WORDS = {"メモ帳": "text", "テキスト": "text", "txt": "text", "メモ": "text", "ワード": "word", "word": "word",
+               "エクセル": "excel", "excel": "excel", "パワーポイント": "powerpoint", "パワポ": "powerpoint",
+               "powerpoint": "powerpoint"}
+
+
+def file_text(path, limit=2_000_000):
+    """ファイルの中の文字(テキスト・Word・Excel・PowerPoint)。読めなければ ""。"""
+    import re
+    import zipfile
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext in (".docx", ".xlsx", ".pptx"):
+            with zipfile.ZipFile(path) as z:
+                names = [n for n in z.namelist() if re.match(
+                    r"word/document\.xml|xl/sharedStrings\.xml|xl/worksheets/sheet\d+\.xml|ppt/slides/slide\d+\.xml", n)]
+                xml = " ".join(z.read(n)[:limit].decode("utf-8", "replace") for n in names)
+            return re.sub(r"<[^>]+>", " ", xml)
+        with open(path, "rb") as f:
+            data = f.read(limit)
+        for enc in ("utf-8-sig", "utf-16") if data[:2] in (b"\xff\xfe", b"\xfe\xff") else ("utf-8-sig", "cp932"):
+            try:
+                return data.decode(enc)
+            except UnicodeDecodeError:
+                pass
+        return data.decode("utf-8", "replace")
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return ""
+
+
+def _fold(s):
+    import unicodedata
+    s = unicodedata.normalize("NFKC", s).lower()
+    return s.translate({c: c - 0x60 for c in range(0x30A1, 0x30F7)})  # カタカナはひらがなにそろえる
+
+
+def search_contents(text, path="", kind="", limit=30):
+    """中に text が書かれたファイル [(パス, 見つかった回数, 前後の文)](多い順)。"""
+    import re
+    exts = _KINDS.get(_KIND_WORDS.get(str(kind).lower(), str(kind).lower()), sum(_KINDS.values(), ()))
+    words = [_fold(w) for w in re.split(r"[\s　、,]+|(?<=.)(?:と|や|および)(?=.)", str(text).strip()) if w]
+    words = words or [_fold(text)]
+    hits = []
+    for root in _search_roots(path):
+        base_depth = root.rstrip(os.sep).count(os.sep)
+        for cur, dirs, files in os.walk(root):
+            if cur.count(os.sep) - base_depth >= 4:
+                dirs[:] = []
+            dirs[:] = [d for d in dirs if not d.startswith((".", "$")) and d.lower() not in ("node_modules", "appdata")]
+            for n in files:
+                full = os.path.join(cur, n)
+                if not n.lower().endswith(exts) or n.startswith("~$"):
+                    continue
+                try:
+                    if os.path.getsize(full) > 20_000_000:
+                        continue
+                except OSError:
+                    continue
+                body = _fold(file_text(full))
+                if all(w in body for w in words):
+                    i = body.find(words[0])
+                    around = re.sub(r"\s+", " ", body[max(0, i - 20):i + 40]).strip()
+                    hits.append((full, sum(body.count(w) for w in words), around))
+            if len(hits) > 200:
+                break
+    return sorted(hits, key=lambda h: -h[1])[:limit]
+
+
+@tool("ファイルの中身を読んで、ある言葉や話題が書かれているファイルを探す(open=true なら開く)。"
+      "例:「デスクトップのメモ帳のファイルから、旅行について書いてあるものを開いて」",
+      text=("string", "中に書かれている言葉・話題", True),
+      path=("string", "探す場所(デスクトップ・ドキュメントなど。省略するとよく使う場所すべて)", False),
+      kind=("string", "ファイルの種類: メモ帳(テキスト) / ワード / エクセル / パワーポイント(省略するとすべて)", False),
+      open=("boolean", "見つけたファイルを開くなら true", False))
+def find_in_files(text, path="", kind="", open=False):
+    hits = search_contents(text, path, kind)
+    where = f"{path}の" if path else ""
+    if not hits:
+        return f"{where}ファイルの中に「{text}」が書かれたものは見つかりませんでした"
+    if str(open).lower() not in ("true", "1"):
+        lines = "\n".join(f"・{os.path.basename(p)}（{n}か所）… {a}" for p, n, a in hits[:5])
+        return f"「{text}」が書かれたファイルが{len(hits)}件見つかりました。\n{lines}"
+    if len(hits) > 1:  # 複数: どれを開くか確かめる
+        return ask_choice(f"「{text}」が書かれたファイルが{len(hits)}件あります。どれを開きますか？", "open_file", "name",
+                          [p for p, _, _ in hits[:6]], [f"{os.path.basename(p)}（{n}か所）" for p, n, _ in hits[:6]])
+    return open_file(hits[0][0])
 
 
 # ---------------- ファイルを探す・開く ----------------
