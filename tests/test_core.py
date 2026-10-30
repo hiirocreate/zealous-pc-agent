@@ -752,3 +752,23 @@ def test_speech_skips_code():
     f = tts.CodeFilter()
     out = f.feed("直しました。\n``") + f.feed("`python\nprint(1)\n``") + f.feed("`\n以上です。")
     assert "print" not in out and out.startswith("直しました。") and out.endswith("以上です。")
+
+
+def test_office_files(monkeypatch, tmp_path):
+    import officedoc
+    text = ("# 提案書\n概要です\n\n## 背景\n- 人手不足\n- **自動化**の需要\n> メモ\n\n"
+            "## 売上\n| 年度 | 売上(円) | 率 |\n|---|---|---|\n| 2026 | 1,200 | 12% |\n| 2027 | 3,500 | 18% |\n\n"
+            "## 手順\n1. 整理\n2. 試験\n3. 導入\n")
+    doc = officedoc.parse(text)
+    assert doc["title"] == "提案書" and doc["subtitle"] == "概要です" and len(doc["sections"]) == 3
+    assert doc["sections"][1]["blocks"][0][0] == "table" and doc["sections"][0]["notes"] == ["メモ"]
+    monkeypatch.setattr(llm, "write_document", lambda kind, request: text)
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    for kind, unit in (("pptx", "スライド4枚"), ("docx", "3章"), ("xlsx", "1シート")):
+        reply = tools.run_tool("make_office_file", {"kind": kind, "request": "提案書を作って"})
+        assert unit in reply and (tmp_path / f"提案書.{kind}").exists(), reply
+    assert "提案書 (2).pptx" in tools.run_tool("make_office_file", {"kind": "パワポ", "request": "x"})  # 上書きしない
+    from openpyxl import load_workbook
+    ws = load_workbook(tmp_path / "提案書.xlsx").active
+    assert ws["B4"].value == 1200 and ws["C4"].value == 0.12 and ws["A4"].number_format == "0"
+    assert llm.quick_route("新サービスの提案資料をパワポで作って")[0] == "make_office_file"

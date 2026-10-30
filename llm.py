@@ -46,7 +46,8 @@ _full = False        # このスレッドの会話をすべて参照するモー
 on_retract = None    # 書き始めた返事を取り消す関数(返事の途中で操作を始めたとき。「開きます」などを話さないように)
 _streamed = False    # 直前の問い合わせで、返事を画面と読み上げへ流したか
 _tech = False        # テクニカルモード(コード・サーバーなど技術的な作業の補助)
-TECH_TOOLS = ("read_text_file", "find_files", "find_in_files", "search_summary", "create_text_file", "open_file")
+TECH_TOOLS = ("read_text_file", "find_files", "find_in_files", "search_summary", "create_text_file", "open_file",
+              "make_office_file")
 _choice = None       # どれにするか聞いている候補 {"tool", "arg", "options", "labels", "args"}
 
 
@@ -102,6 +103,7 @@ def system_prompt():
             "・メールの操作(既読にする・未読の数・フォルダの名前を変える)は mail_ で始まる関数で、"
             "メールアプリを開かずに行う。\n"
             "・ファイルの中身(書かれている言葉や話題)で探すときは find_in_files を使う。\n"
+            "・Word・PowerPoint・Excel のファイル(資料・文書・表)を作るときは make_office_file を使う。\n"
             "・アプリを開く・起動するときは launch_app を使う(click_on は、開いているウィンドウの中のボタンを押すときだけ)。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
@@ -123,7 +125,8 @@ def tech_prompt():
             "・削除・上書き・本番環境の変更・ポートの開放など、危ない操作には注意点と元に戻す方法を書く。\n"
             "・パスワード・APIキー・秘密鍵は、会話に貼らずに伏せるよう伝える。\n"
             "・PCのファイルの中身が必要なら read_text_file で読み、最新の情報や公式ドキュメントは search_summary で調べる。"
-            "書いたコードを保存するよう頼まれたら create_text_file を使う。"
+            "書いたコードを保存するよう頼まれたら create_text_file、Word・PowerPoint・Excel のファイルにするなら"
+            " make_office_file を使う。"
             + user_rule() + memory_rule())
 
 
@@ -236,6 +239,41 @@ def _fit(history, summary, tid, base):
     return keep, new
 
 
+_DOC_GUIDE = {
+    "pptx": ("PowerPoint の発表資料です。1行目に「# 題名」、2行目に副題を1行。続けて「## スライドの題名」で1枚ずつ、"
+             "全部で5〜10枚。各スライドには「- 要点」を3〜5個(1つ40字以内で簡潔に)。手順は「1. 」の番号付きで。"
+             "数字の比較や一覧は表(| 見出し | 見出し |、2行目は |---|---|)で。話す人向けの補足は「> 」で始める。"
+             "最後のスライドは「## まとめ」。"),
+    "docx": ("Word の文書です。1行目に「# 題名」、2行目に1行の概要。「## 見出し」で章を分け、本文は段落でていねいに書く。"
+             "必要に応じて「### 小見出し」「- 箇条書き」「1. 番号」と表(| 見出し | 見出し |、2行目は |---|---|)を使う。"),
+    "xlsx": ("Excel の表です。1行目に「# 題名」。「## シート名」ごとに、表(| 列名 | 列名 |、2行目は |---|---|)を1つ書く。"
+             "数は数字だけを書き、単位は列名に入れる(例: 売上(円))。1列目は項目名にする。"
+             "合計などの計算は =SUM(B3:B6) のような式で書いてもよい。"),
+}
+
+
+def write_document(kind, request):
+    """Word・PowerPoint・Excel の中身を、決まった書式で書く(これまでの会話の内容も使う)。"""
+    rule = ("あなたは資料作成のプロです。" + _DOC_GUIDE[kind] +
+            f"{answer_language()}で、正確で具体的な内容にしてください。前置き・説明・```は書かず、資料の中身だけを書いてください。")
+    messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
+    model = getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL
+    try:
+        msg = _chat(messages, use_tools=False, model=model, temperature=0.4)
+    except requests.HTTPError as e:
+        if model == config.OLLAMA_MODEL or "404" not in str(e):
+            raise
+        _start_pull(model)  # 資料づくり向けのモデルがまだ無い: 裏で準備し、今回はいつものモデルで
+        msg = _chat(messages, use_tools=False, model=config.OLLAMA_MODEL, temperature=0.4)
+    return msg.get("content") or ""
+
+
+def _start_pull(model):
+    import threading
+    import services
+    threading.Thread(target=lambda: services.pull_model(lambda s: None, model), daemon=True).start()
+
+
 class OffTrack(Exception):
     """返事が質問とかみ合っていない(日本語の質問に、英語の翻訳を返し始めたなど)。"""
 
@@ -254,13 +292,14 @@ def off_track(question, reply):
     return len(head) >= 12 and letters >= 8 and len(_JA.findall(head)) <= 2
 
 
-def _chat(messages, use_tools=True, stream_out=False, guard=None):
+def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, temperature=None):
     """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
     関数呼び出し(JSON)らしい返事は画面に出さない。
     guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
-    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
+    model = model or ((getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL)
+    temp = temperature if temperature is not None else 0.2 if _tech else 0
     body = {"model": model, "messages": messages, "stream": True,
-            "options": {"temperature": 0.2 if _tech else 0, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
+            "options": {"temperature": temp, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
     if use_tools:
         body["tools"] = tools.schemas(TECH_TOOLS if _tech else None)
     import models
@@ -270,6 +309,9 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
     content, calls, shown = "", [], 0
     _streamed = False
     with requests.post(config.OLLAMA_URL, json=body, timeout=config.OLLAMA_TIMEOUT, stream=True) as r:
+        if getattr(r, "status_code", 200) == 400 and use_tools and "tools" in r.text:
+            # 関数(PC操作)の呼び出しに対応していないモデル(OLMoE など): 関数なしで聞き直す
+            return _chat(messages, False, stream_out, guard, model, temperature)
         r.raise_for_status()
         for line in r.iter_lines():
             if not line:
@@ -550,6 +592,23 @@ def content_route(t):
     return "find_in_files", args
 
 
+# 「〇〇についてのプレゼン資料をパワポで作って」「今の内容をWordにして」「売上表をExcelで作って」
+_OFFICE = re.compile(
+    r"(?P<kind>パワポ|パワーポイント|powerpoint|pptx|スライド|プレゼン(?:資料)?|ワード|word|docx|エクセル|excel|xlsx)"
+    r"(?:の?ファイル|形式|資料)?(?:で|に|として|へ)?[、\s]*(?:作って|作成して|まとめて|出力して|保存して|書き出して|して|にして|"
+    r"作ってください|ください)", re.I)
+OFFICE_KINDS = {"パワポ": "pptx", "パワーポイント": "pptx", "powerpoint": "pptx", "pptx": "pptx", "スライド": "pptx",
+                "プレゼン": "pptx", "プレゼン資料": "pptx", "ワード": "docx", "word": "docx", "docx": "docx",
+                "エクセル": "xlsx", "excel": "xlsx", "xlsx": "xlsx"}
+
+
+def office_route(t):
+    m = _OFFICE.search(t)
+    if not m:
+        return None
+    return "make_office_file", {"kind": OFFICE_KINDS[m.group("kind").lower()], "request": t}
+
+
 def mail_route(t):
     for pattern, kind in _MAIL_ROUTES:
         m = pattern.match(t)
@@ -662,7 +721,7 @@ def quick_route(text):
                 if name == "scroll":
                     small = re.search(r"少し|ちょっと", t)
                     return name, {"direction": "down" if q in ("下", "した") else "up", "amount": 2 if small else 5}
-    for route in (mail_route(t), content_route(t)):
+    for route in (office_route(t), mail_route(t), content_route(t)):
         if route:
             return route
     m = _OPEN_APP.match(t)  # 「サンダーバード開いて」: このPCのアプリの名前なら、そのアプリを起動する
@@ -709,7 +768,7 @@ _NEEDS_TOOLS = re.compile(
     r"クリック|押して|入力して|打って|タイプ|スクロール|キーを|ショートカット|貼り付け|ボタン|"
     r"切り替え|最小化|最大化|ウィンドウ|閉じて|動画|再生|流して|サイト|youtube|ユーチューブ|アマゾン|amazon|"
     r"戻って|進んで|更新して|要約|このページ|この記事|止めて|一時停止|全画面|タブ|選んで|ログイン|入れて|書いて|"
-    r"メール|既読|未読|記載|書いてある|名前を変")
+    r"メール|既読|未読|記載|書いてある|名前を変|パワポ|パワーポイント|スライド|プレゼン|ワード|word|エクセル|excel")
 
 
 _CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し|再生し|流し)"
@@ -776,6 +835,9 @@ def _run(name, args):
 
 def _ask_tech(text):
     """テクニカルモード: 技術的な質問に、コードや手順を添えてくわしく答える(関数はファイルを読む・調べるなどだけ)。"""
+    route = office_route(text.strip())
+    if route:  # 「Wordにまとめて」などは、すぐに資料を作る
+        return _run(*route)
     messages = [{"role": "system", "content": tech_prompt()}, *_context(), {"role": "user", "content": text}]
     for step in range(max(2, config.MAX_TOOL_STEPS)):
         try:

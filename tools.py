@@ -967,6 +967,38 @@ def read_text_file(name, path=""):
     return f"{p} の中身:\n{text[:limit]}{note}"
 
 
+# ---------------- Word・PowerPoint・Excel を作る ----------------
+_OFFICE_UNIT = {"pptx": "スライド{n}枚", "docx": "{n}章", "xlsx": "{n}シート"}
+
+
+@tool("Word(.docx)・PowerPoint(.pptx)・Excel(.xlsx)のファイルを、頼まれた内容で作って開く。"
+      "例:「新サービスの提案資料をパワポで作って」「今の内容をWordにまとめて」「月別の売上表をExcelで作って」",
+      kind=("string", "pptx(PowerPoint) / docx(Word) / xlsx(Excel)", True),
+      request=("string", "どんな資料にするか(頼まれた文をそのまま)", True),
+      name=("string", "ファイル名(省略すると資料の題名)", False),
+      path=("string", "保存する場所(省略するとデスクトップ)", False))
+def make_office_file(kind, request, name="", path=""):
+    import llm
+    import officedoc
+    kind = llm.OFFICE_KINDS.get(str(kind).lower().lstrip("."), str(kind).lower().lstrip("."))
+    if kind not in officedoc.MAKERS:
+        return "作れるのは Word・PowerPoint・Excel のファイルです"
+    doc = officedoc.parse(llm.write_document(kind, request))
+    if not doc["sections"]:
+        return "資料の中身をうまく作れませんでした。何についての資料か、もう少し詳しく教えてください"
+    folder = _guard(_base(path))
+    p = officedoc.save_path(folder, os.path.splitext(name)[0] if name else doc["title"], "." + kind)
+    count = officedoc.MAKERS[kind](doc, p)
+    opened = "作って開きました"
+    if os.name == "nt":
+        try:
+            os.startfile(p)
+        except OSError:  # Office などの開くアプリが無い
+            opened = "作りました"
+    return (f"「{os.path.basename(p)}」を{opened}（{folder}・{_OFFICE_UNIT[kind].format(n=count)}）。"
+            "直したいところがあれば言ってください")
+
+
 # ---------------- ファイルの中身で探す ----------------
 _KINDS = {  # 呼び方 → 探すファイルの種類
     "text": (".txt", ".md", ".log", ".csv", ".tsv", ".json", ".ini", ".xml", ".html", ".htm", ".yaml", ".yml"),

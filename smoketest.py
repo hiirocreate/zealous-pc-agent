@@ -182,6 +182,17 @@ def run(out):
             note(f"テクニカルモード: {'OK' if has_code and color != 'transparent' else 'NG'} (コード枠={has_code}, ボタン={color})")
             on_main(lambda: app._set_tech(False))
 
+            # Word・PowerPoint・Excel のファイルを作れること(exe の中に部品と雛形が入っているか)
+            import officedoc
+            sample = ("# 提案書\n概要\n\n## 背景\n- 人手不足\n- 自動化\n\n## 売上\n| 年度 | 売上(円) |\n|---|---|\n"
+                      "| 2026 | 1,200 |\n| 2027 | 3,500 |\n\n## 手順\n1. 整理\n2. 導入\n")
+            made = []
+            for kind, make in officedoc.MAKERS.items():
+                p = os.path.join(out, f"office_test.{kind}")
+                make(officedoc.parse(sample), p)
+                made.append(f"{kind}={os.path.getsize(p)}")
+            note(f"Office のファイル作成: OK ({', '.join(made)})")
+
             # 待機表示に戻し、マイクから音声会話画面を開いて閉じる
             on_main(lambda: app._show_pill())
             time.sleep(1.5)
