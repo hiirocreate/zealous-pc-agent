@@ -12,7 +12,11 @@ openpyxl
 pypdf
 onnxruntime
 py7zr
-kokoro-onnx
-misaki[ja]
+kokoro-onnx==0.6.1
+misaki[ja]==0.7.4
+fugashi
+unidic-lite
+jaconv
+mojimoji
 markitdown[docx,pptx,pdf]
 sqlite-vec
