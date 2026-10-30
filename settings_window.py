@@ -201,6 +201,7 @@ class SettingsWindow(ctk.CTkToplevel):
         # ---- 下: 保存 ----
         foot = ctk.CTkFrame(self, fg_color="transparent")
         foot.grid(row=1, column=1, sticky="ew", padx=16, pady=(4, 14))
+        self._foot = foot
         foot.grid_columnconfigure(0, weight=1)
         self.msg = ctk.CTkLabel(foot, text="", font=T.font(11), text_color=T.DANGER, anchor="w")
         self.msg.grid(row=0, column=0, sticky="ew")
@@ -213,6 +214,13 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self._fill(config.current())
         self._select(TABS[0][0])
+        # 日本語入力の変換中の文字を、チャット欄と同じように入力欄の中に表示する
+        import ime
+        ime.attach_all(self, T.FONT, 15)
+
+        # 保存したときのお知らせ(少しだけ出して消える)
+        self.toast = ctk.CTkLabel(self, text="✓  保存しました", font=T.font(12, "bold"), text_color="white",
+                                  fg_color=T.OK, corner_radius=16, height=34, width=150)
 
     # ---------------- 画面づくり ----------------
     def _section(self, page, title):
@@ -424,6 +432,15 @@ class SettingsWindow(ctk.CTkToplevel):
         subprocess.Popen(shortcut.command("--setup"), cwd=shortcut.HERE)
         self._on_quit()
 
+    def _show_toast(self):
+        if not self.winfo_exists():
+            return
+        self.toast.place(in_=self._foot, relx=0.5, y=-12, anchor="s")  # 設定の中身の真ん中、保存ボタンの上
+        self.toast.lift()
+        if getattr(self, "_toast_job", None):
+            self.after_cancel(self._toast_job)
+        self._toast_job = self.after(1800, lambda: self.winfo_exists() and self.toast.place_forget())
+
     def _clear_history(self):
         import tkinter.messagebox as mb
         if not mb.askyesno("会話の履歴を消す", "これまでの会話の記録をすべて消します。元には戻せません。よろしいですか？",
@@ -554,7 +571,8 @@ class SettingsWindow(ctk.CTkToplevel):
         restart = any(changes.get(k) != getattr(config, k) for k in ("UI_FONT", "UI_FONT_SCALE", "UI_THEME"))
         config.save(changes)
         self._on_saved()
-        self.destroy()
+        self.msg.configure(text="")
+        self._show_toast()  # 画面は閉じずに、保存したことだけを知らせる
         if restart:
             import tkinter.messagebox as mb
             if mb.askyesno("表示の変更", "カラー・フォント・文字の大きさは、再起動すると反映されます。\n今すぐ再起動しますか？"):

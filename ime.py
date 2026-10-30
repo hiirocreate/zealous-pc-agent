@@ -27,11 +27,95 @@ TAG = "ime_preedit"
 _keep = []  # Windows に渡した関数を、消されないよう持っておく
 
 
+class EntryShim:
+    """1行の入力欄(tk.Entry)を、複数行の入力欄(tk.Text)と同じ書き方で扱えるようにする。
+    (日本語入力の処理を、設定画面などの1行の欄でもそのまま使うため)"""
+
+    def __init__(self, entry):
+        self.e = entry
+        self.pre = None  # 変換中の文字の (始まり, 長さ)
+
+    def __getattr__(self, name):  # winfo_*, after, bind などはそのまま渡す
+        return getattr(self.e, name)
+
+    def _i(self, idx):
+        """"1.5" "insert" "end" "1.end" "1.3+2c" などを、文字の位置(数)にする。"""
+        idx, plus = str(idx), 0
+        if "+" in idx:
+            idx, extra = idx.split("+", 1)
+            plus = int(extra.rstrip("c") or 0)
+        if idx == "insert":
+            n = self.e.index("insert")
+        elif idx in ("end", "end-1c") or idx.endswith(".end"):
+            n = len(self.e.get())
+        elif "." in idx:
+            n = int(idx.split(".", 1)[1])
+        else:
+            n = int(idx)
+        return max(0, min(len(self.e.get()), n + plus))
+
+    def index(self, idx):
+        return f"1.{self._i(idx)}"
+
+    def tag_configure(self, *a, **k):
+        pass  # 1行の欄は下線を引けない(変換中の文字はそのまま表示する)
+
+    def tag_ranges(self, tag):
+        if tag == TAG and self.pre:
+            return (f"1.{self.pre[0]}", f"1.{self.pre[0] + self.pre[1]}")
+        if tag == "sel" and self.e.selection_present():
+            return (f"1.{self.e.index('sel.first')}", f"1.{self.e.index('sel.last')}")
+        return ()
+
+    def tag_remove(self, tag, *a):
+        if tag == "sel":
+            self.e.selection_clear()
+
+    def delete(self, a, b=None):
+        ia = self._i(a)
+        ib = self._i(b) if b is not None else ia + 1
+        self.e.delete(ia, ib)
+        if self.pre and ia <= self.pre[0] < ib:
+            self.pre = None
+
+    def insert(self, idx, s, tag=None):
+        i = self._i(idx)
+        self.e.insert(i, s)
+        if tag == TAG:
+            self.pre = (i, len(s))
+
+    def mark_set(self, mark, idx):
+        if mark == "insert":
+            self.e.icursor(self._i(idx))
+
+    def see(self, idx):
+        self.e.xview(max(0, self._i(idx) - 20))
+
+    def bbox(self, idx):
+        return self.e.bbox(self._i(idx))
+
+    def get(self, a, b=None):
+        text = self.e.get()
+        return text[self._i(a):self._i(b) if b is not None else self._i(a) + 1]
+
+
+def attach_all(root, font_family, font_px):
+    """root の中の入力欄すべてで、日本語入力を欄の中に表示する(設定画面など)。"""
+    import tkinter as tk
+    for w in root.winfo_children():
+        if isinstance(w, (tk.Entry, tk.Text)):
+            attach(w, font_family, font_px)
+        attach_all(w, font_family, font_px)
+
+
 def attach(text, font_family, font_px):
-    """text(tk.Text) で日本語入力するとき、変換中の文字を入力欄の中に描く。"""
+    """text(tk.Text / tk.Entry) で日本語入力するとき、変換中の文字を入力欄の中に描く。"""
     import config
+    import tkinter as tk
     if os.name != "nt" or not getattr(config, "IME_INLINE", True):
         return
+    if isinstance(text, tk.Entry):
+        text = EntryShim(text)
     from ctypes import wintypes
     user32, imm = ctypes.WinDLL("user32"), ctypes.WinDLL("imm32")
     LRESULT = ctypes.c_ssize_t

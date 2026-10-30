@@ -9,6 +9,12 @@ import time
 import traceback
 
 
+def _walk(w):
+    yield w
+    for c in w.winfo_children():
+        yield from _walk(c)
+
+
 def run(out):
     os.makedirs(out, exist_ok=True)
     import numpy as np
@@ -162,6 +168,27 @@ def run(out):
                 ImageGrab.grab(bbox=(vx, vy, vx + vw, vy + vh), all_screens=True).save(os.path.join(out, "7_voice.png"))
                 on_main(lambda: app._voice_win.close())
             note(f"音声会話画面: {'OK' if ok else 'NG'}")
+
+            # 設定画面を開いて(入力欄すべてに日本語入力の処理が付く)、入力欄に打って保存する(閉じないこと)
+            on_main(lambda: app.open_settings())
+            time.sleep(2.5)
+            win = on_main(lambda: app._settings)
+            kind, var = on_main(lambda: win._vars["AI_NAME"])
+            entry = on_main(lambda: next(w for w in _walk(win) if w.__class__.__name__ == "Entry"))
+            ex, ey = on_main(lambda: (entry.winfo_rootx() + 20, entry.winfo_rooty() + entry.winfo_height() // 2))
+            pyautogui.click(ex, ey)
+            time.sleep(0.5)
+            pyautogui.press("end")
+            pyautogui.write("X", interval=0.05)
+            time.sleep(0.5)
+            on_main(lambda: win._save())
+            time.sleep(1.0)
+            ImageGrab.grab(bbox=on_main(lambda: (win.winfo_rootx(), win.winfo_rooty(), win.winfo_rootx() + win.winfo_width(),
+                                                 win.winfo_rooty() + win.winfo_height())), all_screens=True).save(
+                os.path.join(out, "8_settings.png"))
+            still = on_main(lambda: win.winfo_exists())
+            note(f"設定の保存(画面は閉じない): {'OK' if still else 'NG'} 名前={config.AI_NAME!r}")
+            on_main(lambda: win.destroy())
             note("ALL DONE")
         except Exception:
             note("エラー: " + traceback.format_exc())
