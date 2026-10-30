@@ -27,6 +27,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 前の版からの変更点(更新内容)を作るため
 
       - uses: actions/setup-python@v5
         with:
@@ -125,6 +127,13 @@ jobs:
           "$h  ZealousSetup.exe" | Out-File -Encoding ascii -NoNewline dist\ZealousSetup.exe.sha256
           Get-Content dist\ZealousSetup.exe.sha256
 
+      - name: 更新内容を作る(前の版からのコミットの題名)
+        if: steps.ver.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_REPO: ${{ vars.RELEASE_REPO }}
+        run: python packaging/release_notes.py ${{ steps.ver.outputs.version }}
+
       - name: 配信用リポジトリの Releases に公開
         if: steps.ver.outputs.version != ''
         uses: softprops/action-gh-release@v2
@@ -136,6 +145,15 @@ jobs:
           # 配信用リポジトリへ置くときは、そのリポジトリの main に付ける(このリポジトリのコミットは向こうに無い)
           target_commitish: ${{ vars.RELEASE_REPO && 'main' || github.sha }}
           name: Zealous v${{ steps.ver.outputs.version }}
+          body_path: dist/notes.md
           files: |
             dist/ZealousSetup.exe
             dist/ZealousSetup.exe.sha256
+
+      - name: ダウンロードページを更新(配信用リポジトリの docs/ を GitHub Pages で公開)
+        if: steps.ver.outputs.version != '' && vars.RELEASE_REPO != ''
+        continue-on-error: true  # ページの更新に失敗しても、リリース自体は成功扱い
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_REPO: ${{ vars.RELEASE_REPO }}
+        run: python packaging/publish_site.py ${{ steps.ver.outputs.version }}

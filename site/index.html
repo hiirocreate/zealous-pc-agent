@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zealous ダウンロード</title>
+<meta name="description" content="Zealous（ゼラス）— PCの中だけで動く、話しかけて使えるAIアシスタント。Windows 版のダウンロードページ。">
+<link rel="icon" type="image/png" href="emblem.png">
+<style>
+  :root {
+    --bg: #0f1117; --surface: #171a22; --raised: #1f2330; --line: #2b303c;
+    --text: #e8eaf0; --sub: #9aa1b4; --accent: #7c5cff; --accent-2: #5b8cff; --cyan: #22d3ee; --ok: #34d399;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); line-height: 1.75;
+    font-family: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+  }
+  a { color: var(--cyan); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+  /* ---- 上: ロゴとダウンロード ---- */
+  .hero { position: relative; overflow: hidden; padding: 72px 0 56px; text-align: center; }
+  .hero::before {
+    content: ""; position: absolute; inset: -40% -10% auto; height: 120%;
+    background: radial-gradient(closest-side, rgba(124, 92, 255, .28), transparent 70%),
+                radial-gradient(closest-side at 70% 60%, rgba(34, 211, 238, .16), transparent 70%);
+    pointer-events: none;
+  }
+  .brand { position: relative; display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .brand img.emblem { width: 64px; height: 64px; }
+  .brand img.word { height: 34px; }
+  .tagline { position: relative; margin: 18px 0 6px; font-size: clamp(20px, 3.4vw, 28px); font-weight: 700; }
+  .lead { position: relative; color: var(--sub); margin: 0 auto 30px; max-width: 640px; }
+  .dl {
+    position: relative; display: inline-flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 16px 40px; border-radius: 999px; text-decoration: none; color: #fff;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    box-shadow: 0 10px 40px rgba(124, 92, 255, .35); transition: transform .15s, box-shadow .15s;
+  }
+  .dl:hover { transform: translateY(-2px); box-shadow: 0 14px 50px rgba(124, 92, 255, .5); }
+  .dl strong { font-size: 19px; letter-spacing: .02em; }
+  .dl span { font-size: 13px; opacity: .9; }
+  .meta { position: relative; margin-top: 14px; color: var(--sub); font-size: 13px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  /* ---- 画面写真 ---- */
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin: 10px 0 56px; }
+  .shots figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  .shots img { width: 100%; height: 260px; object-fit: contain; display: block; border-radius: 10px; background: #0b0d12; }
+  .shots figcaption { color: var(--sub); font-size: 13px; margin-top: 8px; text-align: center; }
+  /* ---- 説明 ---- */
+  section { margin: 0 0 52px; }
+  h2 { font-size: 21px; margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }
+  h2::before { content: ""; width: 6px; height: 22px; border-radius: 3px; background: linear-gradient(var(--accent), var(--cyan)); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; color: var(--sub); font-size: 14px; }
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; position: relative; padding: 14px 16px 14px 58px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 14px; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 16px; top: 14px; width: 28px; height: 28px;
+    border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--accent); color: #fff; }
+  .note { color: var(--sub); font-size: 13px; }
+  table.req { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 14px; overflow: hidden; }
+  table.req th, table.req td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  table.req th { width: 30%; color: var(--sub); font-weight: 600; }
+  table.req tr:last-child th, table.req tr:last-child td { border-bottom: 0; }
+  /* ---- 更新履歴 ---- */
+  .rel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 12px; }
+  .rel header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .rel .v { font-weight: 700; font-size: 17px; }
+  .rel .d { color: var(--sub); font-size: 13px; }
+  .rel .new { font-size: 11px; font-weight: 700; color: #04130d; background: var(--ok); border-radius: 6px; padding: 1px 7px; }
+  .rel ul { margin: 6px 0 0; padding-left: 1.2em; color: #cfd3df; font-size: 14px; }
+  .rel ul li { margin: 3px 0; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  code, .hash { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+  .hash { word-break: break-all; background: #0b0d12; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: block; margin: 8px 0; }
+  pre { background: #0b0d12; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--sub); font-size: 13px; text-align: center; }
+  @media (max-width: 560px) { .dl { padding: 14px 26px; } .brand img.word { height: 26px; } }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <div class="wrap">
+      <div class="brand">
+        <img class="emblem" src="emblem.png" alt="">
+        <img class="word" src="wordmark.png" alt="Zealous">
+      </div>
+      <p class="tagline">話しかけるだけで、PCが動く。</p>
+      <p class="lead">Zealous（ゼラス）は、PCの中だけで動くAIアシスタントです。会話・調べもの・ファイルやアプリの操作・資料づくりまで、声や文字で頼めます。</p>
+      <a class="dl" id="download" href="https://github.com/hiirocreate/zealous-releases/releases/latest/download/ZealousSetup.exe">
+        <strong>Windows 版をダウンロード</strong>
+        <span id="dl-sub">最新版・無料</span>
+      </a>
+      <div class="meta" id="meta">Windows 10 / 11（64ビット）</div>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <div class="shots">
+      <figure><img src="panel.png" alt="チャット画面"><figcaption>チャット画面</figcaption></figure>
+      <figure><img src="standby.png" alt="待機中の表示"><figcaption>待機中（画面の隅に小さく常駐）</figcaption></figure>
+    </div>
+
+    <section>
+      <h2>できること</h2>
+      <div class="cards">
+        <div class="card"><h3>声で話しかける</h3><p>マイクのボタンや合図の言葉で、そのまま会話。返事は声で読み上げます。</p></div>
+        <div class="card"><h3>PCを操作する</h3><p>アプリを開く、ファイルを探す・開く、Webページを操作する、メールを既読にする など。</p></div>
+        <div class="card"><h3>資料を作る</h3><p>Word・PowerPoint・Excel のファイルを、内容とデザインを聞いてから作ります。</p></div>
+        <div class="card"><h3>PCの中だけで動く</h3><p>AIは自分のPCで動くので、会話の中身を外部のAIサービスへ送りません。</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>インストールのしかた</h2>
+      <ol class="steps">
+        <li>上のボタンから <code>ZealousSetup.exe</code> をダウンロードして、開きます。</li>
+        <li>「WindowsによってPCが保護されました」と出たときは、<b>「詳細情報」→「実行」</b>を押します（まだ電子署名を付けていないため表示されます）。</li>
+        <li>案内に沿って進めると、はじめての起動でAI・読み上げ・音声認識の部品を自動で準備します（回線によって数分〜数十分）。</li>
+      </ol>
+      <p class="note">2回目からは、Zealous の中の「更新」ボタンで新しい版に更新できます。</p>
+    </section>
+
+    <section>
+      <h2>動作環境</h2>
+      <table class="req">
+        <tr><th>OS</th><td>Windows 10 / 11（64ビット）</td></tr>
+        <tr><th>メモリ</th><td>8GB 以上（16GB 以上を推奨。テクニカルモード用のAIを使う場合）</td></tr>
+        <tr><th>空き容量</th><td>約 10GB（AIモデル・読み上げの声・音声認識の部品を含む）</td></tr>
+        <tr><th>あると便利</th><td>マイク・スピーカー、NVIDIA 製の GPU（AIの返事が速くなります）</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>更新履歴</h2>
+      <div id="history"><p class="note">読み込んでいます…</p></div>
+    </section>
+
+    <section>
+      <details>
+        <summary>ダウンロードしたファイルが本物か確かめる（上級者向け）</summary>
+        <p class="note">ダウンロードした場所で PowerShell を開き、次を実行して、表示された値が下の値と同じなら本物です。</p>
+        <pre><code>Get-FileHash .\ZealousSetup.exe -Algorithm SHA256</code></pre>
+        <span class="hash" id="sha">—</span>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">Zealous（ゼラス）　·　<a href="https://github.com/hiirocreate/zealous-releases/releases">すべての版</a></div>
+  </footer>
+
+<script>
+  // 版の情報は、新しい版を公開するたびに自動で書き換わる latest.json / releases.json から読む
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  const mb = n => (n / 1048576).toFixed(0) + "MB";
+  fetch("latest.json", {cache: "no-store"}).then(r => r.json()).then(v => {
+    document.getElementById("dl-sub").textContent = `v${v.version}・${mb(v.size)}・無料`;
+    document.getElementById("meta").innerHTML = `最新版 <b>v${esc(v.version)}</b>（${esc(v.date)} 公開）　·　Windows 10 / 11（64ビット）`;
+    document.getElementById("sha").textContent = v.sha256;
+  }).catch(() => {});
+  fetch("releases.json", {cache: "no-store"}).then(r => r.json()).then(list => {
+    const box = document.getElementById("history");
+    if (!list.length) { box.innerHTML = '<p class="note">まだ更新履歴はありません。</p>'; return; }
+    box.innerHTML = list.slice(0, 12).map((r, i) => `
+      <article class="rel">
+        <header><span class="v">v${esc(r.version)}</span><span class="d">${esc(r.date)}</span>${i === 0 ? '<span class="new">最新</span>' : ""}</header>
+        <ul>${(r.notes || []).map(n => `<li>${esc(n)}</li>`).join("") || "<li>細かな改善</li>"}</ul>
+      </article>`).join("");
+  }).catch(() => { document.getElementById("history").innerHTML = '<p class="note">更新履歴を読み込めませんでした。</p>'; });
+</script>
+</body>
+</html>

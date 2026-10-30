@@ -1,0 +1,25 @@
+name: download-page
+
+# ダウンロードページ(配信用リポジトリの GitHub Pages)だけを作り直す。
+# ページの見た目(site/)を変えたとき、または手動で実行したとき。新しい版を出したときは build-installer が更新する。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/**", "packaging/publish_site.py"]
+
+jobs:
+  publish:
+    if: vars.RELEASE_REPO != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow
+      - name: ダウンロードページを更新
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_REPO: ${{ vars.RELEASE_REPO }}
+        run: python packaging/publish_site.py latest
