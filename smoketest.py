@@ -232,6 +232,18 @@ def run(out):
             time.sleep(1.5)
             note(f"名前でボタンを押す: {'OK' if os.path.exists(flag) else 'NG'}")
             form.kill()
+            # ブラウザのページの中のボタンを、名前で押す(押すとページの題名が変わる)
+            page = os.path.join(out, "zealous_web_test.html")
+            with open(page, "w", encoding="utf-8") as f:
+                f.write("<html><head><title>Zealous Web Test</title></head><body>"
+                        "<button onclick=\"document.title='clicked ok'\">ウェブのテストボタン</button></body></html>")
+            os.startfile(page)
+            time.sleep(8)
+            note("ブラウザの窓: " + repr(screen.target_window()[1]))
+            note("ページのボタン: " + tools.run_tool("click_on", {"label": "ウェブのテストボタン"}))
+            time.sleep(2)
+            note(f"ページの中のボタンを押す: {'OK' if 'clicked ok' in screen.target_window()[1] else 'NG'} "
+                 f"({screen.target_window()[1]!r})")
             config.SCREEN_CONTROL_ENABLED = False
 
             # 設定画面を開いて(入力欄すべてに日本語入力の処理が付く)、入力欄に打って保存する(閉じないこと)

@@ -2,6 +2,7 @@
 import os
 import subprocess
 import urllib.parse
+import urllib.request
 import webbrowser
 
 import config
@@ -130,8 +131,80 @@ def open_in_browser(url):
         webbrowser.open(url)
 
 
-@tool("ブラウザで指定URLを開く", url=("string", "開くURL", True))
+# よく使うサイト: 呼び名 → (トップページ, サイト内検索のアドレス)
+SITES = {
+    "youtube": ("https://www.youtube.com/", "https://www.youtube.com/results?search_query={}"),
+    "google": ("https://www.google.com/", "https://www.google.com/search?q={}"),
+    "yahoo": ("https://www.yahoo.co.jp/", "https://search.yahoo.co.jp/search?p={}"),
+    "amazon": ("https://www.amazon.co.jp/", "https://www.amazon.co.jp/s?k={}"),
+    "楽天": ("https://www.rakuten.co.jp/", "https://search.rakuten.co.jp/search/mall/{}/"),
+    "wikipedia": ("https://ja.wikipedia.org/", "https://ja.wikipedia.org/w/index.php?search={}"),
+    "x": ("https://x.com/", "https://x.com/search?q={}"),
+    "instagram": ("https://www.instagram.com/", "https://www.instagram.com/explore/search/keyword/?q={}"),
+    "github": ("https://github.com/", "https://github.com/search?q={}"),
+    "googlemap": ("https://www.google.com/maps/", "https://www.google.com/maps/search/{}"),
+    "niconico": ("https://www.nicovideo.jp/", "https://www.nicovideo.jp/search/{}"),
+    "netflix": ("https://www.netflix.com/", "https://www.netflix.com/search?q={}"),
+    "spotify": ("https://open.spotify.com/", "https://open.spotify.com/search/{}"),
+    "mercari": ("https://jp.mercari.com/", "https://jp.mercari.com/search?keyword={}"),
+}
+SITE_NAMES = {  # 呼び方のゆれ → 上の呼び名
+    "youtube": "youtube", "ユーチューブ": "youtube", "ようつべ": "youtube",
+    "google": "google", "グーグル": "google", "ぐーぐる": "google",
+    "yahoo": "yahoo", "ヤフー": "yahoo", "amazon": "amazon", "アマゾン": "amazon",
+    "楽天": "楽天", "rakuten": "楽天", "wikipedia": "wikipedia", "ウィキペディア": "wikipedia", "ウィキ": "wikipedia",
+    "x": "x", "twitter": "x", "ツイッター": "x", "エックス": "x", "instagram": "instagram", "インスタ": "instagram",
+    "インスタグラム": "instagram", "github": "github", "ギットハブ": "github",
+    "googleマップ": "googlemap", "グーグルマップ": "googlemap", "地図": "googlemap", "マップ": "googlemap",
+    "ニコニコ": "niconico", "ニコニコ動画": "niconico", "niconico": "niconico", "netflix": "netflix",
+    "ネットフリックス": "netflix", "spotify": "spotify", "スポティファイ": "spotify", "メルカリ": "mercari",
+}
+
+
+def site_key(name):
+    return SITE_NAMES.get(str(name).strip().lower().replace(" ", ""))
+
+
+@tool("よく使うサイト(YouTube・Google・Amazon・楽天・Wikipedia・X・地図など)をブラウザで開く。"
+      "query を渡すと、そのサイトの中で検索した結果を開く。URLを推測で作らずに、これを使う",
+      site=("string", "サイトの名前(例: YouTube、Amazon、Googleマップ)", True),
+      query=("string", "サイトの中で検索する言葉(無ければトップページ)", False))
+def open_site(site, query=""):
+    key = site_key(site)
+    if not key:
+        # 知らないサイト: 名前で検索して、そのサイトを見つけてもらう
+        open_in_browser(config.SEARCH_URL.format(urllib.parse.quote_plus(f"{site} {query}".strip())))
+        return f"「{site}」を検索して開きました"
+    top, search = SITES[key]
+    open_in_browser(search.format(urllib.parse.quote_plus(query)) if query else top)
+    return f"{site}で「{query}」を検索しました" if query else f"{site}を開きました"
+
+
+@tool("YouTube で動画を探して、いちばん合う動画を再生する(「〇〇の動画を流して」など)",
+      query=("string", "探す動画の内容", True))
+def play_video(query):
+    import re
+    req = urllib.request.Request(
+        "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(query) + "&hl=ja&gl=JP",
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+                 "Accept-Language": "ja"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        page = r.read(3_000_000).decode("utf-8", "replace")
+    m = re.search(r'"videoRenderer":\{"videoId":"([\w-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"', page)
+    if not m:
+        open_in_browser(SITES["youtube"][1].format(urllib.parse.quote_plus(query)))
+        return f"「{query}」の動画をすぐには選べなかったので、YouTube の検索結果を開きました"
+    vid, title = m.group(1), m.group(2).encode().decode("unicode_escape", "ignore") if "\\u" in m.group(2) else m.group(2)
+    open_in_browser(f"https://www.youtube.com/watch?v={vid}")
+    return f"YouTube で「{title}」を再生します"
+
+
+@tool("ブラウザで指定URLを開く(本当にあるURLが分かっているときだけ。推測で作らない)", url=("string", "開くURL", True))
 def open_url(url):
+    import re
+    # 説明用の決まった名前(example.com など)や、「video_id」「xxxx」のような穴埋めの文字が入った URL は作り話
+    if re.search(r"//(?:www\.)?example\.(?:com|org|net)\b|example_|your[_-]|video[_-]?id|xxxx|<[^>]+>", url, re.I):
+        return "そのURLは推測で作ったもののようなので開きませんでした。サイト名と探したいものを教えてください"
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     open_in_browser(url)

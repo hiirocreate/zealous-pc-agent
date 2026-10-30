@@ -87,6 +87,7 @@ def system_prompt():
             "【必ず守ること】\n"
             f"・いつも{answer_language()}で答える(ユーザーが別の言葉で話しかけたときだけ、その言葉で答える)。\n"
             "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
+            "・URLを推測で作らない。サイトを開く・サイト内で探すときは open_site、動画を流すときは play_video を使う。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
@@ -242,6 +243,24 @@ def ask(text, history=None, summary="", memory=None):
 
 
 # はっきりした言い方は AI に判断させずに直接実行する(速く、小さいモデルでも確実)
+_SITE = (r"(?P<site>youtube|ユーチューブ|ようつべ|google|グーグル|yahoo|ヤフー|amazon|アマゾン|楽天|wikipedia|"
+         r"ウィキペディア|twitter|ツイッター|instagram|インスタ(?:グラム)?|github|googleマップ|グーグルマップ|"
+         r"ニコニコ(?:動画)?|netflix|ネットフリックス|spotify|スポティファイ|メルカリ)")
+_BROWSER = r"(?:ブラウザ(?:から|で|を開いて)?[、,\s]*)?"
+# サイト・動画の言い方(「ブラウザ」と言っていても、ここはすぐ実行する)
+_WEB_ROUTES = [
+    # 「ブラウザからYouTube開いて、株式会社才の動画を流して」「YouTubeで〇〇を再生して」
+    (re.compile(_BROWSER + r"(?:youtube|ユーチューブ|ようつべ)(?:を)?(?:開いて|ひらいて|で|から)?[、,\s]*"
+                r"(?P<q>.+?)の?(?:動画|曲|音楽|mv|ＭＶ|映像|ライブ)?を?(?:流して|再生して|かけて|見せて|見たい)", re.I),
+     "play_video"),
+    (re.compile(r"(?P<q>.+?)の?(?:動画|曲|音楽|mv|ＭＶ|映像)を?(?:youtube|ユーチューブ)?で?(?:流して|再生して|かけて)", re.I),
+     "play_video"),
+    # 「Amazonで充電器を検索して」「楽天で〇〇を探して」
+    (re.compile(_BROWSER + _SITE + r"(?:を開いて|で|の中で)[、,\s]*(?P<q>.+?)を?(?:検索して|探して|さがして|調べて|見せて)", re.I),
+     "open_site"),
+    # 「YouTubeを開いて」「ブラウザでAmazon開いて」
+    (re.compile(_BROWSER + _SITE + r"(?:を)?(?:開いて|ひらいて|見せて)$", re.I), "open_site"),
+]
 _PLACE = r"(?:(?P<where>デスクトップ|ドキュメント|ダウンロード|ピクチャ)(?:に|の|にある|から)?)?"
 _ROUTES = [
     # 「デスクトップのテンプレっていうテキストファイル探して」
@@ -264,7 +283,18 @@ _NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さ�
 def quick_route(text):
     """(関数名, 引数) を返す。当てはまらなければ None。"""
     t = text.strip().rstrip("。.!！?？")
-    if not config.QUICK_ROUTE or _NOT_SEARCH.search(t):
+    if not config.QUICK_ROUTE:
+        return None
+    if not re.search(r"それ|これ|あれ|さっき", t):
+        for pattern, name in _WEB_ROUTES:
+            m = pattern.match(t)
+            if m:
+                q = (m.groupdict().get("q") or "").strip(" 、,をのは")
+                if name == "play_video" and q:
+                    return name, {"query": q}
+                if name == "open_site":
+                    return name, {"site": m.group("site"), "query": q}
+    if _NOT_SEARCH.search(t):
         return None
     for pattern, name in _ROUTES:
         m = pattern.match(t)
@@ -286,13 +316,14 @@ _NEEDS_TOOLS = re.compile(
     r"移動|コピー|名前を変え|リネーム|一覧|ブラウザ|サイト|ページ|URL|画像|写真|ロック|音量|ニュース|天気|最新|"
     r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード|"
     r"クリック|押して|入力して|打って|タイプ|スクロール|キーを|ショートカット|貼り付け|ボタン|"
-    r"切り替え|最小化|最大化|ウィンドウ|閉じて")
+    r"切り替え|最小化|最大化|ウィンドウ|閉じて|動画|再生|流して|サイト|youtube|ユーチューブ|アマゾン|amazon")
 
 
-_CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し)"
-                    r"(?:ました|ます|ておきます)")
+_CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し|再生し|流し)"
+                    r"(?:ました|ます|ておきます)|https?://")
 _DO_IT = ("あなたはまだ何も操作していません。操作が必要なら、必ず用意された関数を呼び出してください。"
-          "ファイルを探すなら find_files、開くなら open_file を使ってください。")
+          "ファイルを探すなら find_files、開くなら open_file、サイトは open_site、動画は play_video を使ってください。"
+          "URLを推測で書かないでください。")
 
 
 def needs_tools(text):

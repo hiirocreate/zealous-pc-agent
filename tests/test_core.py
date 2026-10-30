@@ -508,3 +508,14 @@ def test_claim_without_tool_is_retried(monkeypatch):
     monkeypatch.setattr(config, "QUICK_ROUTE", False)
     monkeypatch.setattr(config, "SUMMARIZE_AFTER_TOOL", False)
     assert "見つかりました" in llm.ask("さっきのファイルを探してきて", history=[])
+
+
+def test_web_routes_and_invented_urls(monkeypatch):
+    opened = []
+    monkeypatch.setattr(tools, "open_in_browser", lambda u: opened.append(u))
+    assert llm.quick_route("ブラウザからYouTube開いて、株式会社才の動画を流して") == ("play_video", {"query": "株式会社才"})
+    assert llm.quick_route("Amazonで充電器を検索して") == ("open_site", {"site": "Amazon", "query": "充電器"})
+    assert "推測" in tools.run_tool("open_url", {"url": "https://www.youtube.com/watch?v=example_video_id"})
+    assert opened == []
+    tools.run_tool("open_site", {"site": "楽天", "query": "コーヒー豆"})
+    assert opened[-1].startswith("https://search.rakuten.co.jp/search/mall/")
