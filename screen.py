@@ -71,6 +71,22 @@ _UIA = ("Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,UIAutomatio
         "[System.Windows.Automation.Condition]::TrueCondition);")
 
 
+def _same_app_windows(hwnd):
+    """hwnd と同じアプリの、見えている窓すべて(手前の小窓から順に)。"""
+    from ctypes import wintypes
+    u = _user32()
+    pid = wintypes.DWORD()
+    u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    out, h = [], u.GetTopWindow(None)
+    while h:
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid.value and u.IsWindowVisible(h):
+            out.append(h)
+        h = u.GetWindow(h, 2)
+    return out or [hwnd]
+
+
 def _child_windows(hwnd):
     """窓の中の小さな窓(昔ながらのボタンや入力欄)を (名前, 中心x, 中心y) で返す。"""
     from ctypes import wintypes
@@ -95,8 +111,9 @@ def _child_windows(hwnd):
 def find_control(hwnd, label):
     """窓の中から、名前に label を含むボタンなどを探し、その真ん中の位置 (x, y, 名前) を返す。
     名前がぴったり同じものを優先し、無ければ名前に含むもののうち短い名前のものを選ぶ。"""
-    # 1. 昔ながらのボタンなど(窓の中の小さな窓)から探す(速い)
-    kids = [k for k in _child_windows(hwnd) if label.lower() in k[0].lower()]
+    # 1. 昔ながらのボタンなど(窓の中の小さな窓)から探す(速い)。
+    #    同じアプリの小窓(「検索」「保存」などのダイアログ)は別の窓なので、それらの中も探す
+    kids = [k for w in _same_app_windows(hwnd) for k in _child_windows(w) if label.lower() in k[0].lower()]
     if kids:
         best = min(kids, key=lambda k: (k[0].lower() != label.lower(), len(k[0])))
         return best[1], best[2], best[0]

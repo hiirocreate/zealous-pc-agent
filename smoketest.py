@@ -190,6 +190,8 @@ def run(out):
             # ふつうのボタン: 検索の小窓を開き、「Cancel」を名前で押して閉じる
             tools.run_tool("press_keys", {"keys": "ctrl+f"})
             time.sleep(1.5)
+            note("小窓: " + repr([screen.target_window()[1]] + [t for t in (screen._child_windows(w) for w in
+                                                                           screen._same_app_windows(hwnd))][:3])[:300])
             note("ボタン: " + tools.run_tool("click_on", {"label": "Cancel"}))
             time.sleep(1.0)
             hwnd2, title2 = screen.target_window()
