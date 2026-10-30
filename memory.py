@@ -76,7 +76,7 @@ class Summarizer:
                       "ユーザーの名前・好み・決めたこと・頼まれたこと・話題の流れを優先し、あいさつなどは省いてください。"
                       "要約だけを書いてください。\n\n"
                       + (f"【これまでの要約】\n{prev}\n\n" if prev else "") + f"【新しい会話】\n{convo}")
-            body = {"model": config.OLLAMA_MODEL, "stream": True, "keep_alive": "30m",
+            body = {"model": config.OLLAMA_MODEL, "stream": True, "keep_alive": "15m",
                     "messages": [{"role": "user", "content": prompt}],
                     "options": {"temperature": 0, "num_ctx": 4096}}
             import models

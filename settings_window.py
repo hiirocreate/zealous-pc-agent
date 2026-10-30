@@ -169,6 +169,11 @@ _SOURCE = [
           ("granite4:tiny-h", "Granite 4.0 Tiny（IBM・動くのは約10億・約4.2GB）"),
           ("sam860/olmoe-1b-7b-0924", "OLMoE（AllenAI・動くのは約10億・約3GB・英語向け）"),
           ("granite4:micro-h", "Granite 4.0 Micro（IBM・軽い・約1.9GB）"),
+          ("qwen2.5-coder:3b", "Qwen2.5-Coder 3B（コード向け・軽い・約1.9GB）"),
+          ("granite4.2:3b-q4_K_M", "Granite 4.2 3B（IBM・コードも得意・軽い・約2.2GB）"),
+          ("nemotron-3.5-bolt:e4b-q4_K_M", "Nemotron 3.5 Bolt（NVIDIA・コード向け・約7.9GB・メモリ12GB以上）"),
+          ("laguna-xs-2.1:q4_K_M", "Laguna XS 2.1（コード専用の上位・約20GB・メモリ32GB以上）"),
+          ("qwen3.6:35b-a3b-coding-mtp-q4_K_M", "Qwen3.6 Coding（コード専用の最上位・約23GB・メモリ32GB以上）"),
           ("", "いつもと同じAI")]),
         ("—", "会話をすべて参照"),
         ("FULL_CONTEXT", "会話をすべて参照して答える", "bool",
@@ -353,13 +358,12 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(side, text=f"バージョン {VERSION}", font=T.font(10), text_color=T.SUB).pack(
             side="bottom", pady=12)
 
-        # ---- 右: 各タブの中身 ----
+        # ---- 右: 各タブの中身(開いたタブだけを作る。全部を一度に作ると、開くのが遅く、メモリも多く使う) ----
+        self._built, self._fill_source = set(), config.current()
         for name, fields in TABS:
             page = ctk.CTkScrollableFrame(self, fg_color="transparent", scrollbar_button_color=T.BORDER)
             page.grid_columnconfigure(0, weight=1)
             self._pages[name] = page
-            self._build_fields(page, fields)
-        self._build_info(self._pages[_INFO_TAB])
 
         # ---- 下: 保存 ----
         foot = ctk.CTkFrame(self, fg_color="transparent")
@@ -375,13 +379,9 @@ class SettingsWindow(ctk.CTkToplevel):
                       hover_color=T.ACCENT_HOVER, font=T.font(12, "bold"),
                       command=self._save).grid(row=0, column=2)
 
-        self._fill(config.current())
-        self._select(TABS[0][0])
         # 変更した項目を目立たせ、保存していない変更の数を出す
         self._save_btn = self._foot.winfo_children()[-1]
-        self._filter("")  # 詳細設定は閉じた状態で見せる
-        for _, var in self._vars.values():
-            var.trace_add("write", lambda *_: self._dirty_later())
+        self._select(TABS[0][0])
         self._refresh_dirty()
         self.protocol("WM_DELETE_WINDOW", self._close)
         # この窓を動かしている間は、常駐の画面の見た目の更新を休ませて、動きを軽くする
@@ -398,6 +398,7 @@ class SettingsWindow(ctk.CTkToplevel):
         # 日本語入力の変換中の文字を、チャット欄と同じように入力欄の中に表示する
         import ime
         ime.attach_all(self, T.FONT, 15)
+        self._ime_ready = True
 
         # 保存したときのお知らせ(少しだけ出して消える)
         self.toast = ctk.CTkLabel(self, text="✓  保存しました", font=T.font(12, "bold"), text_color="white",
@@ -648,7 +649,28 @@ class SettingsWindow(ctk.CTkToplevel):
         self._action(page, "アンインストール（削除）", "Zealous をこのPCから取り除きます", "アンインストール",
                      self._uninstall, danger=True)
 
+    def _build_page(self, name):
+        """タブの中身を、初めて開いたときに作る。作ったら、今の値を入れ、変更の見張りを付ける。"""
+        if name in self._built:
+            return False
+        self._built.add(name)
+        page = self._pages[name]
+        before = set(self._vars)
+        self._build_fields(page, dict(TABS)[name])
+        if name == _INFO_TAB:
+            self._build_info(page)
+        new = {k: v for k, v in self._vars.items() if k not in before}
+        self._fill_vars(new, self._fill_source)
+        for _, var in new.values():
+            var.trace_add("write", lambda *_: self._dirty_later())
+        if getattr(self, "_ime_ready", False):
+            import ime
+            ime.attach_all(page, T.FONT, 15)
+        return True
+
     def _select(self, name):
+        if self._build_page(name):
+            self._filter(self.search.get())  # 詳細設定は閉じた状態で見せる(検索中なら絞り込む)
         for n, page in self._pages.items():
             page.grid_forget()
             active = n == name
@@ -777,6 +799,9 @@ class SettingsWindow(ctk.CTkToplevel):
     def _filter(self, query):
         """項目名・説明に query を含む項目だけを見せる。空なら元に戻す。"""
         q = query.strip().lower()
+        if q:  # 検索はすべてのタブが対象
+            for n in self._pages:
+                self._build_page(n)
         first = None
         for name, page in self._pages.items():
             items = self._items.get(page, [])
@@ -963,13 +988,19 @@ class SettingsWindow(ctk.CTkToplevel):
         self.refresh_voice()
 
     def refresh_voice(self):
+        if not hasattr(self, "voice_now"):
+            return
         cur = next((v for v in voicevox.cached_catalog() if v["id"] == config.VOICEVOX_SPEAKER), None)
         if self.winfo_exists():
             self.voice_now.configure(text=f"現在の声: {voicevox.label(cur) if cur else config.VOICEVOX_SPEAKER}")
 
     # ---------------- 値の読み書き ----------------
     def _fill(self, values):
-        for key, (kind, var) in self._vars.items():
+        self._fill_source = values  # まだ作っていないタブも、作るときにこの値を入れる
+        self._fill_vars(self._vars, values)
+
+    def _fill_vars(self, vars_, values):
+        for key, (kind, var) in vars_.items():
             v = values[key]
             if kind == "model":
                 var.set(models.label(v))
@@ -994,7 +1025,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.msg.configure(text="既定値を表示しています（保存で確定）", text_color=T.SUB)
 
     def _save(self):
-        changes = {}
+        # まだ開いていないタブの項目は、表示している値(今の設定、または「既定に戻す」の値)のまま
+        changes = {f[0]: self._fill_source[f[0]] for f in FIELDS if f[0] in self._fill_source}
         for key, (kind, var) in self._vars.items():
             try:
                 if kind == "model":

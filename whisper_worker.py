@@ -7,12 +7,20 @@ import threading
 import zlog
 
 
+IDLE_UNLOAD = 15 * 60  # 使わないモデルを外すまでの秒数
+IDLE_EXIT = 30 * 60     # モデルが無いまま、作業プロセスを終えるまでの秒数
+
+
 def _worker_main(inq, outq):
     import os
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     import config
     from voice import VoiceInput, load_model
+    import gc
+    import time
     models = {}  # (モデル名, 装置, 細かさ) → 読み込んだモデル(待機中用と命令用の2つまで)
+    used = {}    # 同じキー → 最後に使った時刻
+    last = time.monotonic()
     parent = mp.parent_process()
     while True:
         try:
@@ -20,7 +28,16 @@ def _worker_main(inq, outq):
         except queue.Empty:
             if parent is not None and not parent.is_alive():
                 os._exit(0)  # 本体が終わったら、この作業プロセスも終える(残るとアップデートの邪魔になる)
+            now = time.monotonic()
+            # しばらく使っていないモデルはメモリから外す(次に使うときに読み込み直す。数秒で済む)
+            for key in [k for k, t in used.items() if now - t > IDLE_UNLOAD]:
+                models.pop(key, None)
+                used.pop(key)
+                gc.collect()
+            if not models and now - last > IDLE_EXIT:
+                os._exit(0)  # 長く使っていなければ、作業プロセスごと終える(次に話しかけたときに起動し直す)
             continue
+        last = time.monotonic()
         try:
             for k, v in settings.items():  # 本体の今の設定に合わせる
                 setattr(config, k, v)
@@ -30,6 +47,10 @@ def _worker_main(inq, outq):
                 for key in [k for k in models if k[0] not in (config.WHISPER_MODEL, config.COMMAND_WHISPER_MODEL)]:
                     del models[key]  # 使わなくなったモデルはメモリから外す
                 models[want] = load_model(*want)
+            used[want] = time.monotonic()
+            if audio is None:  # 前もって読み込むだけ
+                outq.put((job_id, "", None))
+                continue
             outq.put((job_id, VoiceInput.transcribe(models[want], audio, from_button or command), None))
         except Exception as e:
             outq.put((job_id, None, str(e)))
@@ -60,8 +81,8 @@ class WhisperWorker:
             self._next += 1
             job_id = self._next
             command = from_button if command is None else command
-            self._inq.put((job_id, audio, from_button, command,
-                           {k: getattr(config, k, "") for k in self.SETTINGS}))
+            job = (job_id, audio, from_button, command, {k: getattr(config, k, "") for k in self.SETTINGS})
+            self._inq.put(job)
             zlog.note(f"音声認識 開始 #{job_id} {len(audio) / 16000:.1f}秒 {'ボタン' if from_button else '待機中'}")
             waited = 0.0
             while True:
@@ -69,6 +90,12 @@ class WhisperWorker:
                     got, text, error = self._outq.get(timeout=0.5)
                 except queue.Empty:
                     waited += 0.5
+                    if not self._proc.is_alive() and self._proc.exitcode == 0:
+                        # 長く使わずに休んでいた作業プロセスが、ちょうど終わったところ: 起動し直して頼み直す
+                        self._proc = None
+                        self._ensure()
+                        self._inq.put(job)
+                        continue
                     if not self._proc.is_alive():
                         code = (self._proc.exitcode or 0) & 0xFFFFFFFF
                         zlog.note(f"音声認識の作業プロセスが止まりました(終了コード {code:#x})")

@@ -162,6 +162,8 @@ class App(ctk.CTk):
         ctk.set_appearance_mode(T.MODE)
         # 画面の拡大率の変化を確かめる間隔(既定の 0.1 秒ごとは、窓が多いと負担になる)
         ctk.ScalingTracker.update_loop_interval = 1000
+        # 明るさ(ダーク/ライト)の確認も、既定の 0.03 秒ごとから1秒ごとに(1秒に30回起きていたのを減らす)
+        ctk.AppearanceModeTracker.update_loop_interval = 1000
         super().__init__(fg_color=T.KEY)
         self._events = queue.Queue()  # 他スレッド -> UIスレッドへの処理依頼
         self._recording = False
@@ -211,7 +213,8 @@ class App(ctk.CTk):
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
         self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
         self.voice.command_mode = lambda: self._following() or self._voice_win is not None  # 合図の後の会話は命令として正確に聞き取る
-        self.after(15000, self.voice.preload)  # 命令用の聞き取りAIを前もって準備(初回はダウンロード)
+        # 合図の言葉で話しかける設定のときだけ、命令用の聞き取りAIを前もって準備(使わない人のメモリを使わない)
+        self.after(15000, lambda: config.WAKE_ENABLED and self.voice.preload())  # 命令用の聞き取りAIを前もって準備(初回はダウンロード)
         try:
             import stopper
             stopper.register(self.emergency_stop)
@@ -694,6 +697,7 @@ class App(ctk.CTk):
 
         def done():
             self._expanded = self._maximized = False
+            self._mic_policy()
             self.max_btn.configure(image=icons.maximize(14))
             self.max_btn._tip.set("全画面にする")
             self.panel.pack_forget()
@@ -713,6 +717,9 @@ class App(ctk.CTk):
 
         def done():
             self._expanded = True
+            self._mic_policy()
+            import llm
+            llm.warm()  # 休んでメモリから外していたAIを、文字を打っている間に読み込み直す
             self.pill.pack_forget()
             self.panel.pack(fill="both", expand=True)
             self._apply(*end)
@@ -1785,6 +1792,13 @@ class App(ctk.CTk):
         self.attributes("-topmost", True)
         self._show_panel()
 
+    def _mic_policy(self):
+        """チャット画面を開いている間は、合図の言葉の聞き取りを休む(マイクを閉じ、聞き取りAIも動かさない)。
+        声で話しかけた続き(続けて話しかけられる間)は聞き取る。マイクボタンはいつでも使える。"""
+        voice = getattr(self, "voice", None)
+        if voice is not None:
+            voice.rest(self._expanded and not getattr(self, "_voice_session", False))
+
     def _following(self):
         return self._voice_session and time.monotonic() < self._follow_until
 
@@ -1798,6 +1812,7 @@ class App(ctk.CTk):
         if self._state == "think":
             return
         self._follow_until = time.monotonic() + FOLLOW_SEC
+        self._mic_policy()
         self._paint_mic(True)
         self._set_state("listen")
         self.after(int(FOLLOW_SEC * 1000) + 100, self._follow_timeout)
@@ -1809,6 +1824,7 @@ class App(ctk.CTk):
     def _end_follow(self, idle=True):
         was = self._voice_session
         self._voice_session, self._follow_until = False, 0
+        self._mic_policy()
         if was and not self._recording:
             self._paint_mic(False)
             if idle and self._state == "listen":

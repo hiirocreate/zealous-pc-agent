@@ -85,14 +85,48 @@ class VoiceInput:
         self.command_mode = lambda: False  # 待機中に拾った声を、命令として正確に聞き取るべきか
         self.context = ""  # 直前の会話(聞き取りの手がかりにする)
         self.on_nothing = lambda: None  # ボタンで話したのに、文字にするものが無かったとき
-        self.conversation = False  # 音声会話画面: 合図の言葉なしで、話すたびに聞き取る
+        self._conversation = False  # 音声会話画面: 合図の言葉なしで、話すたびに聞き取る
+        self._rest = False  # 待機中の聞き取りを休む(チャット画面を開いている間など。マイクを閉じてPCの負担を減らす)
         self.level = 0.0  # いまのマイクの音の大きさ(0〜1。音声会話画面の球の動きに使う)
         threading.Thread(target=self._transcriber, daemon=True).start()
 
     # ---- 操作 ----
+    @property
+    def conversation(self):
+        return self._conversation
+
+    @conversation.setter
+    def conversation(self, on):
+        self._conversation = on
+        self._apply_stream()
+
+    def rest(self, on):
+        """待機中の聞き取り(合図の言葉)を休むか。休む間はマイクを閉じる(ボタンで話すときは、その場で開く)。"""
+        if on != self._rest:
+            self._rest = on
+            self._apply_stream()
+
+    def _apply_stream(self):
+        """いま聞き取りが要るときだけマイクを開いておく(要らなければ閉じて、CPU と電力を使わない)。"""
+        if self._manual or self._conversation or (self._wake and not self._rest):
+            self._ensure_stream()
+        else:
+            self._close_stream()
+
+    def _close_stream(self):
+        stream, self._stream = self._stream, None
+        self._seg = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
     def start_manual(self):
         if not self._ensure_stream():
             return
+        self.preload()  # 話している間に、命令用の聞き取りAIを読み込んでおく(休んでいて外していた場合)
         with self._lock:
             self._buf, self._manual = list(self._ring), True  # 押す直前の音から始める
 
@@ -113,21 +147,18 @@ class VoiceInput:
             self._jobs.put((gen, self._to_16k(np.concatenate(buf)), True))
         else:
             self.on_nothing()
+        self._apply_stream()  # 待機中の聞き取りを休んでいるなら、マイクを閉じる
 
     def set_wake(self, enabled):
         self._seg = None
-        self._wake = enabled and self._ensure_stream()
+        # マイクを開けなかったときは、合図の言葉での聞き取りを止める(休んでいる間は、開くのを後に回す)
+        self._wake = enabled and (self._rest or self._ensure_stream())
+        self._apply_stream()
 
     def reset_device(self):
         """マイクの設定が変わったときに開き直す。"""
-        if self._stream:
-            try:
-                self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
-        if self._wake:
-            self._ensure_stream()
+        self._close_stream()
+        self._apply_stream()
 
     def cancel(self):
         self._gen += 1
@@ -189,7 +220,7 @@ class VoiceInput:
             if self._manual:
                 self._buf.append(mono)
                 return
-        if self._wake or self.conversation:
+        if (self._wake and not self._rest) or self._conversation:
             try:
                 listen = self.should_listen()
             except Exception:

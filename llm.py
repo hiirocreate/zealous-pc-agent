@@ -468,6 +468,29 @@ def write_document(kind, request, source=""):
     return text
 
 
+KEEP = "15m"  # 使い終わってからAIをメモリに置いておく時間(過ぎたら外す。チャットを開くと前もって読み込み直す)
+_warmed = 0.0
+
+
+def warm():
+    """チャットを開いたときなどに、AIを裏で読み込んでおく(外していても、打ち終わるまでに準備ができる)。"""
+    global _warmed
+    import threading
+    import time
+    if time.monotonic() - _warmed < 120:
+        return
+    _warmed = time.monotonic()
+    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
+
+    def run():
+        try:
+            requests.post(config.OLLAMA_URL.replace("/api/chat", "/api/generate"),
+                          json={"model": model, "keep_alive": KEEP}, timeout=120)
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
+
+
 def release_tech_model():
     """テクニカルモード用のAIを、メモリから外す(いつものAIはそのまま)。"""
     model = getattr(config, "TECH_MODEL", "")
@@ -517,13 +540,13 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, te
     body = {"model": model, "messages": messages, "stream": True,
             "options": {"temperature": temp, "num_ctx": num_ctx(messages)},
             # テクニカルモード用のAIは大きいので、使い終わって10分たったらメモリから外す
-            "keep_alive": "10m" if model != config.OLLAMA_MODEL else "30m"}
+            "keep_alive": "10m" if model != config.OLLAMA_MODEL else KEEP}
     if use_tools:
         body["tools"] = tools.schemas(TECH_TOOLS if _tech else None)
     if fmt:
         body["format"] = fmt  # 決めた形(JSON)のとおりにだけ書かせる(小さなモデルでも形が崩れない)
     import models
-    if models.thinks(config.OLLAMA_MODEL):
+    if models.thinks(model):
         body["think"] = False  # 考える過程を書かせない(書かせると、話し始めるまでが遅くなる)
     global _streamed
     content, calls, shown = "", [], 0

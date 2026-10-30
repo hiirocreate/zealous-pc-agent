@@ -104,8 +104,11 @@ def download(url, dest, progress):
 
 
 # ---------------- 起動・停止 ----------------
+_LOW = 0x00004000 if os.name == "nt" else 0  # BELOW_NORMAL_PRIORITY_CLASS: ほかのアプリの動きを優先させる
+
+
 def _spawn(args, env=None):
-    p = subprocess.Popen(args, cwd=os.path.dirname(args[0]), env=env, creationflags=_NO_WINDOW,
+    p = subprocess.Popen(args, cwd=os.path.dirname(args[0]), env=env, creationflags=_NO_WINDOW | _LOW,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _procs.append(p)
 
@@ -119,13 +122,22 @@ def _wait(check, seconds=90):
     return False
 
 
+def _voicevox_args():
+    # 読み上げに使うCPUの数を半分までにする(読み上げ中もPCが重くならないように。速さはほぼ変わらない)
+    threads = max(2, (os.cpu_count() or 4) // 2)
+    return [voicevox_exe(), "--host", "127.0.0.1", "--port", "50021", "--cpu_num_threads", str(threads)]
+
+
 def start_services():
     """入っていて止まっているものだけ裏で起動する。"""
     if not services.check_ollama()[0] and ollama_exe():
-        env = dict(os.environ, OLLAMA_MODELS=OLLAMA_MODELS, OLLAMA_HOST="127.0.0.1:11434")
+        env = dict(os.environ, OLLAMA_MODELS=OLLAMA_MODELS, OLLAMA_HOST="127.0.0.1:11434",
+                   # メモリを節約: 同時に読み込むモデルは1つ・同時の処理は1つ・会話の記憶(KVキャッシュ)を半分の大きさに
+                   OLLAMA_MAX_LOADED_MODELS="1", OLLAMA_NUM_PARALLEL="1",
+                   OLLAMA_FLASH_ATTENTION="1", OLLAMA_KV_CACHE_TYPE="q8_0")
         _spawn([ollama_exe(), "serve"], env)
     if not services.check_voicevox()[0] and voicevox_exe():
-        _spawn([voicevox_exe(), "--host", "127.0.0.1", "--port", "50021"])
+        _spawn(_voicevox_args())
 
 
 def restart_voicevox():
@@ -135,7 +147,7 @@ def restart_voicevox():
             p.kill()
             p.wait(10)
             _procs.remove(p)
-            _spawn([voicevox_exe(), "--host", "127.0.0.1", "--port", "50021"])
+            _spawn(_voicevox_args())
 
 
 def warm_up():
@@ -144,7 +156,7 @@ def warm_up():
     if _wait(lambda: services.check_ollama()[0], 60):
         try:  # 空の依頼でモデルをメモリに載せる
             requests.post(services.ollama_base() + "/api/generate",
-                          json={"model": config.OLLAMA_MODEL, "keep_alive": "30m"}, timeout=120)
+                          json={"model": config.OLLAMA_MODEL, "keep_alive": "15m"}, timeout=120)
         except requests.RequestException:
             pass
     if config.TTS_ENABLED and _wait(lambda: services.check_voicevox()[0], 120):
