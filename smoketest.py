@@ -375,6 +375,7 @@ def run(out):
                                                  win.winfo_rooty() + win.winfo_height())), all_screens=True).save(
                 os.path.join(out, "8_settings.png"))
             # 設定のタブ分け・詳細設定の開閉・マイクテスト(このPCにマイクが無くても落ちないこと)
+            on_main(lambda: (win.search.delete(0, "end"), win._filter("")))  # 上の入力の確かめで検索欄に入った文字を消す
             on_main(lambda: win._select("マイク"))
             hidden = on_main(lambda: not win._rows["VAD_THRESHOLD"].winfo_ismapped())
             page = on_main(lambda: win._pages["マイク"])

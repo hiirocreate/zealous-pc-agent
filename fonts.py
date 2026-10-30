@@ -72,6 +72,10 @@ def pick(style):
         if style == "pop":
             note += "（ポップ体は Microsoft Office に付いてくる「HG創英角ポップ体」を使います）"
         head = next((n for n in STYLES["gothic"][1] if n in have), FALLBACK[0])
+    if not body and not note:
+        note = f"{label}の書体がこのPCに無いため、本文はゴシック体で作りました"
+    if not body and style in ("mincho", "kyokasho"):
+        note += "（Windows の設定「オプション機能」の「日本語の追加フォント」を入れると使えます）"
     body = body or next((n for n in STYLES["gothic"][2] if n in have), FALLBACK[1])
     return head, body, note
 
