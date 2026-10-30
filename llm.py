@@ -41,6 +41,8 @@ def split_reply(reply):
 _history = deque()  # 直前のやりとり [(ユーザーの発言, 返答)]
 _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
+on_summary = None    # 長い会話の古い部分を圧縮したときに知らせる関数(スレッド番号, 要約, 要約した往復数)
+_full = False        # このスレッドの会話をすべて参照するモード
 
 
 _LANG_NAMES = {"ja": "日本語", "en": "英語", "zh": "中国語", "ko": "韓国語", "fr": "フランス語", "de": "ドイツ語",
@@ -90,6 +92,8 @@ def system_prompt():
             "・天気は get_weather、最新の情報・ニュース・今日のことは search_summary で、必ず調べてから答える。"
             "「最新の情報は提供できない」とは言わない。\n"
             "・URLを推測で作らない。サイトを開く・サイト内で探すときは open_site、動画を流すときは play_video を使う。\n"
+            "・開いているWebページの中の操作(リンクやボタンを押す・入力する・選ぶ・スクロール・戻る・動画の操作・"
+            "ページの内容を読む)は、web_ で始まる関数を使う。押す名前が見つからなければ、返ってきた項目の名前から選び直す。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
@@ -100,8 +104,9 @@ def system_prompt():
 def _remember(text, reply):
     """会話の記憶。設定の往復数だけ覚え、しばらく話しかけなければ忘れる。"""
     global _last
-    _history.append((text, split_reply(reply)[0][:300]))
-    while len(_history) > config.CONTEXT_TURNS:
+    body = split_reply(reply)[0]
+    _history.append((text, body if _full else body[:300]))
+    while not _full and len(_history) > config.CONTEXT_TURNS:
         _history.popleft()
     _last = time.monotonic()
 
@@ -127,6 +132,61 @@ def summarize(query, material):
     return (msg.get("content") or "").strip()
 
 
+def page_answer(question, title, text):
+    """開いているWebページの文章をもとに、質問に答える(質問が無ければ要約する)。"""
+    ask_for = (f"「{question}」に日本語で簡潔に答えてください。" if (question or "").strip()
+               else "内容の要点を日本語で3〜4文にまとめてください。")
+    prompt = (f"次のWebページ「{title}」の文章をもとに、{ask_for}"
+              "ページに書かれていないことは書かず、見つからなければそう伝えてください。"
+              + persona_rule() + "\n\n" + text)
+    msg = _chat([{"role": "user", "content": prompt}], use_tools=False, stream_out=True)
+    return (msg.get("content") or "").strip() or "ページの内容をうまくまとめられませんでした"
+
+
+def num_ctx(messages):
+    """AIが一度に読む量(トークン)。渡す文が長いときだけ広げる。
+    広げ方を4段階に限るのは、変えるたびに Ollama がモデルを読み込み直して遅くなるため。"""
+    chars = sum(len(m.get("content") or "") for m in messages) + 2500  # 関数の説明などの分
+    for size in (4096, 8192, 16384, 32768):
+        if chars <= size * 0.9:
+            return size
+    return 32768
+
+
+def _fit(history, summary, tid, base):
+    """全部を参照するモード: 会話が上限を超えたら、古い部分を要約に圧縮する(または参照しない)。"""
+    limit = max(2000, int(getattr(config, "FULL_CONTEXT_LIMIT", 12000) or 12000))
+    size = lambda pairs: sum(len(u) + len(a) for u, a in pairs)  # noqa: E731
+    if size(history) + len(summary) <= limit:
+        return history, summary
+    keep = []  # 新しいやりとりから、上限の6割まで(毎回圧縮が起きないよう、余裕を残す)
+    for pair in reversed(history):
+        if keep and size(keep) + len(pair[0]) + len(pair[1]) > limit * 0.6:
+            break
+        keep.insert(0, pair)
+    old = history[:len(history) - len(keep)]
+    if not getattr(config, "FULL_CONTEXT_COMPRESS", True):
+        return keep, ""
+    import zlog
+    zlog.note(f"会話が上限を超えたため、古い{len(old)}往復を圧縮")
+    convo = "\n".join(f"ユーザー: {u}\nAI: {a}" for u, a in old)
+    words = max(400, min(2000, limit // 6))
+    prompt = (f"次の会話を、あとで話の続きができるように日本語で{words}字以内に要約してください。"
+              "ユーザーの名前・好み・決めたこと・頼まれたこと・出てきた固有名詞や数字・話題の流れを優先し、"
+              "あいさつなどは省いてください。要約だけを書いてください。\n\n"
+              + (f"【これまでの要約】\n{summary}\n\n" if summary else "") + f"【会話】\n{convo}")
+    try:
+        new = (_chat([{"role": "user", "content": prompt}], use_tools=False).get("content") or "").strip()[:words + 200]
+    except Exception as e:
+        zlog.error(f"会話の圧縮: {e!r}")
+        return keep, summary  # 圧縮できなくても、新しい分だけで答える
+    if not new:
+        return keep, summary
+    if on_summary and tid:
+        on_summary(tid, new, base + len(old))
+    return keep, new
+
+
 class OffTrack(Exception):
     """返事が質問とかみ合っていない(日本語の質問に、英語の翻訳を返し始めたなど)。"""
 
@@ -150,7 +210,7 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
     関数呼び出し(JSON)らしい返事は画面に出さない。
     guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
     body = {"model": config.OLLAMA_MODEL, "messages": messages, "stream": True,
-            "options": {"temperature": 0, "num_ctx": 4096}, "keep_alive": "30m"}
+            "options": {"temperature": 0, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
     if use_tools:
         body["tools"] = tools.schemas()
     import models
@@ -253,10 +313,14 @@ def visible(content):
     return content[:m.start()].rstrip() if m else content
 
 
-def ask(text, history=None, summary="", memory=None):
+def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=0):
     """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。
-    summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと"""
-    global _last, _summary, _memory
+    summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと
+    full: スレッドの会話をすべて参照する(長すぎれば古い部分を圧縮。tid・base はその保存用)"""
+    global _last, _summary, _memory, _full
+    _full = bool(full)
+    if _full and history is not None:
+        history, summary = _fit(list(history), summary or "", tid, base)
     _summary, _memory = summary or "", list(memory or [])
     if history is not None:
         _history.clear()
@@ -316,6 +380,74 @@ _ROUTES = [
     (re.compile(r"^(?P<q>.+?)(?:について|を|って)?(?:調べて|しらべて|検索して|教えて|紹介して|しょうかいして)"),
      "search_summary"),
 ]
+# 開いているWebページの中の操作(ゼラス用ブラウザが手前にあるときだけ)
+_TYPE = r"(?:と|って)(?:入力|にゅうりょく|打って|うって|入れて|いれて|書いて|かいて)(?:して)?"
+_GO = r"(?P<go>[、,\s]*(?:て|して)?[、,\s]*(?:検索|決定|送信|エンター|enter)(?:して|を押して)?)?(?:ください)?"
+_PAGE_ROUTES = [
+    (re.compile(r"^(?P<f>.+?)(?:の欄|欄|ボックス|のところ)?(?:に|へ)(?P<q>.+?)" + _TYPE + _GO + "$", re.I), "type_in"),
+    (re.compile(r"^(?P<q>.+?)" + _TYPE + _GO + "$", re.I), "type"),
+    (re.compile(r"^(?:ページを?|前のページに?|ひとつ前のページに?|1つ前のページに?)(?:戻って|もどって|戻る)(?:ください)?$"), "back"),
+    (re.compile(r"^(?:次のページに?|ページを?)(?:進んで|すすんで|進む)(?:ください)?$"), "forward"),
+    (re.compile(r"^(?:ページを?|画面を?)?(?:更新|再読み込み|リロード|読み込み直)(?:して|し)?(?:ください)?$"), "reload"),
+    (re.compile(r"^(?:ページの)?(?:一番|いちばん)(?P<q>上|下)(?:まで|に|へ)?(?:戻って|行って|いって|移動して|スクロールして)?(?:ください)?$"), "edge"),
+    (re.compile(r"^(?:この|今の|いまの)(?:ページ|記事|サイト)(?P<q>.*)$"), "read"),
+    (re.compile(r"^(?:次の(?:動画|曲)|次へ)(?:に|へ)?(?:して|行って|いって|流して|飛ばして|スキップして)?$"), "video:next"),
+    (re.compile(r"^(?:動画|曲|音楽|再生)?を?(?:止めて|とめて|一時停止(?:して)?|ストップ(?:して)?|ポーズ(?:して)?)$"), "video:pause"),
+    (re.compile(r"^(?:動画|曲|音楽)?を?(?:再生して|再開して|続きを?(?:流して|再生して))$"), "video:play"),
+    (re.compile(r"^(?:動画を?)?(?:全画面|フルスクリーン)(?:にして|で(?:見せて|再生して)|表示(?:して)?)?$"), "video:fullscreen"),
+    (re.compile(r"^(?:全画面|フルスクリーン)を?(?:やめて|解除して|戻して|終わって)$"), "video:exit_fullscreen"),
+    (re.compile(r"^(?:動画を?)?(?P<n>\d+)秒(?:進めて|すすめて|飛ばして|とばして|早送りして|先へ)$"), "video:forward"),
+    (re.compile(r"^(?:動画を?)?(?P<n>\d+)秒(?:戻して|もどして|巻き戻して|前へ)$"), "video:rewind"),
+    (re.compile(r"^(?:動画を?|音を?)?(?:ミュート|消音)(?:にして|して)?$"), "video:mute"),
+    (re.compile(r"^(?:ミュートを?(?:解除|やめ)て|音を出して)$"), "video:unmute"),
+    (re.compile(r"^(?P<q>.+?)(?:を|って)?(?:クリック|くりっく|タップ)(?:して)?(?:ください)?$"), "click"),
+    (re.compile(r"^(?P<q>.+?)(?:の(?:ボタン|リンク))?を?(?:押して|おして)(?:ください)?$"), "click"),
+]
+
+
+def page_route(t):
+    """開いているWebページの中の操作なら (関数名, 引数)。ゼラス用ブラウザが手前に無ければ None。"""
+    for pattern, kind in _PAGE_ROUTES:
+        m = pattern.match(t)
+        if not m:
+            continue
+        import browser
+        try:
+            if not (browser.enabled() and browser.active()):
+                return None
+        except Exception:
+            return None
+        g = m.groupdict()
+        q = (g.get("q") or "").strip(" 、,「」『』\"'")
+        if kind in ("type", "type_in"):
+            if not q:
+                return None
+            args = {"text": q, "submit": bool(g.get("go"))}
+            if kind == "type_in":
+                args["field"] = g["f"].strip(" 、,「」")
+            return "web_type", args
+        if kind in ("back", "forward", "reload"):
+            return "web_page", {"action": kind}
+        if kind == "edge":
+            return "web_page", {"action": "top" if q == "上" else "bottom"}
+        if kind == "read":
+            if not re.search(r"要約|まとめ|何|なに|内容|教えて|結論|ポイント|書いて|読んで|説明|[？?]", q):
+                return None
+            return "web_read", {"question": t if re.search(r"[？?]|何|なに|どう|いつ|誰|どこ|教えて|結論|ポイント", q) else ""}
+        if kind.startswith("video:"):
+            args = {"action": kind[6:]}
+            if g.get("n"):
+                args["seconds"] = int(g["n"])
+            return "web_video", args
+        if kind == "click" and q and len(q) <= 40:
+            key = re.sub(r"キー$", "", q).strip().lower()
+            import browser as b
+            if b.KEY_ALIAS.get(key, key) in b._KEYS or "+" in key or "＋" in key:  # 「エンターを押して」はキー
+                return "web_key", {"keys": key}
+            return "web_click", {"target": q}
+    return None
+
+
 _NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さっき|それ|これ|あれ")  # 会話の続き・ブラウザ指定は AI に任せる
 
 
@@ -394,6 +526,9 @@ def quick_route(text):
         q = _prev_topic()
         if q:
             return "search_summary", {"query": q}
+    page = page_route(t)
+    if page:
+        return page
     if not re.search(r"それ|これ|あれ|さっき", t):
         for pattern, name in _WEB_ROUTES:
             m = pattern.match(t)
@@ -447,7 +582,8 @@ _NEEDS_TOOLS = re.compile(
     r"移動|コピー|名前を変え|リネーム|一覧|ブラウザ|サイト|ページ|URL|画像|写真|ロック|音量|ニュース|天気|最新|"
     r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード|"
     r"クリック|押して|入力して|打って|タイプ|スクロール|キーを|ショートカット|貼り付け|ボタン|"
-    r"切り替え|最小化|最大化|ウィンドウ|閉じて|動画|再生|流して|サイト|youtube|ユーチューブ|アマゾン|amazon")
+    r"切り替え|最小化|最大化|ウィンドウ|閉じて|動画|再生|流して|サイト|youtube|ユーチューブ|アマゾン|amazon|"
+    r"戻って|進んで|更新して|要約|このページ|この記事|止めて|一時停止|全画面|タブ|選んで|ログイン|入れて|書いて")
 
 
 _CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し|再生し|流し)"
@@ -465,8 +601,15 @@ def needs_tools(text):
 
 
 def _run(name, args):
+    if name == "scroll":  # ゼラス用ブラウザが手前なら、ページの中を直接スクロールする(画面の操作の許可は要らない)
+        import browser
+        try:
+            if browser.enabled() and browser.active():
+                name = "web_scroll"
+        except Exception:
+            pass
     res = tools.run_tool(name, args)
-    if name == "scroll" and "スクロールしました" in res:  # 「もっと下に」などのために覚えておく
+    if name in ("scroll", "web_scroll") and "スクロールしました" in res:  # 「もっと下に」などのために覚えておく
         down = not (str(args.get("direction", "")).lower().startswith("u") or "上" in str(args.get("direction", "")))
         _last_scroll.update(direction="down" if down else "up", amount=int(args.get("amount") or 5))
     return res

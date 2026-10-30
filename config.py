@@ -61,6 +61,11 @@ DEFAULTS = {
     "MAX_TOOL_STEPS": 3,             # 1命令あたりの関数呼び出し上限(ループ防止)
     "QUICK_ROUTE": True,             # 「〜を調べて」などはAIの判断を待たずに直接実行(速い)
     "CONTEXT_TURNS": 6,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
+    "FULL_CONTEXT": False,           # このスレッドの会話をすべて参照して答える(長くなったら古い部分を圧縮)
+    "FULL_CONTEXT_LIMIT": 12000,     #   参照する会話の上限(文字数)。超えたら古い部分を圧縮する
+    "FULL_CONTEXT_COMPRESS": True,   #   上限を超えたら古い部分を要約して使う(OFF なら古い部分は参照しない)
+    "WEB_CONTROL_ENABLED": True,     # サイトはゼラス用ブラウザで開き、ページの中の操作(押す・入力・スクロールなど)もする
+    "WEB_CONFIRM_RISKY": True,       #   購入・送信・削除などのボタンは、押す前に確かめる
     "CONTEXT_RESET_MIN": 10,         # スレッドを使わない呼び出しで、この分数話しかけなければ記憶を消す
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)

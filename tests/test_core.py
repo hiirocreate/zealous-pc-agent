@@ -572,3 +572,40 @@ def test_weather_routes(monkeypatch):
         "temperature_2m_min": [10, 12.6, 14], "precipitation_probability_max": [0, 80, 10]})
     assert tools.run_tool("get_weather", {"place": "東京", "day": "明日"}) == \
         "明日の東京は雨、最高18度・最低13度、降水確率80%の予報です。"
+
+
+def test_web_page_routes(monkeypatch):
+    import browser
+    monkeypatch.setattr(browser, "enabled", lambda: True)
+    monkeypatch.setattr(browser, "active", lambda: True)
+    assert llm.quick_route("検索欄にねこと入力して検索して") == \
+        ("web_type", {"text": "ねこ", "submit": True, "field": "検索"})
+    assert llm.quick_route("ログインを押して") == ("web_click", {"target": "ログイン"})
+    assert llm.quick_route("エンターを押して") == ("web_key", {"keys": "エンター"})
+    assert llm.quick_route("前のページに戻って") == ("web_page", {"action": "back"})
+    assert llm.quick_route("10秒飛ばして") == ("web_video", {"action": "forward", "seconds": 10})
+    assert llm.quick_route("このページを要約して") == ("web_read", {"question": ""})
+    monkeypatch.setattr(browser, "active", lambda: False)  # ブラウザが手前に無ければ、ふつうの扱い
+    assert llm.quick_route("ログインを押して") is None
+
+
+def test_full_context_compress(monkeypatch):
+    import threads
+    t = threads.new()
+    for i in range(30):
+        threads.add(t, "user", f"質問{i}" + "あ" * 200)
+        threads.add(t, "ai", f"答え{i}" + "い" * 400)
+    pairs, summary, base = threads.full_history(t)
+    assert len(pairs) == 30 and summary == "" and base == 0 and len(pairs[0][1]) > 400  # 省略しない
+    monkeypatch.setattr(config, "FULL_CONTEXT_LIMIT", 8000)
+    got = []
+    monkeypatch.setattr(llm, "on_summary", lambda tid, text, upto: got.append((tid, text, upto)))
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "要約です"})
+    keep, new = llm._fit(pairs, "", t["id"], 0)
+    assert new == "要約です" and sum(len(u) + len(a) for u, a in keep) <= 4800
+    assert got == [(t["id"], "要約です", 30 - len(keep))]
+    t.update(summary="要約です", summary_upto=got[0][2], summary_full=True)
+    assert threads.full_history(t)[1:] == ("要約です", got[0][2])
+    monkeypatch.setattr(config, "FULL_CONTEXT_COMPRESS", False)  # 圧縮しない: 古い部分は参照しない
+    assert llm._fit(pairs, "", t["id"], 0)[1] == ""
+    assert llm.num_ctx([{"content": "あ" * 100}]) == 4096 and llm.num_ctx([{"content": "あ" * 12000}]) == 16384

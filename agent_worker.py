@@ -8,6 +8,7 @@ def _worker_main(inq, outq):
     import llm
     import tools
     llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
+    llm.on_summary = lambda tid, text, upto: outq.put(("summary", (tid, text, upto)))  # 長い会話を圧縮した
     while True:
         text, history, by_voice, extra = inq.get()
         try:

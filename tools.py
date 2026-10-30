@@ -32,10 +32,14 @@ def tool(description, **params):
 
 
 SCREEN_TOOLS = set()  # 画面を直接操作する関数(設定で許可したときだけ AI に見せる)
+WEB_TOOLS = set()     # ゼラス用ブラウザのページの中を操作する関数(ブラウザを開いている間だけ AI に見せる)
 
 
 def schemas():
-    hide = set() if getattr(config, "SCREEN_CONTROL_ENABLED", False) else SCREEN_TOOLS
+    hide = set() if getattr(config, "SCREEN_CONTROL_ENABLED", False) else set(SCREEN_TOOLS)
+    import browser
+    if not (browser.enabled() and browser.running()):
+        hide |= WEB_TOOLS
     return [s for name, (_, s) in TOOLS.items() if name not in hide]
 
 
@@ -49,12 +53,23 @@ DANGEROUS = {
     "click_on": "「{label}」をクリック",
     "press_keys": "「{keys}」キーを押",
     "window_action": "「{name}」のウィンドウを終了",
+    "web_click": "ページの「{target}」を押",
 }
 REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロセスが依頼ごとに設定する)
 CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
 
 
 def needs_confirm(name, args):
+    if name == "web_click" and getattr(config, "WEB_CONFIRM_RISKY", True):
+        # 購入・送信・削除などのボタンは、声でも文字でも、押す前に確かめる
+        import browser
+        try:
+            hit = browser.peek(str(args.get("target", "")))
+        except Exception:
+            hit = None
+        if hit and hit.get("risky"):
+            args["target"] = hit["label"] or args.get("target", "")
+            return True
     if not (REQUIRE_CONFIRM and getattr(config, "CONFIRM_VOICE_DANGER", True)) or name not in DANGEROUS:
         return False
     if name == "window_action":  # ウィンドウは「閉じる」ときだけ確かめる
@@ -72,7 +87,7 @@ def run_tool(name, args, confirmed=False):
         return f"[DRY] {name}({args})"
     if not confirmed and needs_confirm(name, args):
         import json
-        what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name", "label", "keys")})
+        what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name", "label", "keys", "target")})
         if name == "window_action" and not args.get("name"):
             what = "いま使っているウィンドウを終了"
         return (f"{what}してよいですか？「はい」か「いいえ」で答えてください。"
@@ -102,7 +117,11 @@ _BROWSER_EXE = {"chrome": "chrome.exe", "edge": "msedge.exe", "firefox": "firefo
 
 
 def _browser_path():
-    exe = _BROWSER_EXE.get(config.BROWSER)
+    return app_path(_BROWSER_EXE.get(config.BROWSER))
+
+
+def app_path(exe):
+    """Windows に登録されたアプリの場所(App Paths)。"""
     if not exe or os.name != "nt":
         return None
     import winreg
@@ -125,6 +144,10 @@ def open_in_browser(url):
     if websearch._looks_bad(url, host) or (getattr(config, "SAFE_SITES_ONLY", True)
                                            and not websearch.host_is_safe(host)):
         raise PermissionError(f"安全でない可能性があるため開きませんでした: {host or url[:40]}")
+    import browser
+    if browser.enabled():  # ゼラス用ブラウザ: 開いたページの中も、あとから操作できる
+        browser.launch(url)
+        return
     path = _browser_path()
     if path:
         subprocess.Popen([path, url])
@@ -554,6 +577,20 @@ def _is_browser(hwnd):
     return screen.class_name(hwnd).startswith(("Chrome_WidgetWin", "MozillaWindowClass"))
 
 
+def _ours(hwnd, title):
+    """ゼラス用ブラウザの窓か(それならページの中へ直接伝える)。"""
+    import browser
+    try:
+        return browser.enabled() and browser.running() and browser.owns(hwnd, title)
+    except Exception:
+        return False
+
+
+def browser_click(label):
+    """ページの中で押す。購入・送信などは確かめてから(run_tool 経由)。"""
+    return run_tool("web_click", {"target": label})
+
+
 def _target():
     import screen
     hwnd, title = screen.target_window()
@@ -568,6 +605,8 @@ def click_on(label):
     import pyautogui
     import screen
     hwnd, title = _target()
+    if _ours(hwnd, title):  # ゼラス用ブラウザ: ページの中へ直接
+        return browser_click(label)
     name = screen.press_button(hwnd, label)  # 1. 昔ながらのボタン: マウスを使わずに押す
     if name:
         return f"「{title}」の「{name}」を押しました(マウスは動かしていません)"
@@ -602,6 +641,9 @@ def click_on(label):
 def type_text(text):
     import screen
     hwnd, title = _target()
+    if _ours(hwnd, title):
+        import browser
+        return browser.type_text(text, "", replace=False)
     if screen.insert_text(hwnd, text):  # 入力欄へ直接(キーボードを使わない)
         return f"「{title}」に入力しました(キーボードは使っていません)"
     with screen.Borrow():
@@ -624,6 +666,9 @@ def press_keys(keys):
     if not names or bad:
         return f"「{keys}」というキーは押せません"
     hwnd, title = _target()
+    if _ours(hwnd, title):
+        import browser
+        return browser.keys(keys)
     with screen.Borrow():  # キーは手前の窓にしか届かないので、手が止まるのを待ってから少しだけ借りる
         screen.focus(hwnd)
         pyautogui.hotkey(*names)
@@ -638,6 +683,9 @@ def scroll(direction, amount=5):
     hwnd, title = _target()
     down = not (str(direction).lower().startswith("u") or "上" in str(direction))
     n = max(1, min(20, int(amount or 5)))
+    if _ours(hwnd, title):
+        import browser
+        return browser.scroll(down, n)
     if screen.scroll_window(hwnd, down, n):
         return f"「{title}」をスクロールしました(マウスは動かしていません)"
     with screen.Borrow():
@@ -689,6 +737,99 @@ def window_action(action, name=""):
         return f"「{name}」のウィンドウは見つかりませんでした"
     screen.window_command(hwnd, act)
     return f"「{title}」を{ {'minimize': '最小化', 'maximize': '最大化', 'restore': '元の大きさに', 'close': '閉じ'}[act] }しました"
+
+
+# ---------------- Webページの中の操作(ゼラス用ブラウザ) ----------------
+# ページの中へ直接伝えるので、あなたのマウスやキーボードは使わない(画面の直接操作の許可は要らない)。
+def web_tool(description, **params):
+    def deco(func):
+        def run(**kw):
+            import browser
+            if not getattr(config, "WEB_CONTROL_ENABLED", True):
+                raise PermissionError("Webページの操作は設定で許可されていません（設定の「権限」タブ）")
+            if not browser.running():
+                return "操作できるブラウザが開いていません。先にサイトを開いてください（例:「YouTubeを開いて」）"
+            return func(**kw)
+        run.__name__ = func.__name__
+        WEB_TOOLS.add(func.__name__)
+        return tool(description, **params)(run)
+    return deco
+
+
+@web_tool("開いているWebページの中のリンク・ボタン・タブ・チェックボックスなどを、画面に出ている名前で探して押す"
+          "(例:「ログイン」「次へ」「2番目の動画」は題名の一部で)",
+          target=("string", "押すものの名前(ページに表示されている文字の一部でよい)", True))
+def web_click(target):
+    import browser
+    return browser.click(target)[0]
+
+
+@web_tool("開いているWebページの入力欄に文字を入れる。submit=true なら入れたあと Enter で決定(検索など)",
+          text=("string", "入れる文字", True),
+          field=("string", "入力欄の名前(例: 検索、メールアドレス)。省略すると選ばれている欄か検索欄", False),
+          submit=("boolean", "入れたあと Enter を押すなら true", False))
+def web_type(text, field="", submit=False):
+    import browser
+    return browser.type_text(text, field, str(submit).lower() in ("true", "1"))
+
+
+@web_tool("開いているWebページの選択の一覧(プルダウン)から項目を選ぶ",
+          option=("string", "選ぶ項目の文字", True), field=("string", "一覧の名前(省略可)", False))
+def web_select(option, field=""):
+    import browser
+    return browser.choose(option, field)
+
+
+@web_tool("開いているWebページでキーを押す(例: enter, tab, esc, space, pagedown, ctrl+a)",
+          keys=("string", "押すキー。同時に押すものは + でつなぐ", True))
+def web_key(keys):
+    import browser
+    return browser.keys(keys)
+
+
+@web_tool("開いているWebページを上下にスクロールする",
+          direction=("string", "up(上) または down(下)", True), amount=("integer", "量(1〜20。既定5)", False))
+def web_scroll(direction, amount=5):
+    import browser
+    down = not (str(direction).lower().startswith("u") or "上" in str(direction))
+    return browser.scroll(down, max(1, min(20, int(amount or 5))))
+
+
+@web_tool("開いているWebページで、前のページに戻る・次へ進む・読み込み直す・いちばん上/下へ移動する",
+          action=("string", "back(戻る) / forward(進む) / reload(更新) / top(いちばん上) / bottom(いちばん下)", True))
+def web_page(action):
+    import browser
+    act = {"戻る": "back", "進む": "forward", "更新": "reload", "再読み込み": "reload",
+           "上": "top", "一番上": "top", "下": "bottom", "一番下": "bottom"}.get(action, action)
+    return browser.navigate(act)
+
+
+@web_tool("開いているWebページの内容を読んで、要約したり質問に答えたりする(「このページを要約して」「この記事の結論は？」)",
+          question=("string", "ページについての質問(省略すると要約)", False))
+def web_read(question=""):
+    import browser
+    import llm
+    title, url, text = browser.read()
+    if not text.strip():
+        return "このページからは文章を読み取れませんでした"
+    return llm.page_answer(question, title, text) + llm.SOURCES + f"[1] {title or url}\n{url}"
+
+
+@web_tool("開いているWebページの動画・音声を操作する(再生・一時停止・消音・全画面・早送り・巻き戻し・次の動画・速さ)",
+          action=("string", "play / pause / toggle / mute / unmute / fullscreen / exit_fullscreen / forward / rewind /"
+                            " restart / next / faster / slower / normal", True),
+          seconds=("integer", "forward / rewind で動かす秒数(既定10)", False))
+def web_video(action, seconds=10):
+    import browser
+    return browser.media(action, seconds)
+
+
+@web_tool("ゼラス用ブラウザのタブを操作する(新しいタブ・閉じる・切り替え)",
+          action=("string", "new(新しいタブ) / close(閉じる) / switch(名前で切り替え) / previous(ひとつ前のタブ)", True),
+          name=("string", "タブの題名の一部(switch・close のとき)", False))
+def web_tab(action, name=""):
+    import browser
+    return browser.tab(action, name)
 
 
 # ---------------- ファイルを探す・開く ----------------

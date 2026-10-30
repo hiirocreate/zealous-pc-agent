@@ -60,6 +60,11 @@ STATES = {
 }
 BUSY = ("think",)  # 緊急停止ボタンを出す状態
 # 「待機して」「待機モード」「小さくして」「おやすみ」など(短い言い方だけ。ほかの命令と取り違えない)
+# 「会話を全部参照して答えて」「全部参照するのをやめて」: 会話をすべて参照するモードの切り替え
+FULL_ON = re.compile(r"(?:会話|チャット|やりとり|やり取り|履歴)(?:の内容)?を?(?:全部|ぜんぶ|すべて|全て)(?:参照|覚えて|踏まえて|ふまえて|見て)"
+                     r"(?:して)?(?:答えて|回答して|話して|ね|ください)|全部参照モード(?:に|を)?(?:して|オン|ON)")
+FULL_OFF = re.compile(r"(?:全部|ぜんぶ|すべて|全て)(?:参照|覚えて)(?:する|るの|するの)?(?:のを|を)?(?:やめて|止めて|オフ|OFF)|"
+                      r"全部参照モード(?:を)?(?:やめて|終わって|オフ|OFF|解除)")
 STANDBY = re.compile(r"(?:もう|じゃあ|では|ちょっと|いったん|一旦)?(?:"
                      r"(?:待機|たいき|スタンバイ)(?:モード|状態)?(?:に)?(?:して|しといて|しておいて|戻って|入って|"
                      r"なって|して(?:ください|くれる|くれ|ね))?(?:ください)?|"
@@ -1142,6 +1147,19 @@ class App(ctk.CTk):
         if change:  # 「関西弁で話して」「話し方を元に戻して」など: AIの性格・話し方を変える
             self._change_persona(text, change)
             return
+        full = FULL_ON.search(text) and True or (False if FULL_OFF.search(text) else None)
+        if full is not None:  # 「会話を全部参照して答えて」「全部参照するのをやめて」
+            config.save({"FULL_CONTEXT": full})
+            reply = ("わかりました。このチャットの最初からの会話をすべて参照して答えます。"
+                     "長くなったら古い部分は要約して覚えておきます。" if full else
+                     f"わかりました。直前の{config.CONTEXT_TURNS}往復と要約を参照して答える、ふつうのモードに戻します。")
+            self._log(text, "user")
+            self._log(reply, "ai")
+            threads.add(self.thread, "user", text)
+            threads.add(self.thread, "ai", reply)
+            self.speaker.say(reply)
+            self._refresh_threads()
+            return
         if STANDBY.fullmatch(re.sub(r"[\s。、！!？?…]", "", text)):  # 「待機して」など: 小さくして待機する
             self._standby()
             return
@@ -1152,10 +1170,15 @@ class App(ctk.CTk):
             self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
             self.open_voice_picker()
             return
-        history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
+        if getattr(config, "FULL_CONTEXT", False):  # このスレッドの会話をすべて参照する(長すぎる分は圧縮)
+            history, summary, base = threads.full_history(self.thread)
+            extra = {"summary": summary, "memory": list(config.MEMORY), "full": True,
+                     "tid": self.thread["id"], "base": base}
+        else:
+            history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
+            extra = {"summary": self.thread.get("summary", ""), "memory": list(config.MEMORY)}
         threads.add(self.thread, "user", text)
         self._pending_tid = self.thread["id"]
-        extra = {"summary": self.thread.get("summary", ""), "memory": list(config.MEMORY)}
         self.worker.submit(text, history, by_voice=by_voice, extra=extra)
         self._set_state("think")
         self._refresh_threads()
@@ -1294,17 +1317,17 @@ class App(ctk.CTk):
         zlog.note(f"記憶を変更: {kind}(覚えていること {len(new)}件)")
 
     def _summarize_later(self):
-        if self._state == "think" or self.worker.pending:
-            return
+        if self._state == "think" or self.worker.pending or getattr(config, "FULL_CONTEXT", False):
+            return  # 全部を参照するモードでは、上限を超えたときだけ圧縮する
         tid = self.thread["id"]
         self.summarizer.start(self.thread, max(2, config.CONTEXT_TURNS),
                               lambda text, upto: self._events.put(lambda: self._save_summary(tid, text, upto)))
 
-    def _save_summary(self, tid, text, upto):
+    def _save_summary(self, tid, text, upto, full=False):
         t = self.thread if self.thread["id"] == tid else threads.load(tid)
         if t is None:
             return
-        t["summary"], t["summary_upto"] = text, upto
+        t["summary"], t["summary_upto"], t["summary_full"] = text, upto, full
         threads.save(t)
         zlog.note(f"会話を要約({upto}往復分)")
 
@@ -1652,6 +1675,10 @@ class App(ctk.CTk):
                 self._on_delta(text)
             elif kind == "reply":
                 self._on_reply(text)
+            elif kind == "summary":  # 長くなった会話の古い部分を圧縮した(全部を参照するモード)
+                tid, summary, upto = text
+                self._save_summary(tid, summary, upto, full=True)
+                self._toast("会話が長くなったので、古い部分を要約して覚えました")
             else:  # うまく答えられなかった: 自然な言い方で伝え、読み上げる(技術的な中身は記録へ)
                 import llm
                 zlog.error(f"返事のエラー: {text}")

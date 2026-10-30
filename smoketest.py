@@ -245,18 +245,49 @@ def run(out):
             time.sleep(1.5)
             note(f"名前でボタンを押す: {'OK' if os.path.exists(flag) else 'NG'}")
             form.kill()
-            # ブラウザのページの中のボタンを、名前で押す(押すとページの題名が変わる)
-            page = os.path.join(out, "zealous_web_test.html")
-            with open(page, "w", encoding="utf-8") as f:
-                f.write("<html><head><title>Zealous Web Test</title></head><body>"
-                        "<button onclick=\"document.title='clicked ok'\">ウェブのテストボタン</button></body></html>")
-            os.startfile(page)
-            time.sleep(8)
-            note("ブラウザの窓: " + repr(screen.target_window()[1]))
-            note("ページのボタン: " + tools.run_tool("click_on", {"label": "ウェブのテストボタン"}))
-            time.sleep(2)
-            note(f"ページの中のボタンを押す: {'OK' if 'clicked ok' in screen.target_window()[1] else 'NG'} "
-                 f"({screen.target_window()[1]!r})")
+            # ゼラス用ブラウザ(Chrome/Edge)のページの中を、名前で操作する(マウス・キーボードは使わない)
+            import functools
+            import http.server
+            import browser
+            import llm
+            with open(os.path.join(out, "web.html"), "w", encoding="utf-8") as f:
+                f.write("<!doctype html><meta charset=utf-8><title>Zealous Web Test</title><body style='height:3000px'>"
+                        "<p>ゼラスのテストページです。今日の合言葉は「みかん」。</p>"
+                        "<button onclick=\"document.title='clicked ok'\">ウェブのテストボタン</button>"
+                        "<input type=search placeholder='サイト内検索' onkeydown=\"if(event.key==='Enter')document.body.dataset.q=this.value\">"
+                        "<select><option>りんご</option><option>みかん</option></select>"
+                        "<button>購入する</button><a href='#next'>次のページへ</a>")
+            handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=out)
+            srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8766), handler)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            note(f"操作できるブラウザ: {browser.exe()!r}")
+            browser.launch("http://127.0.0.1:8766/web.html")
+            time.sleep(6)
+            note(f"ブラウザが手前: {'OK' if browser.active() else 'NG'} ({screen.target_window()[1]!r})")
+            pyautogui.moveTo(30, 30)
+            before = pyautogui.position()
+            route = llm.quick_route("ウェブのテストボタンを押して")
+            note(f"ページのボタン: {route} → {tools.run_tool(*route)}")
+            time.sleep(1)
+            note(f"ページの中のボタンを押す: {'OK' if browser.read()[0] == 'clicked ok' else 'NG'}")
+            route = llm.quick_route("サイト内検索にねこと入力して検索して")
+            note(f"入力: {route} → {tools.run_tool(*route)}")
+            with browser.Page() as p:
+                got = p.js("document.body.dataset.q")
+            note(f"ページの入力欄に入れて決定: {'OK' if got == 'ねこ' else 'NG'} ({got!r})")
+            note("選ぶ: " + tools.run_tool("web_select", {"option": "みかん"}))
+            note("スクロール: " + llm._run(*llm.quick_route("下にスクロールして")))
+            with browser.Page() as p:
+                y = p.js("scrollY")
+            note(f"ページのスクロール: {'OK' if y and y > 0 else 'NG'} ({y})")
+            res = tools.run_tool("web_click", {"target": "購入する"})
+            note(f"購入ボタンは確認する: {'OK' if tools.CONFIRM in res else 'NG'}")
+            note(f"マウスを動かさずに操作: {'OK' if pyautogui.position() == before else 'NG'}")
+            title, url, text = browser.read()
+            note(f"ページを読む: {'OK' if '合言葉' in text else 'NG'}")
+            img = ImageGrab.grab(all_screens=True)
+            img.save(os.path.join(out, "7_browser.png"))
+            srv.shutdown()
             config.SCREEN_CONTROL_ENABLED = False
 
             # 設定画面を開いて(入力欄すべてに日本語入力の処理が付く)、入力欄に打って保存する(閉じないこと)

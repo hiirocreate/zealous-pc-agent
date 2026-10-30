@@ -90,6 +90,22 @@ def history(thread, turns):
     return pairs[-turns:] if turns > 0 else []
 
 
+def full_history(thread):
+    """全部を参照するモードで AI に渡すもの (やりとり [(発言, 返事)], 古い部分の要約, 要約した往復数)。
+    長くなって古い部分を圧縮してあれば、その後ろのやりとりだけを省略せずに渡す。"""
+    pairs, user = [], None
+    for m in thread["messages"]:
+        if m["role"] == "user":
+            user = m["text"]
+        elif m["role"] == "ai" and user is not None:
+            pairs.append((user, m["text"]))
+            user = None
+    if thread.get("summary_full") and thread.get("summary"):
+        upto = min(thread.get("summary_upto", 0), len(pairs))
+        return pairs[upto:], thread["summary"], upto
+    return pairs, "", 0
+
+
 def when(ts):
     """一覧に出す日時(今日なら時刻、それ以外は日付)。"""
     t, now = time.localtime(ts), time.localtime()
