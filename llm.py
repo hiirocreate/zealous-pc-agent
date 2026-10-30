@@ -87,7 +87,7 @@ def system_prompt():
             "【必ず守ること】\n"
             f"・いつも{answer_language()}で答える(ユーザーが別の言葉で話しかけたときだけ、その言葉で答える)。\n"
             "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
-            "・最新の情報・ニュース・今日のことを聞かれたら、必ず search_summary で調べてから答える。"
+            "・天気は get_weather、最新の情報・ニュース・今日のことは search_summary で、必ず調べてから答える。"
             "「最新の情報は提供できない」とは言わない。\n"
             "・URLを推測で作らない。サイトを開く・サイト内で探すときは open_site、動画を流すときは play_video を使う。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
@@ -308,6 +308,9 @@ _ROUTES = [
     (re.compile(r"^(?P<q>.+?)の?(?:写真|画像|イラスト|絵)を?(?:探して|さがして|見せて|検索して|表示して|出して|調べて|しらべて|見つけて|ちょうだい|ください|ほしい|欲しい)"),
      "image_search"),
     (re.compile(r"^(?P<q>.+?)を?(?:起動して|立ち上げて)"), "launch_app"),
+    # 「明日の東京の天気は？」「今日の天気どう」「明日雨降る？」
+    (re.compile(r"^(?P<q>.*?(?:天気|気温|降水確率|天気予報|雨降る|雨が降る|晴れる|傘(?:いる|が?要る)).*?)"
+                r"(?:は|を|って|どう|どんな感じ)?(?:教えて|調べて|かな|ですか)?$"), "get_weather"),
     (re.compile(r"^(?P<q>.+?ニュース.*?)(?:を|について)?(?:いくつか|少し|ちょっと)?"
                 r"(?:教えて|紹介して|しょうかいして|知りたい|調べて|見せて|まとめて)"), "search_summary"),
     (re.compile(r"^(?P<q>.+?)(?:について|を|って)?(?:調べて|しらべて|検索して|教えて|紹介して|しょうかいして)"),
@@ -351,6 +354,28 @@ def follow_up(t):
     return None
 
 
+_FILLER = re.compile(r"^(?:じゃあ|では|なら|じゃ|それじゃ|だから|もう一回|もう一度)?[、\s]*(?:それ|これ|そのこと|その件)?"
+                     r"[、\s]*(?:ネットで|ネット|ウェブで|インターネットで|グーグルで|googleで|検索で)?[、\s]*$", re.I)
+
+
+def _topic(q):
+    """調べる言葉から「ネットで」「じゃあ」などを除く。何も残らなければ ""。"""
+    q = (q or "").strip(" 、,をのは")
+    return "" if _FILLER.fullmatch(q) else re.sub(r"^(?:ネットで|ウェブで|インターネットで|グーグルで)[、\s]*", "", q, flags=re.I)
+
+
+def _prev_topic():
+    """直前の質問から、調べる言葉を取り出す(「〜を教えて」などは除く)。"""
+    if not _history:
+        return ""
+    prev = _history[-1][0].strip().rstrip("。.!！?？")
+    for pattern, name in _ROUTES:
+        m = pattern.match(prev)
+        if m and name == "search_summary" and _topic(m.group("q")):
+            return _topic(m.group("q"))[:80]
+    return prev[:80]
+
+
 def quick_route(text):
     """(関数名, 引数) を返す。当てはまらなければ None。"""
     t = text.strip().rstrip("。.!！?？")
@@ -359,16 +384,16 @@ def quick_route(text):
     follow = follow_up(t)
     if follow:
         return follow
-    # 「じゃあそれ調べて」「それについて検索して」: 直前の質問を調べる
-    if re.fullmatch(r"(?:じゃあ|では|なら|じゃ|それじゃ)?[、\s]*(?:それ|これ|そのこと|その件)(?:を|について)?[、\s]*"
-                    r"(?:調べて|しらべて|検索して|調べてみて|調べてきて)(?:ください|よ|ね)?", t) and _history:
-        prev = _history[-1][0].strip().rstrip("。.!！?？")
-        for pattern, name in _ROUTES:  # 前の質問から「〜して」などを除いて、調べる言葉だけにする
-            m = pattern.match(prev)
-            if m and name == "search_summary":
-                prev = m.group("q").strip(" 、,をのは")
-                break
-        return "search_summary", {"query": prev[:80]}
+    # 「じゃあそれ調べて」「ネットで調べてよ」: 直前の質問を調べる
+    if re.fullmatch(r"(?:じゃあ|では|なら|じゃ|それじゃ|だから)?[、\s]*(?:それ|これ|そのこと|その件)?(?:を|について)?[、\s]*"
+                    r"(?:ネットで|ウェブで|インターネットで|グーグルで|googleで|検索で)?[、\s]*"
+                    r"(?:調べて|しらべて|検索して|調べてみて|調べてきて|ググって)(?:ください|よ|ね|くれる|みて)?", t, re.I):
+        import weather
+        if _history and weather.is_weather(_history[-1][0]):  # 直前が天気の質問なら、天気予報で答える
+            return quick_route(_history[-1][0])
+        q = _prev_topic()
+        if q:
+            return "search_summary", {"query": q}
     if not re.search(r"それ|これ|あれ|さっき", t):
         for pattern, name in _WEB_ROUTES:
             m = pattern.match(t)
@@ -389,6 +414,21 @@ def quick_route(text):
         return None
     for pattern, name in _ROUTES:
         m = pattern.match(t)
+        if m and name == "get_weather":
+            import weather
+            place, day = weather.parse(m.group("q"))
+            other = re.sub(r"(?:今日|明日|明後日|あさって|あした|きょう|の|は|天気|予報|気温|降水確率|雨|降る|晴れる|傘|いる|要る|が|って|どう|\s)",
+                           "", m.group("q"))
+            if place is None and other:  # 表にない地名(例: 軽井沢): 天気予報の関数に、その地名で調べてもらう
+                return name, {"place": other, "day": ["今日", "明日", "明後日"][day]}
+            return name, {"place": place or "", "day": ["今日", "明日", "明後日"][day]}
+        if m and name == "search_summary":
+            q = _topic(m.group("q"))
+            if not q:  # 「ネットで調べてよ」「じゃあ検索して」: 何を調べるかは直前の質問から
+                q = _prev_topic()
+                if not q:
+                    continue
+            return name, {"query": q}
         if m and m.group("q").strip(" 、,をのは"):
             q = m.group("q").strip(" 、,をのは")
             if name in ("find_files", "open_file"):

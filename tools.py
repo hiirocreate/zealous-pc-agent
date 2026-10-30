@@ -245,6 +245,17 @@ def web_search(query):
     return f"「{query}」を検索しました"
 
 
+@tool("天気予報を答える(「明日の東京の天気は？」「今日は雨降る？」など)。場所が無ければ設定の地域",
+      place=("string", "場所(都道府県や市の名前)", False), day=("string", "今日 / 明日 / 明後日", False))
+def get_weather(place="", day="今日"):
+    import weather
+    name, d = weather.parse(f"{day} {place}")
+    if not name and place:  # 知らない地名: 調べて答える
+        return search_summary(f"{place} {day}の天気")
+    name = name or weather.parse(config.HOME_PLACE)[0] or "東京"
+    return weather.report(name, d)
+
+
 @tool("Webで調べて結果を要約して答える(「〜について調べて」「〜を教えて」など)",
       query=("string", "調べる内容", True))
 def search_summary(query):

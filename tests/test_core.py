@@ -558,3 +558,17 @@ def test_news_and_followup_search(monkeypatch):
     monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "私は現在の情報を提供する能力はありません。"})
     monkeypatch.setattr(llm, "_run", lambda n, a: f"{n}:{a['query']}")
     assert llm.ask("元気？最新情報ある？", history=[]).startswith("search_summary")
+
+
+def test_weather_routes(monkeypatch):
+    import weather
+    assert llm.quick_route("明日の東京の天気は") == ("get_weather", {"place": "東京", "day": "明日"})
+    assert llm.quick_route("明日大阪は雨降る") == ("get_weather", {"place": "大阪", "day": "明日"})
+    llm._history.clear()
+    llm._history.append(("明日の東京の天気は？", "できません"))
+    assert llm.quick_route("ネットで調べてよ") == ("get_weather", {"place": "東京", "day": "明日"})
+    monkeypatch.setattr(weather, "forecast", lambda lat, lon, days=3: {
+        "time": ["d0", "d1", "d2"], "weather_code": [0, 63, 3], "temperature_2m_max": [20, 18.4, 22],
+        "temperature_2m_min": [10, 12.6, 14], "precipitation_probability_max": [0, 80, 10]})
+    assert tools.run_tool("get_weather", {"place": "東京", "day": "明日"}) == \
+        "明日の東京は雨、最高18度・最低13度、降水確率80%の予報です。"

@@ -9,6 +9,7 @@ SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 DEFAULTS = {
     # ---- AI名・ウェイクワード「ウェイク、<AI名>」 ----
     "AI_NAME": "Zealous",
+    "HOME_PLACE": "東京",            # 住んでいる地域(「天気は？」と場所を言わなかったときに使う)
     "USER_CALL": "",                 # AIがユーザーを呼ぶときの呼び方(例: 「たろうさん」「マスター」。空なら呼ばない)
     "AI_NAME_ALIASES": ["ゼラス", "ぜらす", "ジーラス", "ゼーラス", "セラス", "ゼラズ", "Zelas", "Zeras"],  # 音声認識での表記ゆれ
     "WAKE_WORDS": ["ウェイク", "ウエイク", "ウェーク", "ウエーク", "うぇいく", "Wake"],
