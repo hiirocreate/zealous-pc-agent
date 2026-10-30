@@ -366,3 +366,11 @@ def test_open_url_rejects_bad(monkeypatch):
     assert "開きませんでした" in tools.run_tool("open_url", {"url": "http://1.2.3.4/"})
     tools.run_tool("open_url", {"url": "https://ok.example/"})
     assert opened == ["https://ok.example/"]
+
+
+def test_reading_fix():
+    import reading
+    assert reading.fix("確認を行っています") == "確認をおこなっています"
+    assert reading.fix("東京へ行っています") == "東京へ行っています"
+    assert reading.fix("会議を行います") == "会議をおこないます"
+    assert reading.fix("流行っている") == "流行っている"

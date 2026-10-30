@@ -134,7 +134,8 @@ class Speaker:
 
     # ---------------- 内部 ----------------
     def _push(self, text):
-        text = text.strip()
+        import reading
+        text = reading.fix(text.strip())  # 同じ表記で読み方が変わる言葉を、文の流れから読み分ける
         if config.TTS_ENABLED and re.search(r"\w", text):
             self._texts.put((self._gen, text))
 

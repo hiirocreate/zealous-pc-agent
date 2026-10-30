@@ -64,7 +64,8 @@ DEFAULTS = {
     "WHISPER_MODEL": "base",         # 待機中(合図の言葉を待つ間)の聞き取り用。軽さ優先
     "COMMAND_WHISPER_MODEL": "small",  # 話しかけた命令を文字にする用。正確さ優先(初回に約0.5GBを取得)
     "VOICE_WORDS": [],               # ユーザー辞書: 正しく聞き取ってほしい言葉(固有名詞など)
-    "VOICE_REPLACE": [],             # 置き換え: 「まちがい=正しい」の形で、よく間違う言葉を直す
+    "VOICE_REPLACE": [],
+    "READINGS": [],                  # 読み方の辞書: 「表記=よみ」の形で、読み上げの読み方を決める(例: 生物=なまもの)             # 置き換え: 「まちがい=正しい」の形で、よく間違う言葉を直す
     "WHISPER_DEVICE": "cpu",
     "WHISPER_COMPUTE": "int8",
     "LANGUAGE": "ja",
