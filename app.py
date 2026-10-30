@@ -187,12 +187,17 @@ class App(ctk.CTk):
         self.after(50, self._pump)
 
     # ================= 画面の部品 =================
-    def _round(self, master, size, image, cmd=None, fg="transparent", hover=T.SURFACE):
-        return RoundButton(master, text="", image=image, width=size, height=size, corner_radius=size // 2,
-                           fg_color=fg, hover_color=hover, command=cmd)
+    def _round(self, master, size, image, cmd=None, fg="transparent", hover=T.SURFACE, tip=None):
+        b = RoundButton(master, text="", image=image, width=size, height=size, corner_radius=size // 2,
+                        fg_color=fg, hover_color=hover, command=cmd)
+        if tip:  # マウスを乗せると、何のボタンか表示する
+            import tooltip
+            b._tip = tooltip.tip(b, tip)
+        return b
 
     def _mic(self, master, size):
-        b = self._round(master, size, icons.mic(size * 9 // 20), fg=T.ACCENT, hover=T.ACCENT_LIGHT)
+        b = self._round(master, size, icons.mic(size * 9 // 20), fg=T.ACCENT, hover=T.ACCENT_LIGHT,
+                        tip="押して話す（もう一度押すか、離すと止まる）")
         b.bind("<ButtonPress-1>", self._mic_press)
         b.bind("<ButtonRelease-1>", self._mic_release)
         return b
@@ -219,9 +224,9 @@ class App(ctk.CTk):
         self.pill = self._card(PILL_H // 2)
         # 標準(横長): マイク | ロゴと状態 | チャット
         self.pill_mic = self._round(self.pill, PILL_H - 12, icons.mic((PILL_H - 12) * 9 // 20), self.open_voice_mode,
-                                    fg=T.ACCENT, hover=T.ACCENT_LIGHT)
+                                    fg=T.ACCENT, hover=T.ACCENT_LIGHT, tip="音声で会話する")
         self.pill_chat = self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
-                                     hover=T.BORDER)
+                                     hover=T.BORDER, tip="チャットを開く")
         # アップデートがあるときに会話ボタンの右上に出す印
         self.badge = ctk.CTkLabel(self.pill, text="", image=icons.dot(T.CYAN, 9), width=9, height=9)
 
@@ -240,9 +245,9 @@ class App(ctk.CTk):
         self.cmp_row, self.cmp_dot, self.cmp_status = self._status_row(self.compact)
         self.sq_buttons = ctk.CTkFrame(self.pill, fg_color="transparent")
         self._round(self.sq_buttons, 30, icons.mic(14), self.open_voice_mode, fg=T.ACCENT,
-                    hover=T.ACCENT_LIGHT).pack(side="left", padx=4)
+                    hover=T.ACCENT_LIGHT, tip="音声で会話する").pack(side="left", padx=4)
         self._round(self.sq_buttons, 30, icons.chat(14), self._show_panel, fg=T.SURFACE,
-                    hover=T.BORDER).pack(side="left", padx=4)
+                    hover=T.BORDER, tip="チャットを開く").pack(side="left", padx=4)
 
         self.pill_busy = ctk.CTkFrame(self.pill, fg_color="transparent")
         self.pill_spin = DotSpinner(self.pill_busy, dot=6, gap=5)
@@ -276,6 +281,9 @@ class App(ctk.CTk):
         cursors = {"n": "sb_v_double_arrow", "s": "sb_v_double_arrow", "e": "sb_h_double_arrow",
                    "w": "sb_h_double_arrow", "nw": "top_left_corner", "ne": "top_right_corner",
                    "sw": "bottom_left_corner", "se": "bottom_right_corner"}
+        if os.name == "nt":  # Windows の斜めの矢印
+            cursors.update(nw="size_nw_se", se="size_nw_se", ne="size_ne_sw", sw="size_ne_sw",
+                           n="size_ns", s="size_ns", e="size_we", w="size_we")
         self._grips = {}
         for edge, cursor in cursors.items():
             g = tk.Frame(self, bg=T.BG, cursor=cursor, highlightthickness=0, bd=0)
@@ -295,7 +303,7 @@ class App(ctk.CTk):
         top = ctk.CTkFrame(side, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=(10, 8), pady=(12, 4))
         top.grid_columnconfigure(1, weight=1)
-        self._round(top, 30, icons.threads(17), self._toggle_drawer, hover=T.SURFACE).grid(row=0, column=0)
+        self._round(top, 30, icons.threads(17), self._toggle_drawer, hover=T.SURFACE, tip="チャットの一覧を閉じる").grid(row=0, column=0)
         ctk.CTkLabel(top, text="チャット", font=T.font(13, "bold"), text_color=T.TEXT).grid(
             row=0, column=1, sticky="w", padx=6)
         ctk.CTkButton(side, text="新しいチャット", image=icons.plus(12), compound="left", anchor="w", height=34,
@@ -315,7 +323,7 @@ class App(ctk.CTk):
         head = ctk.CTkFrame(p, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=(10, 12), pady=(12, 4))
         head.grid_columnconfigure(2, weight=1)
-        self.menu_btn = self._round(head, 30, icons.threads(17), self._toggle_drawer)  # スレッド一覧の開閉
+        self.menu_btn = self._round(head, 30, icons.threads(17), self._toggle_drawer, tip="チャットの一覧")  # スレッド一覧の開閉
         self.menu_btn.grid(row=0, column=0, rowspan=2, padx=(0, 4))
         emb2 = ctk.CTkLabel(head, text="", image=icons.emblem(32), width=32)
         emb2.grid(row=0, column=1, rowspan=2, padx=(2, 8))
@@ -326,11 +334,11 @@ class App(ctk.CTk):
         self.head_spin = DotSpinner(row2, dot=5, gap=3)
         buttons = ctk.CTkFrame(head, fg_color="transparent")
         buttons.grid(row=0, column=3, rowspan=2)
-        self._round(buttons, 30, icons.export(15), lambda: self._export_thread(self.thread)).pack(side="left")
-        self._round(buttons, 30, icons.plus(15), self._new_thread).pack(side="left")
-        self.max_btn = self._round(buttons, 30, icons.maximize(14), self._toggle_max)
+        self._round(buttons, 30, icons.export(15), lambda: self._export_thread(self.thread), tip="このチャットを書き出す").pack(side="left")
+        self._round(buttons, 30, icons.plus(15), self._new_thread, tip="新しいチャット").pack(side="left")
+        self.max_btn = self._round(buttons, 30, icons.maximize(14), self._toggle_max, tip="全画面にする")
         self.max_btn.pack(side="left")
-        self._round(buttons, 30, icons.gear(18), self.open_settings).pack(side="left")
+        self._round(buttons, 30, icons.gear(18), self.open_settings, tip="設定").pack(side="left")
         for w in (head, emb2, self.panel_logo, row2, self.dot, self.status):
             self._draggable(w)
         for w in (head, self.panel_logo, self.status):
@@ -375,9 +383,10 @@ class App(ctk.CTk):
                 bind_all(c)
         bind_all(box)
         # 音声会話画面へ切り替えるボタン(声の波の印)
-        self._round(box, 34, icons.waves(17, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED).grid(
+        self._round(box, 34, icons.waves(17, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED,
+                    tip="音声で会話する").grid(
             row=0, column=2, padx=(3, 0), pady=3, sticky="s")
-        self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER).grid(
+        self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER, tip="送信（Enter）").grid(
             row=0, column=3, padx=3, pady=3, sticky="s")
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
         self.tip.grid(row=3, column=0, sticky="w", padx=22)
@@ -387,7 +396,7 @@ class App(ctk.CTk):
         foot.grid_columnconfigure(0, weight=1)
         self.panel_stop = self._stop(foot, text=f"■  緊急停止　{HOTKEY}", height=32, font=T.font(11, "bold"))
         self._round(foot, 32, icons.close(12), self._show_pill, fg=T.SURFACE,
-                    hover=T.BORDER).grid(row=0, column=1, padx=(8, 0))
+                    hover=T.BORDER, tip="小さくして待機する").grid(row=0, column=1, padx=(8, 0))
 
     def _layout_pill(self):
         """設定の形に合わせて、待機表示の中身を並べ直す。"""
@@ -600,6 +609,7 @@ class App(ctk.CTk):
         def done():
             self._expanded = self._maximized = False
             self.max_btn.configure(image=icons.maximize(14))
+            self.max_btn._tip.set("全画面にする")
             self.panel.pack_forget()
             self._hide_grips()
             self.pill.pack(fill="both", expand=True)
@@ -664,6 +674,7 @@ class App(ctk.CTk):
             self.shell.suspend()  # 全画面では外枠・影を付けず、画面いっぱいの四角で表示
             self._apply(l, t, self._logical(r - l), self._logical(b - t), 0)
         self.max_btn.configure(image=icons.maximize(14, restore=self._maximized))
+        self.max_btn._tip.set("元の大きさに戻す" if self._maximized else "全画面にする")
         # 新しい大きさでの並べ直しと描き直しをその場で済ませる(黒い窓や古い表示を残さない)
         self.update()
         if not self._maximized:
@@ -722,18 +733,21 @@ class App(ctk.CTk):
     # ---- 大きさの変更(端をドラッグ) ----
     def _show_grips(self):
         g, c = GRIP, GRIP * 2
+        # 角のつまみ: 窓の角は丸く切り抜かれているので、角ぴったりではなく、丸みの少し内側に大きめに置く
+        k, i = 14, 4  # (近くの丸いボタンの、丸の外側の角だけに重なる大きさ)
         place = {"n": dict(x=c, y=0, relwidth=1, width=-2 * c, height=g),
                  "s": dict(x=c, rely=1, y=-g, relwidth=1, width=-2 * c, height=g),
                  "w": dict(x=0, y=c, relheight=1, height=-2 * c, width=g),
                  "e": dict(relx=1, x=-g, y=c, relheight=1, height=-2 * c, width=g),
-                 "nw": dict(x=0, y=0, width=c, height=c), "ne": dict(relx=1, x=-c, y=0, width=c, height=c),
-                 "sw": dict(x=0, rely=1, y=-c, width=c, height=c),
-                 "se": dict(relx=1, x=-c, rely=1, y=-c, width=c, height=c)}
+                 "nw": dict(x=i, y=i, width=k, height=k), "ne": dict(relx=1, x=-k - i, y=i, width=k, height=k),
+                 "sw": dict(x=i, rely=1, y=-k - i, width=k, height=k),
+                 "se": dict(relx=1, x=-k - i, rely=1, y=-k - i, width=k, height=k)}
+        px = lambda d: {key: (self._px(v) if key in ("x", "y", "width", "height") else v) for key, v in d.items()}
         for edge, grip in self._grips.items():
-            if len(edge) == 2 and not self.shell.ok:
-                continue  # 角を切り抜けない環境では、角のつまみが四角く見えるため出さない
-            grip.place(**place[edge])
+            grip.place(**px(place[edge]))
             grip.lift()
+        for edge in ("nw", "ne", "sw", "se"):  # 角は辺より手前に(重なったところは斜めに動かせる方を優先)
+            self._grips[edge].lift()
 
     def _hide_grips(self):
         for grip in self._grips.values():

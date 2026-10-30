@@ -123,6 +123,19 @@ def run(out):
                  + ("OK" if nw > w and moved <= 3 else "NG"))
             shot("4_resized")
 
+            # 右下の角をつかんで斜めに広げる: 幅と高さが同時に変わること
+            x, y, w, h = rect()
+            gx, gy = on_main(lambda: (app._grips["se"].winfo_rootx() + 7, app._grips["se"].winfo_rooty() + 7))
+            pyautogui.moveTo(gx, gy)
+            pyautogui.mouseDown()
+            for i in range(1, 7):
+                pyautogui.moveTo(gx - i * 10, gy - i * 8)
+                time.sleep(0.08)
+            pyautogui.mouseUp()
+            time.sleep(0.8)
+            nx, ny, nw, nh = rect()
+            note(f"角のドラッグ(斜め): {w}x{h} → {nw}x{nh} " + ("OK" if nw < w and nh < h and (nx, ny) == (x, y) else "NG"))
+
             # 全画面にして戻す
             on_main(lambda: app._toggle_max())
             time.sleep(1.2)

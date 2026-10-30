@@ -47,12 +47,18 @@ class VoiceMode(ctk.CTkToplevel):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(side="bottom", pady=22)
         self.mute_btn = ctk.CTkButton(bar, text="", width=58, height=58, corner_radius=29, command=self.toggle_mute)
+        import tooltip
+        tooltip.tip(self.mute_btn, "マイクのオン／オフ（スペース）")
         self._paint_mute()
         self.mute_btn.pack(side="left", padx=10)
-        ctk.CTkButton(bar, text="", image=icons.chat(22, icons.INK), width=58, height=58, corner_radius=29,
-                      fg_color=T.SURFACE, hover_color=T.BORDER, command=self.to_chat).pack(side="left", padx=10)
-        ctk.CTkButton(bar, text="", image=icons.close(20, (255, 255, 255)), width=58, height=58, corner_radius=29,
-                      fg_color=T.DANGER, hover_color=T.DANGER_HOVER, command=self.close).pack(side="left", padx=10)
+        to_chat = ctk.CTkButton(bar, text="", image=icons.chat(22, icons.INK), width=58, height=58, corner_radius=29,
+                                fg_color=T.SURFACE, hover_color=T.BORDER, command=self.to_chat)
+        to_chat.pack(side="left", padx=10)
+        tooltip.tip(to_chat, "チャットに切り替える")
+        end = ctk.CTkButton(bar, text="", image=icons.close(20, (255, 255, 255)), width=58, height=58, corner_radius=29,
+                            fg_color=T.DANGER, hover_color=T.DANGER_HOVER, command=self.close)
+        end.pack(side="left", padx=10)
+        tooltip.tip(end, "音声会話を終える（Esc）")
         self.bind("<Escape>", lambda e: self.close())
         self.bind("<space>", lambda e: self.toggle_mute())
         for ms in (10, 250):  # 開いた直後にも、いちばん手前へ
