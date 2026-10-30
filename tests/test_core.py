@@ -405,3 +405,50 @@ def test_off_track_reply_is_retried(monkeypatch):
     assert reply == "明日の東京は晴れの予想です。"
     assert "".join(shown) == reply  # 英語の書き出しは画面にも読み上げにも出ていない
     assert len(sent) == 2 and any(m["role"] == "system" and "翻訳" in m["content"] for m in sent[1]["messages"])
+
+
+def test_speaker_plays_continuously_and_stops(monkeypatch):
+    import sys
+    import time as _t
+    import types
+    import numpy as np
+    import tts
+    written = []
+
+    class Out:
+        def __init__(self, samplerate, channels, dtype, latency):
+            self.channels, self.latency, self.active = channels, 0.01, False
+
+        def start(self):
+            self.active = True
+
+        def write(self, data):
+            written.append(data.copy())
+            _t.sleep(0.005)
+
+        def abort(self):
+            self.active = False
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(OutputStream=Out, stop=lambda: None))
+    sp = tts.Speaker()
+    a = (np.arange(24000, dtype=np.int16).reshape(-1, 1), 24000)  # 1秒
+    b = (np.arange(12000, dtype=np.int16).reshape(-1, 1), 24000)  # 0.5秒
+    sp._audio.put((sp._gen, a, "一つ目"))
+    sp._audio.put((sp._gen, b, "二つ目"))
+    for _ in range(200):
+        if sum(len(w) for w in written) >= 36000:
+            break
+        _t.sleep(0.01)
+    got = np.concatenate(written)[:, 0]
+    assert len(got) == 36000 and (got[:24000] == a[0][:, 0]).all() and (got[24000:] == b[0][:, 0]).all()
+    # 途中で止めると、すぐに書き込みが止まる
+    written.clear()
+    long = (np.zeros((24000 * 10, 1), np.int16), 24000)
+    sp._audio.put((sp._gen, long, "長い"))
+    _t.sleep(0.1)
+    sp.stop()
+    _t.sleep(0.2)
+    assert sum(len(w) for w in written) < 24000 * 10

@@ -137,10 +137,14 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
             calls += msg.get("tool_calls") or []
             content += msg.get("content") or ""
             if guard is not None and shown == 0 and not calls:
-                if len(content.strip()) < 16:
+                if len(_JA.findall(content)) >= 2:
+                    guard = None  # 日本語で書き始めた: 確かめるまでもないので、すぐ流す
+                elif len(content.strip()) < 16:
                     continue  # 書き出しがそろうまで少し待つ(画面や読み上げにはまだ出さない)
-                if off_track(guard, content):
+                elif off_track(guard, content):
                     raise OffTrack(content[:40])
+                else:
+                    guard = None
             if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
                 if len(content) > shown:
                     on_delta(content[shown:])

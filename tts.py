@@ -45,7 +45,7 @@ def cut_point(buf, first):
             m = _COMMA.search(buf, m.end())
         if m:
             return m.end()
-        if len(buf) >= 10:  # 読点が来ないときは、助詞の後(「〜は」「〜を」など)の切れ目で早めに話し始める
+        if len(buf) >= 7:  # 読点が来ないときは、助詞の後(「〜は」「〜を」など)の切れ目で早めに話し始める
             m = None
             for m in _PARTICLE.finditer(buf, 4):
                 pass
@@ -131,6 +131,12 @@ class Speaker:
         self._first = True
         import sounddevice as sd
         sd.stop()
+        out = self._out
+        if out is not None:  # 書き込み中の声も、すぐに止める
+            try:
+                out.abort()
+            except Exception:
+                pass
 
     # ---------------- 内部 ----------------
     def _push(self, text):
@@ -150,7 +156,7 @@ class Speaker:
         # 区切りの前後の無音を短くして、区切りをまたいでも途切れて聞こえないようにする
         query["outputSamplingRate"] = 24000
         query["prePhonemeLength"] = 0.05
-        query["postPhonemeLength"] = 0.08
+        query["postPhonemeLength"] = 0.1  # 短すぎると語尾が切れて聞こえる
         w = requests.post(f"{config.VOICEVOX_URL}/synthesis", params={"speaker": config.VOICEVOX_SPEAKER},
                           json=query, timeout=30)
         w.raise_for_status()
@@ -175,10 +181,39 @@ class Speaker:
             future.add_done_callback(lambda _: setattr(self, "_inflight", self._inflight - 1))
             self._audio.put((gen, future, text))
 
-    def _play_loop(self):
+    # 再生: 開きっぱなしの出力(音の通り道)に、区切りごとの声を続けて書き込む。
+    # 区切りごとに開き直すと、そのたびに少し遅れ、混んでいるときは音が途切れる(バッファが空になる)ため。
+    _out = None
+    _out_rate = None
+    SLICE = 0.08  # 一度に書き込む長さ(秒)。止めるときは、これくらいで止まる
+
+    def _stream(self, rate, channels):
         import sounddevice as sd
+        if self._out is not None and (self._out_rate, self._out.channels) == (rate, channels) and self._out.active:
+            return self._out
+        self._close_stream()
+        # latency="high": 余裕のある大きめのバッファにして、PCが忙しいときも途切れにくくする
+        self._out = sd.OutputStream(samplerate=rate, channels=channels, dtype="int16", latency="high")
+        self._out.start()
+        self._out_rate = rate
+        return self._out
+
+    def _close_stream(self):
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.abort()
+                out.close()
+            except Exception:
+                pass
+
+    def _play_loop(self):
         while True:
-            gen, item, text = self._audio.get()
+            try:
+                gen, item, text = self._audio.get(timeout=20)
+            except queue.Empty:
+                self._close_stream()  # しばらく話さないときは、出力を閉じておく
+                continue
             if gen != self._gen:
                 continue
             if not isinstance(item, tuple):  # 合成中なら、できあがるのを待つ
@@ -193,9 +228,20 @@ class Speaker:
             self.text, self._env = text, _envelope(data, rate)
             self._playing = True
             try:
-                self._t0 = time.monotonic()
-                sd.play(data, rate)
-                sd.wait()
+                out = self._stream(rate, data.shape[1] if data.ndim > 1 else 1)
+                self._t0 = time.monotonic() + out.latency  # 声が実際に聞こえ始めるのは、バッファの分だけ後
+                step = max(1, int(rate * self.SLICE))
+                for i in range(0, len(data), step):
+                    if gen != self._gen:  # 止められた
+                        self._close_stream()
+                        break
+                    out.write(np.ascontiguousarray(data[i:i + step]))
+                else:
+                    if self._audio.empty() and self._texts.empty() and self._inflight == 0:
+                        time.sleep(out.latency)  # 最後の区切り: バッファに残った分が鳴り終わるまで待つ
+            except Exception as e:
+                self._report(e)
+                self._close_stream()
             finally:
                 self._playing = False
                 self._quiet_since = time.monotonic()
