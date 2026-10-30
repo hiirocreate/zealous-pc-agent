@@ -453,9 +453,12 @@ def keys(combo):
 def scroll(down=True, amount=5):
     """ページの真ん中の位置でホイールを回したのと同じ動き(中の枠だけが動くページでも動く)。"""
     with Page() as p:
-        w, h = p.js("[innerWidth, innerHeight]") or (800, 600)
+        w, h, before = p.js("[innerWidth, innerHeight, scrollY]") or (800, 600, 0)
         p.call("Input.dispatchMouseEvent", type="mouseWheel", x=w // 2, y=h // 2, deltaX=0,
                deltaY=(1 if down else -1) * 120 * amount)
+        time.sleep(0.4)  # なめらかに動き終わるのを待つ
+        if p.js("scrollY") == before:  # ホイールが届かなかった(窓が隠れているなど): ページ全体を直接動かす
+            p.js(f"scrollBy({{top: {(1 if down else -1) * 100 * amount}, behavior: 'instant'}})")
     return "スクロールしました"
 
 
