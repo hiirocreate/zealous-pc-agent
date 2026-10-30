@@ -130,6 +130,25 @@ TABS = [
         ("AUTO_UPDATE", "起動時に新しい版を確認", "bool", "見つかると会話ボタンに印が付きます"),
     ]),
 ]
+# 数を「つまみ」で選べる項目: (最小, 最大, 刻み)
+SLIDERS = {
+    "TTS_SPEED": (0.5, 2.0, 0.05),
+    "VAD_THRESHOLD": (0.002, 0.06, 0.001),
+    "VAD_SILENCE_SEC": (0.3, 3.0, 0.1),
+    "VAD_MIN_SEC": (0.1, 2.0, 0.1),
+    "VAD_MAX_SEC": (5, 60, 1),
+    "CONTEXT_TURNS": (0, 12, 1),
+    "SOURCE_COUNT": (0, 8, 1),
+    "SEARCH_IMAGE_COUNT": (0, 16, 1),
+    "IMAGE_COUNT": (8, 60, 1),
+}
+
+
+def _digits(step):
+    text = f"{step:g}"
+    return len(text.split(".")[1]) if "." in text else 0
+
+
 FIELDS = [f for _, fields in TABS for f in fields if f[0] not in ("—", "＊")]
 _INFO_TAB = "更新・情報"
 
@@ -167,6 +186,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_clear_history = on_clear_history
         self._vars = {}
         self._choices = {}  # キー -> {表示名: 値}
+        self._items = {}  # ページ -> [(部品, 置き方, 検索用の文字 または None(見出し))]
+        self._rows = {}   # キー -> 項目のカード
         self.title(f"{config.AI_NAME} 設定")
         self.geometry("640x560")
         self.minsize(560, 440)
@@ -184,6 +205,11 @@ class SettingsWindow(ctk.CTkToplevel):
         brand.pack(pady=(18, 16), padx=14, anchor="w")
         ctk.CTkLabel(brand, text="", image=icons.emblem(26)).pack(side="left", padx=(0, 6))
         ctk.CTkLabel(brand, text="設定", font=T.font(15, "bold"), text_color=T.TEXT).pack(side="left")
+        # 設定の検索(項目名・説明に含まれる言葉で絞り込む)
+        self.search = ctk.CTkEntry(side, placeholder_text="設定を検索", height=30, corner_radius=15,
+                                   fg_color=T.BG, border_color=T.BORDER, text_color=T.TEXT, font=T.font(11))
+        self.search.pack(fill="x", padx=10, pady=(0, 10))
+        self.search.bind("<KeyRelease>", lambda e: self._filter(self.search.get()))
         self._tab_btns, self._pages = {}, {}
         for name, _ in TABS:
             b = ctk.CTkButton(side, text=name, anchor="w", height=36, corner_radius=10, font=T.font(12),
@@ -218,6 +244,12 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self._fill(config.current())
         self._select(TABS[0][0])
+        # 変更した項目を目立たせ、保存していない変更の数を出す
+        self._save_btn = self._foot.winfo_children()[-1]
+        for _, var in self._vars.values():
+            var.trace_add("write", lambda *_: self._dirty_later())
+        self._refresh_dirty()
+        self.protocol("WM_DELETE_WINDOW", self._close)
         # 日本語入力の変換中の文字を、チャット欄と同じように入力欄の中に表示する
         import ime
         ime.attach_all(self, T.FONT, 15)
@@ -228,13 +260,17 @@ class SettingsWindow(ctk.CTkToplevel):
 
     # ---------------- 画面づくり ----------------
     def _section(self, page, title):
-        ctk.CTkLabel(page, text=title, font=T.font(12, "bold"), text_color=T.ACCENT, anchor="w").pack(
-            fill="x", padx=8, pady=(14, 4))
+        w = ctk.CTkLabel(page, text=title, font=T.font(12, "bold"), text_color=T.ACCENT, anchor="w")
+        kw = dict(fill="x", padx=8, pady=(14, 4))
+        w.pack(**kw)
+        self._items.setdefault(page, []).append((w, kw, None))  # 見出し(検索で、中身が無ければ隠す)
 
-    def _card_row(self, page):
-        row = ctk.CTkFrame(page, fg_color=T.SURFACE, corner_radius=12)
-        row.pack(fill="x", padx=4, pady=3)
+    def _card_row(self, page, search=""):
+        row = ctk.CTkFrame(page, fg_color=T.SURFACE, corner_radius=12, border_width=1, border_color=T.SURFACE)
+        kw = dict(fill="x", padx=4, pady=3)
+        row.pack(**kw)
         row.grid_columnconfigure(0, weight=1)
+        self._items.setdefault(page, []).append((row, kw, search.lower()))
         return row
 
     def _build_fields(self, page, fields):
@@ -253,7 +289,8 @@ class SettingsWindow(ctk.CTkToplevel):
             # スイッチは右端、それ以外の入力欄は説明の下に横幅いっぱいで置く(長い項目名でも切れない)
             switch = kind == "bool"
             wrap = 330 if switch else 400
-            row = self._card_row(page)
+            row = self._card_row(page, f"{label} {hint} {key}")
+            self._rows[key] = row
             ctk.CTkLabel(row, text=label, font=T.font(12), text_color=T.TEXT, anchor="w", justify="left",
                          wraplength=wrap).grid(row=0, column=0, sticky="w", padx=12, pady=(9, 0))
             if hint:
@@ -267,12 +304,62 @@ class SettingsWindow(ctk.CTkToplevel):
             if kind == "bool":
                 var = ctk.BooleanVar()
                 ctk.CTkSwitch(row, text="", variable=var, width=46, progress_color=T.ACCENT).grid(**ctl)
+                # スイッチだけでなく、項目のどこを押しても切り替わる
+                for w in [row] + [c for c in row.winfo_children() if isinstance(c, ctk.CTkLabel)]:
+                    w.bind("<Button-1>", lambda e, v=var: v.set(not v.get()), add="+")
+                    w.configure(cursor="hand2")
+            elif kind in ("float", "int") and key in SLIDERS:
+                var = ctk.StringVar()
+                lo, hi, step = SLIDERS[key]
+                box = ctk.CTkFrame(row, fg_color="transparent")
+                box.grid(**ctl)
+                box.grid_columnconfigure(0, weight=1)
+                value = ctk.CTkLabel(box, text="", font=T.font(11, "bold"), text_color=T.TEXT, width=48, anchor="e")
+                value.grid(row=0, column=1, padx=(8, 0))
+                fmt = (lambda x: str(int(round(x)))) if kind == "int" else (lambda x, st=step: f"{round(x / st) * st:.{_digits(st)}f}")
+                slider = ctk.CTkSlider(box, from_=lo, to=hi, number_of_steps=int(round((hi - lo) / step)),
+                                       progress_color=T.ACCENT, button_color=T.ACCENT_LIGHT,
+                                       button_hover_color=T.ACCENT, command=lambda x, v=var, f=fmt: v.set(f(x)))
+                slider.grid(row=0, column=0, sticky="ew")
+
+                def show(*_, v=var, s_=slider, lab=value, lo=lo, hi=hi):  # 値が変わったら、つまみと数字も合わせる
+                    try:
+                        x = float(v.get())
+                    except ValueError:
+                        return
+                    lab.configure(text=v.get())
+                    s_.set(min(hi, max(lo, x)))
+                var.trace_add("write", show)
             elif kind == "model":
                 var = ctk.StringVar()
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
                                 fg_color=T.BG, border_color=T.BORDER, button_color=T.BG,
                                 button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, dropdown_text_color=T.TEXT, text_color=T.TEXT,
                                   font=T.font(11)).grid(**ctl)
+                # 選んだモデルの特徴と注意点
+                info = ctk.CTkFrame(row, fg_color=T.BG, corner_radius=10)
+                info.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 12))
+                info.grid_columnconfigure(1, weight=1)
+                labels = {}
+                for r, (name, color) in enumerate((("特徴", T.OK), ("注意", T.WARN))):
+                    ctk.CTkLabel(info, text=name, font=T.font(10, "bold"), text_color=color, width=34,
+                                 anchor="nw").grid(row=r, column=0, sticky="nw", padx=(10, 4), pady=(8 if r == 0 else 2, 2))
+                    labels[name] = ctk.CTkLabel(info, text="", font=T.font(10), text_color=T.TEXT, anchor="w",
+                                                justify="left", wraplength=300)
+                    labels[name].grid(row=r, column=1, sticky="ew", padx=(0, 10), pady=(8 if r == 0 else 2, 2))
+                ctk.CTkFrame(info, height=6, width=1, fg_color="transparent").grid(row=2, column=0)
+                # 枠の幅に合わせて折り返す(長い説明でも切れない)
+                info.bind("<Configure>", lambda e, lab=labels, i=info: [
+                    l.configure(wraplength=max(160, int(e.width / i._get_widget_scaling()) - 70)) for l in lab.values()],
+                    add="+")
+
+                def describe(*_, v=var, lab=labels):
+                    d = models.details(models.name_of(v.get()))
+                    good, warn = d if d else ("一覧にないモデルです。Ollama の名前（例: gemma3:4b）を入力できます。",
+                                              "保存のときに大きさを調べてお知らせします。日本語やPC操作に対応していないモデルもあります。")
+                    lab["特徴"].configure(text=good)
+                    lab["注意"].configure(text=warn)
+                var.trace_add("write", describe)
             elif kind == "persona":
                 import persona
                 var = ctk.StringVar()
@@ -324,7 +411,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self._vars[key] = (kind, var)
 
     def _action(self, page, title, hint, text, command, danger=False):
-        row = self._card_row(page)
+        row = self._card_row(page, f"{title} {hint}")
         ctk.CTkLabel(row, text=title, font=T.font(12), text_color=T.TEXT, anchor="w").grid(
             row=0, column=0, sticky="w", padx=12, pady=(8, 0))
         ctk.CTkLabel(row, text=hint, font=T.font(10), text_color=T.SUB, anchor="w", justify="left",
@@ -337,7 +424,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _build_info(self, page):
         # ---- アップデート: 確認して、新しい版があればここから更新できる ----
-        row = self._card_row(page)
+        row = self._card_row(page, "アップデート 更新 バージョン")
         ctk.CTkLabel(row, text="アップデート", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
         self.upd_status = ctk.CTkLabel(row, text=f"現在のバージョン: {VERSION}", font=T.font(10),
@@ -436,6 +523,99 @@ class SettingsWindow(ctk.CTkToplevel):
         subprocess.Popen(shortcut.command("--setup"), cwd=shortcut.HERE)
         self._on_quit()
 
+    # ---------------- 変更の管理 ----------------
+    def _value(self, key):
+        """入力欄の値を設定値にする(不正なら ValueError / KeyError)。"""
+        kind, var = self._vars[key]
+        if kind == "model":
+            name = models.name_of(var.get())
+            if not name:
+                raise ValueError
+            return name
+        if kind == "choice":
+            return self._choices[key][var.get()]
+        if kind == "font":
+            return self._choices[key].get(var.get(), var.get().strip())
+        return parse(kind, var.get())
+
+    def _dirty(self):
+        out = []
+        for key in self._vars:
+            try:
+                if self._value(key) != getattr(config, key):
+                    out.append(key)
+            except (ValueError, KeyError):
+                out.append(key)
+        return out
+
+    def _dirty_later(self):
+        if not getattr(self, "_dirty_job", None):
+            self._dirty_job = self.after(80, self._refresh_dirty)
+
+    def _refresh_dirty(self):
+        self._dirty_job = None
+        if not self.winfo_exists():
+            return
+        dirty = set(self._dirty())
+        for key, row in self._rows.items():
+            row.configure(border_color=T.ACCENT if key in dirty else T.SURFACE)
+        for name, fields in TABS:
+            n = sum(1 for f in fields if f[0] in dirty)
+            base = self._tab_btns[name].cget("text").split("  ")[0]
+            self._tab_btns[name].configure(text=f"{base}  ●" if n else base)
+        self._save_btn.configure(text=f"保存（{len(dirty)}）" if dirty else "保存")
+        if dirty:
+            self.msg.configure(text=f"● 保存していない変更が {len(dirty)} 件あります", text_color=T.WARN)
+        elif self.msg.cget("text").startswith("●"):
+            self.msg.configure(text="")
+
+    def _close(self):
+        """保存していない変更があれば、閉じる前に確かめる。"""
+        if self._dirty():
+            import tkinter.messagebox as mb
+            answer = mb.askyesnocancel("設定", "保存していない変更があります。保存してから閉じますか？", parent=self)
+            if answer is None:
+                return
+            if answer:
+                self._save()
+                if self._dirty():  # 入力に誤りがあって保存できなかった
+                    return
+        self.destroy()
+
+    # ---------------- 検索 ----------------
+    def _filter(self, query):
+        """項目名・説明に query を含む項目だけを見せる。空なら元に戻す。"""
+        q = query.strip().lower()
+        first = None
+        for name, page in self._pages.items():
+            items = self._items.get(page, [])
+            visible = []
+            for i, (w, kw, text) in enumerate(items):
+                if text is None:  # 見出し: 次の見出しまでに見える項目があれば見せる
+                    rest = []
+                    for w2, _, t2 in items[i + 1:]:
+                        if t2 is None:
+                            break
+                        rest.append(t2)
+                    visible.append(not q or any(q in t for t in rest))
+                else:
+                    visible.append(not q or q in text)
+            for w, kw, _ in items:
+                w.pack_forget()
+            for (w, kw, _), show in zip(items, visible):
+                if show:
+                    w.pack(**kw)
+            hits = sum(1 for (w, kw, t), show in zip(items, visible) if show and t is not None)
+            base = self._tab_btns[name].cget("text").split("（")[0].split("  ")[0]
+            self._tab_btns[name].configure(text=f"{base}（{hits}）" if q else base,
+                                           state="normal" if (hits or not q) else "disabled")
+            if q and hits and first is None:
+                first = name
+        if q and first:
+            self._select(first)
+        elif not q:
+            self._refresh_dirty()
+
     def _show_toast(self):
         if not self.winfo_exists():
             return
@@ -472,7 +652,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _voice_card(self, page):
         """現在の声と「声を選ぶ」ボタン。キャラ一覧の画面で試聴・ダウンロードする。"""
-        row = self._card_row(page)
+        row = self._card_row(page, "声 キャラクター VOICEVOX 読み上げ 選ぶ")
         ctk.CTkLabel(row, text="声", font=T.font(12), text_color=T.TEXT, anchor="w").grid(
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
         self.voice_now = ctk.CTkLabel(row, text="", font=T.font(11), text_color=T.CYAN, anchor="w")
@@ -577,6 +757,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_saved()
         self.msg.configure(text="")
         self._show_toast()  # 画面は閉じずに、保存したことだけを知らせる
+        self._refresh_dirty()
         if restart:
             import tkinter.messagebox as mb
             if mb.askyesno("表示の変更", "カラー・フォント・文字の大きさは、再起動すると反映されます。\n今すぐ再起動しますか？"):

@@ -63,25 +63,39 @@ def _ps(script, timeout=20):
     return (r.stdout or "").strip()
 
 
-def find_control(hwnd, label):
-    """窓の中から、名前に label を含むボタンなどを探し、その真ん中の位置 (x, y, 名前) を返す。"""
-    name = label.replace("'", "''")
-    script = (
-        "Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes;"
-        f"$w=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]{int(hwnd)});"
+_UIA = ("Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes;"
+        "$A=[System.Windows.Automation.AutomationElement];"
+        "$w=$A::FromHandle([IntPtr]{hwnd});"
         "$all=$w.FindAll([System.Windows.Automation.TreeScope]::Descendants,"
-        "[System.Windows.Automation.Condition]::TrueCondition);"
-        f"$hit=$all | Where-Object {{ $_.Current.Name -like '*{name}*' -and -not $_.Current.IsOffscreen "
-        "-and $_.Current.BoundingRectangle.Width -gt 0 } |"
-        " Sort-Object { $_.Current.Name.Length } | Select-Object -First 1;"
-        "if ($hit) { $r=$hit.Current.BoundingRectangle;"
-        " '{0},{1},{2}' -f [int]($r.X+$r.Width/2),[int]($r.Y+$r.Height/2),$hit.Current.Name }"
+        "[System.Windows.Automation.Condition]::TrueCondition);")
+
+
+def find_control(hwnd, label):
+    """窓の中から、名前に label を含むボタンなどを探し、その真ん中の位置 (x, y, 名前) を返す。
+    名前がぴったり同じものを優先し、無ければ名前に含むもののうち短い名前のものを選ぶ。"""
+    name = label.replace("'", "''")
+    script = _UIA.format(hwnd=int(hwnd)) + (
+        "$hits=@(); foreach($e in $all){ try { $n=$e.Current.Name; $r=$e.Current.BoundingRectangle;"
+        f" if($n -and $n -like '*{name}*' -and $r.Width -gt 0 -and $r.Height -gt 0)"
+        " { $hits += ,@($n, [int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2)) } } catch {} };"
+        f"$best = $hits | Sort-Object @{{e={{ if($_[0] -eq '{name}'){{0}}else{{1}} }}}}, @{{e={{ $_[0].Length }}}} "
+        "| Select-Object -First 1;"
+        "if($best){ '{0},{1},{2}' -f $best[1],$best[2],$best[0] }"
     )
-    out = _ps(script)
+    out = _ps(script, timeout=30)
     if not out or "," not in out:
         return None
-    x, y, found = out.split(",", 2)
+    x, y, found = out.splitlines()[-1].split(",", 2)
     return int(x), int(y), found
+
+
+def list_controls(hwnd, limit=30):
+    """(確認用) 窓の中で名前を持つ部品の数と、最初のいくつかの名前。"""
+    script = _UIA.format(hwnd=int(hwnd)) + (
+        "$names=@(); foreach($e in $all){ try { if($e.Current.Name){ $names += $e.Current.Name } } catch {} };"
+        f"'{{0}}|{{1}}' -f $all.Count, (($names | Select-Object -First {limit}) -join ' / ')"
+    )
+    return _ps(script, timeout=30)
 
 
 def paste_text(text):

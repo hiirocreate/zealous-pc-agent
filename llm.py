@@ -101,6 +101,9 @@ def _chat(messages, use_tools=True, stream_out=False):
             "options": {"temperature": 0, "num_ctx": 4096}, "keep_alive": "30m"}
     if use_tools:
         body["tools"] = tools.schemas()
+    import models
+    if models.thinks(config.OLLAMA_MODEL):
+        body["think"] = False  # 考える過程を書かせない(書かせると、話し始めるまでが遅くなる)
     content, calls, shown = "", [], 0
     with requests.post(config.OLLAMA_URL, json=body, timeout=config.OLLAMA_TIMEOUT, stream=True) as r:
         r.raise_for_status()

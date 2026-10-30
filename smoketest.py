@@ -184,6 +184,7 @@ def run(out):
             time.sleep(0.5)
             got = screen._ps("Get-Clipboard -Raw")
             note(f"画面の直接操作(メモ帳): {'OK' if 'こんにちは Zealous' in got else 'NG'} ({got[:30]!r})")
+            note("部品の一覧(確認用): " + screen.list_controls(hwnd)[:300])
             note("ボタン: " + tools.run_tool("click_on", {"label": "File"}))
             time.sleep(0.5)
             pyautogui.press("esc")
