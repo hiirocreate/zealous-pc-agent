@@ -35,6 +35,12 @@ from wakeword import strip_wake_word
 MODE_HOLD = "トランシーバー"
 HOTKEY = "+".join(k.capitalize() for k in config.EMERGENCY_KEYS)
 PILL_W, PILL_H = 200, 52
+# 待機中のウィジェットの形: (幅, 高さ, 角の丸み)
+PILL_STYLES = {"standard": (200, 52, 26), "square": (112, 112, 24), "circle": (76, 76, 38)}
+
+
+def pill_dims():
+    return PILL_STYLES.get(getattr(config, "PILL_STYLE", "standard"), PILL_STYLES["standard"])
 PANEL_MIN_W, PANEL_MIN_H = 300, 380
 PANEL_R = 18           # パネルの角の丸み
 SIDEBAR_W = 210        # スレッド一覧の幅
@@ -209,27 +215,35 @@ class App(ctk.CTk):
                             border_width=0 if self.shell.ok else 1, border_color=T.BORDER)
 
     def _build(self):
-        # ---- 待機スタイル: 横長の楕円 ----
+        # ---- 待機表示(形は設定で選ぶ: 標準の横長 / 角の丸い正方形 / 円) ----
         self.pill = self._card(PILL_H // 2)
-        self.pill.grid_columnconfigure(1, weight=1)
-        self.pill.grid_rowconfigure(0, weight=1)
-        # 待機表示のマイクは、音声会話画面を開く
+        # 標準(横長): マイク | ロゴと状態 | チャット
         self.pill_mic = self._round(self.pill, PILL_H - 12, icons.mic((PILL_H - 12) * 9 // 20), self.open_voice_mode,
                                     fg=T.ACCENT, hover=T.ACCENT_LIGHT)
-        self.pill_mic.grid(row=0, column=0, padx=(6, 0))
-        self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
-                    hover=T.BORDER).grid(row=0, column=2, padx=(0, 6))
+        self.pill_chat = self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
+                                     hover=T.BORDER)
         # アップデートがあるときに会話ボタンの右上に出す印
         self.badge = ctk.CTkLabel(self.pill, text="", image=icons.dot(T.CYAN, 9), width=9, height=9)
 
         self.center = ctk.CTkFrame(self.pill, fg_color="transparent")
-        self.center.grid(row=0, column=1)
         emb = ctk.CTkLabel(self.center, text="", image=icons.emblem(26), width=26)
         emb.grid(row=0, column=0, rowspan=2, padx=(0, 5))
         self.pill_logo = ctk.CTkLabel(self.center, text="", height=12)
         self.pill_logo.grid(row=0, column=1, sticky="sw")
         row, self.pill_dot, self.pill_status = self._status_row(self.center)
         row.grid(row=1, column=1, sticky="nw", pady=(2, 0))
+
+        # 正方形・円: 大きなロゴを真ん中に(正方形は下に状態とボタン)
+        self.compact = ctk.CTkFrame(self.pill, fg_color="transparent")
+        self.cmp_emb = ctk.CTkLabel(self.compact, text="", image=icons.emblem(40), width=40, height=40)
+        self.cmp_emb.pack()
+        self.cmp_row, self.cmp_dot, self.cmp_status = self._status_row(self.compact)
+        self.sq_buttons = ctk.CTkFrame(self.pill, fg_color="transparent")
+        self._round(self.sq_buttons, 30, icons.mic(14), self.open_voice_mode, fg=T.ACCENT,
+                    hover=T.ACCENT_LIGHT).pack(side="left", padx=4)
+        self._round(self.sq_buttons, 30, icons.chat(14), self._show_panel, fg=T.SURFACE,
+                    hover=T.BORDER).pack(side="left", padx=4)
+
         self.pill_busy = ctk.CTkFrame(self.pill, fg_color="transparent")
         self.pill_spin = DotSpinner(self.pill_busy, dot=6, gap=5)
         self.pill_spin.pack(pady=(0, 3))
@@ -238,8 +252,11 @@ class App(ctk.CTk):
         self.pill_stop.configure(corner_radius=9)
         self.pill_stop.pack()
         for w in (self.pill, self.center, emb, self.pill_logo, row, self.pill_dot, self.pill_status,
-                  self.pill_busy, self.pill_spin):
+                  self.pill_busy, self.pill_spin, self.compact, self.cmp_emb, self.cmp_row, self.cmp_dot,
+                  self.cmp_status, self.sq_buttons):
             self._draggable(w, on_click=self._show_panel)  # 動かさずにクリックしたら、チャットを開く
+            w.bind("<Button-3>", self._pill_menu, add="+")  # 右クリック: チャット・音声会話・設定
+        self._layout_pill()
 
         # ---- 展開・折りたたみ中に見せる、中身のない下地 ----
         self.morph = self._card(PANEL_R)
@@ -372,6 +389,51 @@ class App(ctk.CTk):
         self._round(foot, 32, icons.close(12), self._show_pill, fg=T.SURFACE,
                     hover=T.BORDER).grid(row=0, column=1, padx=(8, 0))
 
+    def _layout_pill(self):
+        """設定の形に合わせて、待機表示の中身を並べ直す。"""
+        style = getattr(config, "PILL_STYLE", "standard")
+        w, h, r = pill_dims()
+        self.pill.configure(corner_radius=r)
+        for c in self.pill.winfo_children():
+            c.grid_forget()
+        for i in range(3):
+            self.pill.grid_columnconfigure(i, weight=0)
+            self.pill.grid_rowconfigure(i, weight=0)
+        self.cmp_row.pack_forget()
+        self.pill_stop.pack_forget()
+        if style == "standard":
+            self.pill.grid_columnconfigure(1, weight=1)
+            self.pill.grid_rowconfigure(0, weight=1)
+            self.pill_mic.grid(row=0, column=0, padx=(6, 0))
+            self.pill_chat.grid(row=0, column=2, padx=(0, 6))
+            self._pill_main = self.center
+            self._pill_main.grid(row=0, column=1)
+            self.pill_stop.configure(width=w - 2 * h + 4)
+            self.pill_stop.pack()
+            self._busy_place = lambda: self.pill_busy.grid(row=0, column=1)
+        else:
+            self.pill.grid_columnconfigure(0, weight=1)
+            self.pill.grid_rowconfigure(0, weight=1)
+            size = 40 if style == "square" else 38
+            self.cmp_emb.configure(image=icons.emblem(size), width=size, height=size)
+            self._pill_main = self.compact
+            if style == "square":  # ロゴ、その下に状態、いちばん下にマイクとチャット
+                self.cmp_row.pack(pady=(4, 0))
+                self._pill_main.grid(row=0, column=0, pady=(12, 0))
+                self.sq_buttons.grid(row=1, column=0, pady=(2, 10))
+                self.pill_stop.configure(width=w - 20)
+                self.pill_stop.pack()
+            else:  # 円: ロゴだけ(押すとチャット、右クリックで音声会話など)
+                self._pill_main.grid(row=0, column=0)
+            self._busy_place = lambda: self.pill_busy.grid(row=0, column=0)
+        if getattr(self, "_state", "idle") in BUSY:
+            self._pill_main.grid_remove()
+            self._busy_place()
+
+    def _pill_menu(self, e):
+        self._menu(e, [("チャットを開く", self._show_panel), ("音声で会話する", self.open_voice_mode), None,
+                       ("設定", self.open_settings)])
+
     def _draggable(self, w, on_click=None):
         w.bind("<ButtonPress-1>", lambda e: (setattr(self, "_drag_click", on_click), self._drag_start(e)), add="+")
         w.bind("<B1-Motion>", self._drag_move, add="+")
@@ -448,11 +510,13 @@ class App(ctk.CTk):
                 self._pos = tuple(pos)
             else:  # 初回はメインモニターの右下(タスクバーの上)
                 l, t, r, b = self._work(1, 1)
-                self._pos = (r - self._px(PILL_W + 12), b - self._px(PILL_H + 12))
-        w, h = self._px(PILL_W), self._px(PILL_H)
+                pw0, ph0, _ = pill_dims()
+                self._pos = (r - self._px(pw0 + 12), b - self._px(ph0 + 12))
+        pw, ph, pr = pill_dims()
+        w, h = self._px(pw), self._px(ph)
         cx, cy = self._pos[0] + w // 2, self._pos[1] + h // 2
         self._pos = self._clamp(*self._pos, w, h, self._work(cx, cy))  # 外されたモニターに取り残さない
-        return (*self._pos, PILL_W, PILL_H, PILL_H // 2)
+        return (*self._pos, pw, ph, pr)
 
     def _panel_size(self):
         w, h = config.PANEL_SIZE
@@ -461,7 +525,7 @@ class App(ctk.CTk):
     def _panel_rect(self):
         """常駐位置がモニターのどちら側にあるかで、パネルの伸びる向きを決める。"""
         x, y, _, _, _ = self._pill_rect()
-        pw, ph = self._px(PILL_W), self._px(PILL_H)
+        pw, ph = self._px(pill_dims()[0]), self._px(pill_dims()[1])
         area = self._work(x + pw // 2, y + ph // 2)
         l, t, r, b = area
         w, h = self._panel_size()
@@ -475,7 +539,7 @@ class App(ctk.CTk):
         return (*self._clamp(px, py, W, H, area), w, h, PANEL_R)
 
     def _current_rect(self):
-        r = PANEL_R if self._expanded else PILL_H // 2
+        r = PANEL_R if self._expanded else pill_dims()[2]
         return (self.winfo_x(), self.winfo_y(), self._logical(self.winfo_width()),
                 self._logical(self.winfo_height()), r)
 
@@ -980,13 +1044,13 @@ class App(ctk.CTk):
     def _set_state(self, state):
         self._state = state
         label, color, _ = STATES[state]
-        for t in (self.status, self.pill_status):
+        for t in (self.status, self.pill_status, self.cmp_status):
             t.configure(text=label)
-        for d in (self.dot, self.pill_dot):
+        for d in (self.dot, self.pill_dot, self.cmp_dot):
             d.configure(image=icons.dot(color))
         if state in BUSY:  # 操作中だけ緊急停止ボタンとローディング表示を出す
-            self.center.grid_remove()
-            self.pill_busy.grid(row=0, column=1)
+            self._pill_main.grid_remove()
+            self._busy_place()
             self.panel_stop.grid(row=0, column=0, sticky="ew")
             self.dot.pack_forget()
             self.head_spin.pack(side="left", padx=(0, 5), before=self.status)
@@ -996,7 +1060,7 @@ class App(ctk.CTk):
         else:
             self.pill_busy.grid_remove()
             self.panel_stop.grid_remove()
-            self.center.grid()
+            self._pill_main.grid()
             self.head_spin.pack_forget()
             self.dot.pack(side="left", padx=(0, 5), before=self.status)
             self.typing.grid_remove()
@@ -1019,7 +1083,7 @@ class App(ctk.CTk):
         self._blink = (self._blink + 1) % 16
         if blink:
             c = T.BORDER if self._blink >= 8 else color
-            for d in (self.dot, self.pill_dot):
+            for d in (self.dot, self.pill_dot, self.cmp_dot):
                 d.configure(image=icons.dot(c))
 
     # ================= 入力 =================
@@ -1460,6 +1524,17 @@ class App(ctk.CTk):
             self._stop_rec()
         self.voice.set_wake(config.WAKE_ENABLED)
         self._apply_ptt()
+        style = getattr(config, "PILL_STYLE", "standard")
+        if style != getattr(self, "_pill_style", style):  # 待機表示の形が変わった: 右下の角をそろえて並べ直す
+            old_w, old_h, _ = PILL_STYLES.get(self._pill_style, PILL_STYLES["standard"])
+            new_w, new_h, _ = pill_dims()
+            if getattr(self, "_pos", None):
+                self._pos = (self._pos[0] + self._px(old_w - new_w), self._pos[1] + self._px(old_h - new_h))
+                config.save({"WINDOW_POS": list(self._pos)})
+            self._layout_pill()
+            if not self._expanded:
+                self._apply(*self._pill_rect())
+        self._pill_style = style
 
     # ================= アップデート =================
     def check_update(self, manual=False, report=None):

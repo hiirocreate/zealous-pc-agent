@@ -32,6 +32,7 @@ DEFAULTS = {
     "SAFE_SITES_ONLY": True,         # 危険と判定されたサイトは表示・案内しない
     "PERSONA": "",
     "MEMORY": [],                    # AIがユーザーについてずっと覚えておくこと(「〜を覚えておいて」で増える)                   # AIの性格・話し方(空なら標準の丁寧な話し方)
+    "PILL_STYLE": "standard",        # 待機中のウィジェットの形(standard 横長 / square 角の丸い正方形 / circle 円)
     "UI_THEME": "midnight",          # 画面の配色(midnight / ocean / sakura / light)
     "UI_FONT": "",                   # 画面の文字のフォント(空なら標準: Yu Gothic UI)
     "UI_FONT_SCALE": 100,            # 画面の文字の大きさ(%)
