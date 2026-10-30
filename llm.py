@@ -258,6 +258,8 @@ _WEB_ROUTES = [
     # 「Amazonで充電器を検索して」「楽天で〇〇を探して」
     (re.compile(_BROWSER + _SITE + r"(?:を開いて|で|の中で)[、,\s]*(?P<q>.+?)を?(?:検索して|探して|さがして|調べて|見せて)", re.I),
      "open_site"),
+    # 「下にスクロールして」「上にスクロール」
+    (re.compile(r"(?P<q>下|した|上|うえ)(?:に|へ|の方)?(?:少し|ちょっと)?スクロール(?:して)?"), "scroll"),
     # 「YouTubeを開いて」「ブラウザでAmazon開いて」
     (re.compile(_BROWSER + _SITE + r"(?:を)?(?:開いて|ひらいて|見せて)$", re.I), "open_site"),
 ]
@@ -280,11 +282,49 @@ _ROUTES = [
 _NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さっき|それ|これ|あれ")  # 会話の続き・ブラウザ指定は AI に任せる
 
 
+# 直前の画面操作(「もっと下に」「少し戻って」など、続きの指示に使う)
+_last_scroll = {"direction": None, "amount": 5}
+_MORE = r"(?:もっと|もう(?:少し|ちょっと|すこし)|さらに|更に|続けて|もう一回|もう1回|もういっかい)"
+_FOLLOW = [
+    (re.compile(r"(?:" + _MORE[3:-1] + r"|少し|ちょっと|すこし)?[、\s]*(?P<dir>下|した|上|うえ)(?:に|へ|の方|のほう)?"
+                r"(?:少し|ちょっと)?(?:スクロール)?(?:して|お願い|ね)?$"), "dir"),
+    (re.compile(r"(?:少し|ちょっと|すこし|1つ|ひとつ)?(?:戻って|戻して|もどって|もどして|戻る)(?:ください)?$"), "back"),
+    (re.compile(_MORE + r"(?:スクロール)?(?:して|お願い|ね)?$"), "more"),
+]
+
+
+def follow_up(t):
+    """「もっと下に」「少し戻って」など、直前のスクロールの続きなら (関数名, 引数)。"""
+    last = _last_scroll["direction"]
+    for pattern, kind in _FOLLOW:
+        m = pattern.match(t)
+        if not m:
+            continue
+        if kind == "dir":
+            down = m.group("dir") in ("下", "した")
+            if last is None and not re.match(_MORE, t) and "スクロール" not in t:
+                return None  # 「下に」だけで、直前にスクロールもしていない: ふつうの会話として扱う
+            more = re.match(_MORE, t)  # 「もっと下に」: 同じ向きなら前と同じ量。「下に(スクロール)」: いつもの量
+            amount = _last_scroll["amount"] if more and last == ("down" if down else "up") else 5
+            if re.search(r"少し|ちょっと|すこし", t) and not more:
+                amount = 2
+            return "scroll", {"direction": "down" if down else "up", "amount": amount}
+        if last is None:
+            return None
+        if kind == "back":  # 少しだけ逆へ
+            return "scroll", {"direction": "up" if last == "down" else "down", "amount": 2}
+        return "scroll", {"direction": last, "amount": _last_scroll["amount"]}
+    return None
+
+
 def quick_route(text):
     """(関数名, 引数) を返す。当てはまらなければ None。"""
     t = text.strip().rstrip("。.!！?？")
     if not config.QUICK_ROUTE:
         return None
+    follow = follow_up(t)
+    if follow:
+        return follow
     if not re.search(r"それ|これ|あれ|さっき", t):
         for pattern, name in _WEB_ROUTES:
             m = pattern.match(t)
@@ -294,6 +334,9 @@ def quick_route(text):
                     return name, {"query": q}
                 if name == "open_site":
                     return name, {"site": m.group("site"), "query": q}
+                if name == "scroll":
+                    small = re.search(r"少し|ちょっと", t)
+                    return name, {"direction": "down" if q in ("下", "した") else "up", "amount": 2 if small else 5}
     if _NOT_SEARCH.search(t):
         return None
     for pattern, name in _ROUTES:
@@ -330,10 +373,18 @@ def needs_tools(text):
     return bool(_NEEDS_TOOLS.search(text))
 
 
+def _run(name, args):
+    res = tools.run_tool(name, args)
+    if name == "scroll" and "スクロールしました" in res:  # 「もっと下に」などのために覚えておく
+        down = not (str(args.get("direction", "")).lower().startswith("u") or "上" in str(args.get("direction", "")))
+        _last_scroll.update(direction="down" if down else "up", amount=int(args.get("amount") or 5))
+    return res
+
+
 def _ask(text):
     route = quick_route(text)
     if route:
-        return tools.run_tool(*route)
+        return _run(*route)
     messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]
     if not needs_tools(text):
         # ふつうの会話: 関数の一覧を渡すと、返事を最後まで書き終えるまで届かないことがある(読み上げが遅れる)ので、
@@ -358,7 +409,7 @@ def _ask(text):
             return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
         messages.append(msg)
         for name, args in calls:
-            res = tools.run_tool(name, args)
+            res = _run(name, args)
             if tools.CONFIRM in res:  # 声で頼まれた危険な操作: 実行せずに確認を返す
                 return res
             results.append(res)

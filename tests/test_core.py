@@ -519,3 +519,14 @@ def test_web_routes_and_invented_urls(monkeypatch):
     assert opened == []
     tools.run_tool("open_site", {"site": "楽天", "query": "コーヒー豆"})
     assert opened[-1].startswith("https://search.rakuten.co.jp/search/mall/")
+
+
+def test_scroll_follow_ups(monkeypatch):
+    monkeypatch.setattr(tools, "run_tool", lambda n, a: "「ページ」をスクロールしました")
+    monkeypatch.setitem(llm._last_scroll, "direction", None)
+    steps = []
+    for t in ["下にスクロールして", "もっと下に", "もっと下に", "少し戻って"]:
+        r = llm.quick_route(t)
+        llm._run(*r)
+        steps.append((r[1]["direction"], r[1]["amount"]))
+    assert steps == [("down", 5), ("down", 5), ("down", 5), ("up", 2)]
