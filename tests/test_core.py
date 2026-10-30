@@ -542,3 +542,19 @@ def test_play_list(monkeypatch):
     res = tools.run_tool(*r)
     assert "再生回数の多い順に10本" in res
     assert opened[-1].startswith("https://www.youtube.com/watch_videos?video_ids=id000000000,id000000001")
+
+
+def test_news_and_followup_search(monkeypatch):
+    assert llm.quick_route("AIに関する最新のビッグニュースいくつかしょうかいして") == \
+        ("search_summary", {"query": "AIに関する最新のビッグニュース"})
+    llm._history.clear()
+    llm._history.append(("AIに関する最新のビッグニュースいくつかしょうかいして", "できません"))
+    assert llm.quick_route("じゃあそれ調べて") == ("search_summary", {"query": "AIに関する最新のビッグニュース"})
+    text = '調べてみましょう。\n\n[Tools]\n{"type": "function", "function": {web_search "AIの最新ニュース"}}'
+    assert llm.parse_tool_calls({"content": text}) == [("web_search", {"query": "AIの最新ニュース"})]
+    assert llm.visible(text) == "調べてみましょう。"
+    # 「最新情報は提供できません」と断ったら、実際に調べる
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: {"content": "私は現在の情報を提供する能力はありません。"})
+    monkeypatch.setattr(llm, "_run", lambda n, a: f"{n}:{a['query']}")
+    assert llm.ask("元気？最新情報ある？", history=[]).startswith("search_summary")

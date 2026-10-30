@@ -87,6 +87,8 @@ def system_prompt():
             "【必ず守ること】\n"
             f"・いつも{answer_language()}で答える(ユーザーが別の言葉で話しかけたときだけ、その言葉で答える)。\n"
             "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
+            "・最新の情報・ニュース・今日のことを聞かれたら、必ず search_summary で調べてから答える。"
+            "「最新の情報は提供できない」とは言わない。\n"
             "・URLを推測で作らない。サイトを開く・サイト内で探すときは open_site、動画を流すときは play_video を使う。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
@@ -173,14 +175,16 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
                 else:
                     guard = None
             if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
-                if len(content) > shown:
-                    on_delta(content[shown:])
-                    shown = len(content)
+                ok = visible(content)
+                if len(ok) > shown:
+                    on_delta(ok[shown:])
+                    shown = len(ok)
     if guard is not None and not calls and off_track(guard, content):
         raise OffTrack(content[:40])
-    if stream_out and on_delta and not calls and len(content) > shown \
-            and not content.lstrip().startswith(("{", "`")):
-        on_delta(content[shown:])  # 短い返事(待っている間に書き終わった分)
+    if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
+        ok = visible(content)
+        if len(ok) > shown:
+            on_delta(ok[shown:])  # 短い返事(待っている間に書き終わった分)
     return {"role": "assistant", "content": content, "tool_calls": calls}
 
 
@@ -216,16 +220,37 @@ def parse_tool_calls(message):
         calls.append((fn.get("name"), args))
     if calls:
         return calls
-    m = re.search(r"\{.*\}", message.get("content") or "", re.S)
+    content = message.get("content") or ""
+    m = re.search(r"\{.*\}", content, re.S)
     if m:
         try:
             obj = json.loads(m.group(0))
-        except ValueError:
-            return []
-        name = obj.get("name") or obj.get("function")
-        if name in tools.TOOLS:
-            return [(name, obj.get("arguments") or obj.get("parameters") or {})]
+            name = obj.get("name") or obj.get("function")
+            if isinstance(name, dict):  # {"type":"function","function":{"name":..,"arguments":..}}
+                obj, name = name, name.get("name")
+            if name in tools.TOOLS:
+                return [(name, obj.get("arguments") or obj.get("parameters") or {})]
+        except (ValueError, AttributeError):
+            pass
+    # 小さなモデルが本文に書いてしまう、崩れた形(例: web_search "AIの最新ニュース")
+    for name in sorted(tools.TOOLS, key=len, reverse=True):
+        m = re.search(rf"\b{name}\b\W{{0,6}}[\"「']([^\"」']{{1,80}})[\"」']", content)
+        if m:
+            schema = tools.TOOLS[name][1]["function"]["parameters"]
+            key = (schema.get("required") or list(schema["properties"]) or ["query"])[0]
+            return [(name, {key: m.group(1)})]
     return []
+
+
+# 本文に紛れ込んだ「関数の呼び出し」の書き出し(ここから先は画面に出さない)
+_TOOL_TEXT = re.compile(r"\[Tools?\]|<tool_call>|\{\s*\"(?:type|name|function)\"|```|\b(?:"
+                        + "|".join(re.escape(n) for n in tools.TOOLS) + r")\s*[\(\"「]")
+
+
+def visible(content):
+    """画面と読み上げに出してよい部分(関数の呼び出しらしい書き出しより前)。"""
+    m = _TOOL_TEXT.search(content)
+    return content[:m.start()].rstrip() if m else content
 
 
 def ask(text, history=None, summary="", memory=None):
@@ -283,7 +308,10 @@ _ROUTES = [
     (re.compile(r"^(?P<q>.+?)の?(?:写真|画像|イラスト|絵)を?(?:探して|さがして|見せて|検索して|表示して|出して|調べて|しらべて|見つけて|ちょうだい|ください|ほしい|欲しい)"),
      "image_search"),
     (re.compile(r"^(?P<q>.+?)を?(?:起動して|立ち上げて)"), "launch_app"),
-    (re.compile(r"^(?P<q>.+?)(?:について|を|って)?(?:調べて|しらべて|検索して|教えて)"), "search_summary"),
+    (re.compile(r"^(?P<q>.+?ニュース.*?)(?:を|について)?(?:いくつか|少し|ちょっと)?"
+                r"(?:教えて|紹介して|しょうかいして|知りたい|調べて|見せて|まとめて)"), "search_summary"),
+    (re.compile(r"^(?P<q>.+?)(?:について|を|って)?(?:調べて|しらべて|検索して|教えて|紹介して|しょうかいして)"),
+     "search_summary"),
 ]
 _NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さっき|それ|これ|あれ")  # 会話の続き・ブラウザ指定は AI に任せる
 
@@ -331,6 +359,16 @@ def quick_route(text):
     follow = follow_up(t)
     if follow:
         return follow
+    # 「じゃあそれ調べて」「それについて検索して」: 直前の質問を調べる
+    if re.fullmatch(r"(?:じゃあ|では|なら|じゃ|それじゃ)?[、\s]*(?:それ|これ|そのこと|その件)(?:を|について)?[、\s]*"
+                    r"(?:調べて|しらべて|検索して|調べてみて|調べてきて)(?:ください|よ|ね)?", t) and _history:
+        prev = _history[-1][0].strip().rstrip("。.!！?？")
+        for pattern, name in _ROUTES:  # 前の質問から「〜して」などを除いて、調べる言葉だけにする
+            m = pattern.match(prev)
+            if m and name == "search_summary":
+                prev = m.group("q").strip(" 、,をのは")
+                break
+        return "search_summary", {"query": prev[:80]}
     if not re.search(r"それ|これ|あれ|さっき", t):
         for pattern, name in _WEB_ROUTES:
             m = pattern.match(t)
@@ -374,9 +412,12 @@ _NEEDS_TOOLS = re.compile(
 
 _CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し|再生し|流し)"
                     r"(?:ました|ます|ておきます)|https?://")
+# 「最新の情報は提供できません」のように、調べもせずに断る返事
+_REFUSE = re.compile(r"(?:最新|現在|リアルタイム)の?(?:情報|ニュース)[^。]*(?:できません|ありません|持っていません|わかりません)|"
+                     r"(?:能力|機能)は(?:ありません|持っていません)|インターネットに(?:アクセス|接続)でき")
 _DO_IT = ("あなたはまだ何も操作していません。操作が必要なら、必ず用意された関数を呼び出してください。"
           "ファイルを探すなら find_files、開くなら open_file、サイトは open_site、動画は play_video を使ってください。"
-          "URLを推測で書かないでください。")
+          "URLを推測で書かないでください。最新の情報やニュースは search_summary で調べてから答えてください。")
 
 
 def needs_tools(text):
@@ -400,11 +441,15 @@ def _ask(text):
         # ふつうの会話: 関数の一覧を渡すと、返事を最後まで書き終えるまで届かないことがある(読み上げが遅れる)ので、
         # 渡さずに、書けた分からすぐ画面と読み上げへ流す
         reply = (_chat_on_track(messages, text).get("content") or "").strip()
+        if _REFUSE.search(reply):  # 「最新情報は提供できません」: 実際に調べて答える
+            return _run("search_summary", {"query": text})
         return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
     results = []
     for step in range(config.MAX_TOOL_STEPS):
         msg = _chat_on_track(messages, text, use_tools=True) if step == 0 else _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
+        if not calls and not results and step == 0 and _REFUSE.search(msg.get("content") or ""):
+            return _run("search_summary", {"query": text})  # 「最新情報は提供できません」: 実際に調べて答える
         if not calls and not results and step == 0 and _CLAIM.search(msg.get("content") or ""):
             # 関数を呼ばずに「〜しました」「開きます」と言った(実際は何もしていない): 関数を使うよう促して1回やり直す
             import zlog
@@ -413,11 +458,13 @@ def _ask(text):
             msg = _chat(retry, stream_out=False)
             calls = parse_tool_calls(msg)
             if not calls:
-                return "すみません、その操作はうまくできませんでした。ファイル名や場所を、もう少し詳しく教えてもらえますか？"
+                return "すみません、その操作はうまくできませんでした。何をどうしたいか、もう少し詳しく教えてもらえますか？"
         if not calls:
-            reply = (msg.get("content") or "").strip() if not results else " ".join(results)
+            reply = visible(msg.get("content") or "").strip() if not results else " ".join(results)
             return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
         messages.append(msg)
+        if "ブラウザ" not in text:  # 「調べて」なのにブラウザで検索ページを開こうとした: 調べて答える方にする
+            calls = [("search_summary", a) if n == "web_search" else (n, a) for n, a in calls]
         for name, args in calls:
             res = _run(name, args)
             if tools.CONFIRM in res:  # 声で頼まれた危険な操作: 実行せずに確認を返す
