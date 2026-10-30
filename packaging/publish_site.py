@@ -107,4 +107,5 @@ def main(version, repo, token):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows の既定(cp1252)では日本語を表示できない
     main(sys.argv[1], os.environ["RELEASE_REPO"], os.environ["GH_TOKEN"])
