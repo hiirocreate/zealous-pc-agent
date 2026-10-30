@@ -63,7 +63,13 @@ def system_prompt():
     return (f"あなたはWindows PCを操作するアシスタント「{config.AI_NAME}」です。"
             "PC操作が必要な命令には必ず用意された関数を呼び出してください。"
             "調べものや質問には search_summary、画像や写真を探すときは image_search 関数を使ってください。"
-            "関数が不要な会話には日本語で一文だけ短く答えてください。" + user_rule() + persona_rule())
+            "関数が不要な会話には日本語で一文だけ短く答えてください。\n"
+            "【必ず守ること】\n"
+            "・いつも日本語で答える(ユーザーが英語など別の言葉で話したときだけ、その言葉で答える)。\n"
+            "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
+            "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
+            "「それ」「さっきの」などは、直前の会話を指していると考える。"
+            + user_rule() + persona_rule())
 
 
 def _remember(text, reply):
@@ -94,9 +100,26 @@ def summarize(query, material):
     return (msg.get("content") or "").strip()
 
 
-def _chat(messages, use_tools=True, stream_out=False):
+class OffTrack(Exception):
+    """返事が質問とかみ合っていない(日本語の質問に、英語の翻訳を返し始めたなど)。"""
+
+
+_JA = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
+
+
+def off_track(question, reply):
+    """日本語で聞かれたのに、返事の書き出しが英語ばかりになっているか(小さなモデルが「質問の英訳」を始める癖)。"""
+    if not question or not _JA.search(question) or re.search(r"英語|英訳|翻訳|english|translate", question, re.I):
+        return False
+    head = reply.strip()[:40]
+    letters = sum(c.isascii() and c.isalpha() for c in head)
+    return len(head) >= 12 and letters >= 8 and len(_JA.findall(head)) <= 2
+
+
+def _chat(messages, use_tools=True, stream_out=False, guard=None):
     """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
-    関数呼び出し(JSON)らしい返事は画面に出さない。"""
+    関数呼び出し(JSON)らしい返事は画面に出さない。
+    guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
     body = {"model": config.OLLAMA_MODEL, "messages": messages, "stream": True,
             "options": {"temperature": 0, "num_ctx": 4096}, "keep_alive": "30m"}
     if use_tools:
@@ -113,11 +136,39 @@ def _chat(messages, use_tools=True, stream_out=False):
             msg = json.loads(line).get("message") or {}
             calls += msg.get("tool_calls") or []
             content += msg.get("content") or ""
+            if guard is not None and shown == 0 and not calls:
+                if len(content.strip()) < 16:
+                    continue  # 書き出しがそろうまで少し待つ(画面や読み上げにはまだ出さない)
+                if off_track(guard, content):
+                    raise OffTrack(content[:40])
             if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
                 if len(content) > shown:
                     on_delta(content[shown:])
                     shown = len(content)
+    if guard is not None and not calls and off_track(guard, content):
+        raise OffTrack(content[:40])
+    if stream_out and on_delta and not calls and len(content) > shown \
+            and not content.lstrip().startswith(("{", "`")):
+        on_delta(content[shown:])  # 短い返事(待っている間に書き終わった分)
     return {"role": "assistant", "content": content, "tool_calls": calls}
+
+
+_FIX = ("前の返事は、質問に答えずに翻訳などをしていました。翻訳はせず、日本語で、"
+        "これまでの会話の流れに沿って、いまの質問そのものに答えてください。")
+
+
+def _chat_on_track(messages, question, use_tools=False):
+    """質問とかみ合わない返事なら、直すように一言そえて1回だけやり直す。"""
+    try:
+        return _chat(messages, use_tools=use_tools, stream_out=True, guard=question)
+    except OffTrack as e:
+        import zlog
+        zlog.note(f"返事がかみ合わないため、やり直し({len(str(e))}文字で検出)")
+        retry = messages[:-1] + [{"role": "system", "content": _FIX}, messages[-1]]
+        try:
+            return _chat(retry, use_tools=use_tools, stream_out=True, guard=question)
+        except OffTrack:
+            return _chat(retry, use_tools=use_tools, stream_out=True)
 
 
 def parse_tool_calls(message):
@@ -201,11 +252,11 @@ def _ask(text):
     if not needs_tools(text):
         # ふつうの会話: 関数の一覧を渡すと、返事を最後まで書き終えるまで届かないことがある(読み上げが遅れる)ので、
         # 渡さずに、書けた分からすぐ画面と読み上げへ流す
-        reply = (_chat(messages, use_tools=False, stream_out=True).get("content") or "").strip()
+        reply = (_chat_on_track(messages, text).get("content") or "").strip()
         return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
     results = []
-    for _ in range(config.MAX_TOOL_STEPS):
-        msg = _chat(messages, stream_out=True)
+    for step in range(config.MAX_TOOL_STEPS):
+        msg = _chat_on_track(messages, text, use_tools=True) if step == 0 else _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
         if not calls:
             reply = (msg.get("content") or "").strip() if not results else " ".join(results)

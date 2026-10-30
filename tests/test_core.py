@@ -374,3 +374,34 @@ def test_reading_fix():
     assert reading.fix("東京へ行っています") == "東京へ行っています"
     assert reading.fix("会議を行います") == "会議をおこないます"
     assert reading.fix("流行っている") == "流行っている"
+
+
+def test_off_track_reply_is_retried(monkeypatch):
+    import json as _json
+    replies = iter(["What is the weather like tomorrow in Tokyo?", "明日の東京は晴れの予想です。"])
+
+    class Resp:
+        def __init__(self, text):
+            self.lines = [_json.dumps({"message": {"content": ch}}).encode() for ch in text]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            return iter(self.lines)
+
+    sent = []
+    monkeypatch.setattr(llm.requests, "post", lambda *a, **k: (sent.append(k["json"]), Resp(next(replies)))[1])
+    shown = []
+    monkeypatch.setattr(llm, "on_delta", shown.append)
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    reply = llm.ask("明日の東京の天気はどう？", history=[])
+    assert reply == "明日の東京は晴れの予想です。"
+    assert "".join(shown) == reply  # 英語の書き出しは画面にも読み上げにも出ていない
+    assert len(sent) == 2 and any(m["role"] == "system" and "翻訳" in m["content"] for m in sent[1]["messages"])
