@@ -9,6 +9,7 @@ SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 DEFAULTS = {
     # ---- AI名・ウェイクワード「ウェイク、<AI名>」 ----
     "AI_NAME": "Zealous",
+    "USER_CALL": "",                 # AIがユーザーを呼ぶときの呼び方(例: 「たろうさん」「マスター」。空なら呼ばない)
     "AI_NAME_ALIASES": ["ゼラス", "ぜらす", "ジーラス", "ゼーラス", "セラス", "ゼラズ", "Zelas", "Zeras"],  # 音声認識での表記ゆれ
     "WAKE_WORDS": ["ウェイク", "ウエイク", "ウェーク", "ウエーク", "うぇいく", "Wake"],
     "WAKE_ENABLED": True,             # 待機中も「ウェイク、<AI名>」を聞き取る
@@ -38,6 +39,7 @@ DEFAULTS = {
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,
+    "SCREEN_CONTROL_ENABLED": False, # マウス・キーボードで画面を直接操作する(ボタンを押す・文字を入力する など)
     "CONFIRM_VOICE_DANGER": True,    # 声で頼まれた削除・移動・名前変更・シャットダウンは、実行前に確認する   # 削除(ごみ箱へ移動)を許可
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",

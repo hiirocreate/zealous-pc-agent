@@ -169,6 +169,27 @@ def run(out):
                 on_main(lambda: app._voice_win.close())
             note(f"音声会話画面: {'OK' if ok else 'NG'}")
 
+            # 画面の直接操作: メモ帳に日本語を入力し、キー操作で選択・コピーして確かめる
+            import subprocess as sp
+            import tools
+            import screen
+            config.SCREEN_CONTROL_ENABLED = True
+            pad = sp.Popen(["notepad.exe"])
+            time.sleep(3)
+            hwnd, title = screen.target_window()
+            note(f"操作の相手: {title!r}")
+            note("文字入力: " + tools.run_tool("type_text", {"text": "こんにちは Zealous"}))
+            note("キー: " + tools.run_tool("press_keys", {"keys": "ctrl+a"}))
+            tools.run_tool("press_keys", {"keys": "ctrl+c"})
+            time.sleep(0.5)
+            got = screen._ps("Get-Clipboard -Raw")
+            note(f"画面の直接操作(メモ帳): {'OK' if 'こんにちは Zealous' in got else 'NG'} ({got[:30]!r})")
+            note("ボタン: " + tools.run_tool("click_on", {"label": "File"}))
+            time.sleep(0.5)
+            pyautogui.press("esc")
+            pad.kill()
+            config.SCREEN_CONTROL_ENABLED = False
+
             # 設定画面を開いて(入力欄すべてに日本語入力の処理が付く)、入力欄に打って保存する(閉じないこと)
             on_main(lambda: app.open_settings())
             time.sleep(2.5)

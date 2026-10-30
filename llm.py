@@ -43,6 +43,12 @@ _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 
 
+def user_rule():
+    """設定の「あなたの呼び方」をAIへの指示にする。"""
+    call = (getattr(config, "USER_CALL", "") or "").strip()
+    return f"ユーザーのことは「{call}」と呼んでください。" if call else ""
+
+
 def persona_rule():
     """設定の「AIの性格・話し方」を、AIへの指示にする(空なら何も足さない)。"""
     persona = (getattr(config, "PERSONA", "") or "").strip()
@@ -57,7 +63,7 @@ def system_prompt():
     return (f"あなたはWindows PCを操作するアシスタント「{config.AI_NAME}」です。"
             "PC操作が必要な命令には必ず用意された関数を呼び出してください。"
             "調べものや質問には search_summary、画像や写真を探すときは image_search 関数を使ってください。"
-            "関数が不要な会話には日本語で一文だけ短く答えてください。" + persona_rule())
+            "関数が不要な会話には日本語で一文だけ短く答えてください。" + user_rule() + persona_rule())
 
 
 def _remember(text, reply):
@@ -176,7 +182,8 @@ def quick_route(text):
 _NEEDS_TOOLS = re.compile(
     r"開い|ひらい|起動|立ち上げ|閉じ|検索|調べ|探し|さがし|見つけ|ファイル|フォルダ|作成|作って|保存|削除|消して|"
     r"移動|コピー|名前を変え|リネーム|一覧|ブラウザ|サイト|ページ|URL|画像|写真|ロック|音量|ニュース|天気|最新|"
-    r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード")
+    r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード|"
+    r"クリック|押して|入力して|打って|タイプ|スクロール|キーを|ショートカット|貼り付け|ボタン")
 
 
 def needs_tools(text):

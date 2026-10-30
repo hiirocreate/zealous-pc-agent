@@ -29,8 +29,12 @@ def tool(description, **params):
     return deco
 
 
+SCREEN_TOOLS = set()  # 画面を直接操作する関数(設定で許可したときだけ AI に見せる)
+
+
 def schemas():
-    return [s for _, s in TOOLS.values()]
+    hide = set() if getattr(config, "SCREEN_CONTROL_ENABLED", False) else SCREEN_TOOLS
+    return [s for name, (_, s) in TOOLS.items() if name not in hide]
 
 
 # 取り返しがつきにくい操作。声で頼まれたときは、実行する前に「はい/いいえ」で確かめる
@@ -40,6 +44,8 @@ DANGEROUS = {
     "move_item": "「{name}」を「{dest}」へ移動",
     "rename_item": "「{name}」の名前を「{new_name}」に変更",
     "shutdown_pc": "PCをシャットダウン",
+    "click_on": "「{label}」をクリック",
+    "press_keys": "「{keys}」キーを押",
 }
 REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロセスが依頼ごとに設定する)
 CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
@@ -61,7 +67,7 @@ def run_tool(name, args, confirmed=False):
         return f"[DRY] {name}({args})"
     if not confirmed and needs_confirm(name, args):
         import json
-        what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name")})
+        what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name", "label", "keys")})
         return (f"{what}してよいですか？「はい」か「いいえ」で答えてください。"
                 + CONFIRM + json.dumps({"tool": name, "args": args, "what": what}, ensure_ascii=False))
     try:
@@ -389,3 +395,91 @@ def bluetooth_connect(device, connect=True):
     if out.startswith("OK:"):
         return f"{out[3:]} を{'接続' if verb == 'Enable' else '切断'}しました"
     return f"エラー: {out}(管理者権限で起動してください)"
+
+
+# ---------------- 画面の直接操作(マウス・キーボード) ----------------
+def screen_tool(description, **params):
+    """画面を直接操作する関数。設定で許可していなければ実行しない。"""
+    def deco(func):
+        def run(**kw):
+            if not getattr(config, "SCREEN_CONTROL_ENABLED", False):
+                raise PermissionError("画面の直接操作は設定で許可されていません（設定の「権限」タブ）")
+            return func(**kw)
+        run.__name__ = func.__name__
+        SCREEN_TOOLS.add(func.__name__)
+        return tool(description, **params)(run)
+    return deco
+
+
+def _target():
+    import screen
+    hwnd, title = screen.target_window()
+    if not hwnd:
+        raise RuntimeError("操作するウィンドウが見つかりません")
+    return hwnd, title
+
+
+@screen_tool("直前まで使っていたウィンドウの中の、ボタンや項目を名前で探してクリックする(例: 「保存」「OK」「次へ」)",
+             label=("string", "クリックするボタンや項目の名前(画面に表示されている文字)", True))
+def click_on(label):
+    import pyautogui
+    import screen
+    hwnd, title = _target()
+    hit = screen.find_control(hwnd, label)
+    if not hit:
+        return f"「{title}」の中に「{label}」が見つかりませんでした"
+    screen.focus(hwnd)
+    pyautogui.click(hit[0], hit[1])
+    return f"「{title}」の「{hit[2]}」をクリックしました"
+
+
+@screen_tool("直前まで使っていたウィンドウに、文字を入力する(日本語も可)", text=("string", "入力する文字", True))
+def type_text(text):
+    import screen
+    hwnd, title = _target()
+    screen.focus(hwnd)
+    screen.paste_text(text)
+    return f"「{title}」に入力しました"
+
+
+@screen_tool("直前まで使っていたウィンドウで、キーやショートカットを押す(例: enter, ctrl+s, ctrl+c, alt+tab, f5)",
+             keys=("string", "押すキー。同時に押すものは + でつなぐ", True))
+def press_keys(keys):
+    import pyautogui
+    import screen
+    names = [k.strip().lower() for k in str(keys).replace("＋", "+").split("+") if k.strip()]
+    alias = {"control": "ctrl", "コントロール": "ctrl", "エンター": "enter", "改行": "enter", "シフト": "shift",
+             "オルト": "alt", "タブ": "tab", "エスケープ": "esc", "削除": "delete", "スペース": "space"}
+    names = [alias.get(k, k) for k in names]
+    bad = [k for k in names if k not in pyautogui.KEYBOARD_KEYS]
+    if not names or bad:
+        return f"「{keys}」というキーは押せません"
+    hwnd, title = _target()
+    screen.focus(hwnd)
+    pyautogui.hotkey(*names)
+    return f"「{title}」で {'+'.join(names)} を押しました"
+
+
+@screen_tool("直前まで使っていたウィンドウを上下にスクロールする",
+             direction=("string", "up(上) または down(下)", True), amount=("integer", "量(1〜20。既定5)", False))
+def scroll(direction, amount=5):
+    import pyautogui
+    import screen
+    hwnd, title = _target()
+    screen.focus(hwnd)
+    n = max(1, min(20, int(amount or 5)))
+    pyautogui.scroll((n if str(direction).lower().startswith("u") or "上" in str(direction) else -n) * 120)
+    return f"「{title}」をスクロールしました"
+
+
+@screen_tool("画面の位置(ピクセル)を指定してクリックする。ボタン名で探せないときだけ使う",
+             x=("integer", "横の位置", True), y=("integer", "縦の位置", True),
+             double=("boolean", "ダブルクリックならtrue", False))
+def click_position(x, y, double=False):
+    import pyautogui
+    w, h = pyautogui.size()
+    x, y = int(x), int(y)
+    if not (0 <= x < w and 0 <= y < h):
+        return "画面の外の位置はクリックできません"
+    pyautogui.click(x, y, clicks=2 if str(double).lower() in ("true", "1") else 1)
+    return f"({x}, {y}) をクリックしました"
