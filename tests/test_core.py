@@ -530,3 +530,15 @@ def test_scroll_follow_ups(monkeypatch):
         llm._run(*r)
         steps.append((r[1]["direction"], r[1]["amount"]))
     assert steps == [("down", 5), ("down", 5), ("down", 5), ("up", 2)]
+
+
+def test_play_list(monkeypatch):
+    opened = []
+    monkeypatch.setattr(tools, "open_in_browser", lambda u: opened.append(u))
+    monkeypatch.setattr(tools, "youtube_search", lambda q, order="relevance", limit=10:
+                        [(f"id{i:09d}", f"曲{i}") for i in range(limit)])
+    r = llm.quick_route("YOASOBIの曲を再生回数順に流して")
+    assert r == ("play_video", {"query": "YOASOBI", "order": "views", "count": 10})
+    res = tools.run_tool(*r)
+    assert "再生回数の多い順に10本" in res
+    assert opened[-1].startswith("https://www.youtube.com/watch_videos?video_ids=id000000000,id000000001")

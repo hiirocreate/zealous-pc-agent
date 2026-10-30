@@ -249,6 +249,12 @@ _SITE = (r"(?P<site>youtube|ユーチューブ|ようつべ|google|グーグル|
 _BROWSER = r"(?:ブラウザ(?:から|で|を開いて)?[、,\s]*)?"
 # サイト・動画の言い方(「ブラウザ」と言っていても、ここはすぐ実行する)
 _WEB_ROUTES = [
+    # 「YouTubeで〇〇の歌を上から順に流して」「再生回数順に流して」(何本も続けて)
+    (re.compile(_BROWSER + r"(?:(?:youtube|ユーチューブ|ようつべ)(?:を)?(?:開いて|ひらいて|で|から)?[、,\s]*)?"
+                r"(?P<q>.+?)の?(?:歌|曲|動画|音楽|mv|ＭＶ)?を?[、,\s]*"
+                r"(?P<how>上から順に|上から順番に|順番に|順に|全部|続けて|まとめて|再生回数順に|再生回数が多い順に|"
+                r"人気順に|新しい順に|新着順に)(?:上から)?(?:順に)?(?:流して|再生して|かけて)", re.I),
+     "play_list"),
     # 「ブラウザからYouTube開いて、株式会社才の動画を流して」「YouTubeで〇〇を再生して」
     (re.compile(_BROWSER + r"(?:youtube|ユーチューブ|ようつべ)(?:を)?(?:開いて|ひらいて|で|から)?[、,\s]*"
                 r"(?P<q>.+?)の?(?:動画|曲|音楽|mv|ＭＶ|映像|ライブ)?を?(?:流して|再生して|かけて|見せて|見たい)", re.I),
@@ -332,6 +338,10 @@ def quick_route(text):
                 q = (m.groupdict().get("q") or "").strip(" 、,をのは")
                 if name == "play_video" and q:
                     return name, {"query": q}
+                if name == "play_list" and q:
+                    how = m.group("how")
+                    order = "views" if re.search(r"再生回数|人気", how) else "newest" if re.search(r"新", how) else "relevance"
+                    return "play_video", {"query": q, "order": order, "count": 10}
                 if name == "open_site":
                     return name, {"site": m.group("site"), "query": q}
                 if name == "scroll":

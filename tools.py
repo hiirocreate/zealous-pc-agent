@@ -180,23 +180,49 @@ def open_site(site, query=""):
     return f"{site}で「{query}」を検索しました" if query else f"{site}を開きました"
 
 
-@tool("YouTube で動画を探して、いちばん合う動画を再生する(「〇〇の動画を流して」など)",
-      query=("string", "探す動画の内容", True))
-def play_video(query):
+_YT_ORDER = {"relevance": "EgIQAQ%253D%253D", "views": "CAMSAhAB", "newest": "CAISAhAB"}  # 関連順・再生回数順・新しい順
+
+
+def youtube_search(query, order="relevance", limit=10):
+    """YouTube の検索結果 [(動画の番号, 題名)](動画だけ。並び順を選べる)。"""
     import re
+    sp = _YT_ORDER.get(order, _YT_ORDER["relevance"])
     req = urllib.request.Request(
-        "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(query) + "&hl=ja&gl=JP",
+        "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(query) + f"&sp={sp}&hl=ja&gl=JP",
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
                  "Accept-Language": "ja"})
     with urllib.request.urlopen(req, timeout=10) as r:
         page = r.read(3_000_000).decode("utf-8", "replace")
-    m = re.search(r'"videoRenderer":\{"videoId":"([\w-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"', page)
-    if not m:
+    out, seen = [], set()
+    for m in re.finditer(r'"videoRenderer":\{"videoId":"([\w-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"', page):
+        if m.group(1) not in seen:
+            seen.add(m.group(1))
+            out.append((m.group(1), m.group(2)))
+        if len(out) >= limit:
+            break
+    return out
+
+
+@tool("YouTube で動画を探して再生する(「〇〇の動画を流して」)。count を2以上にすると、上から順に続けて再生する"
+      "(「〇〇の歌を上から順に流して」)。order で並び順(relevance=関連順、views=再生回数順、newest=新しい順)を選べる",
+      query=("string", "探す動画の内容", True),
+      order=("string", "relevance / views / newest(既定は relevance)", False),
+      count=("integer", "続けて流す本数(1〜20。既定1)", False))
+def play_video(query, order="relevance", count=1):
+    order = {"再生回数順": "views", "人気順": "views", "新しい順": "newest", "新着順": "newest"}.get(order, order or "relevance")
+    count = max(1, min(20, int(count or 1)))
+    found = youtube_search(query, order, count)
+    if not found:
         open_in_browser(SITES["youtube"][1].format(urllib.parse.quote_plus(query)))
         return f"「{query}」の動画をすぐには選べなかったので、YouTube の検索結果を開きました"
-    vid, title = m.group(1), m.group(2).encode().decode("unicode_escape", "ignore") if "\\u" in m.group(2) else m.group(2)
-    open_in_browser(f"https://www.youtube.com/watch?v={vid}")
-    return f"YouTube で「{title}」を再生します"
+    how = {"views": "再生回数の多い順に", "newest": "新しい順に"}.get(order, "")
+    if count == 1 or len(found) == 1:
+        open_in_browser(f"https://www.youtube.com/watch?v={found[0][0]}")
+        return f"YouTube で「{found[0][1]}」を再生します"
+    # 何本かを続けて再生する(YouTube の一時的な再生リスト)
+    open_in_browser("https://www.youtube.com/watch_videos?video_ids=" + ",".join(v for v, _ in found))
+    titles = "、".join(f"「{t[:20]}」" for _, t in found[:3])
+    return f"YouTube で「{query}」を{how}{len(found)}本続けて再生します。最初は{titles}などです"
 
 
 @tool("ブラウザで指定URLを開く(本当にあるURLが分かっているときだけ。推測で作らない)", url=("string", "開くURL", True))
