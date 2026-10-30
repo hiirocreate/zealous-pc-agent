@@ -125,7 +125,8 @@ def run(out):
 
             # 右下の角をつかんで斜めに広げる: 幅と高さが同時に変わること
             x, y, w, h = rect()
-            gx, gy = on_main(lambda: (app._grips["se"].winfo_rootx() + 7, app._grips["se"].winfo_rooty() + 7))
+            g = app._grips["s"]  # 下の辺の右端(角)
+            gx, gy = on_main(lambda: (g.winfo_rootx() + g.winfo_width() - 20, g.winfo_rooty() + 3))
             pyautogui.moveTo(gx, gy)
             pyautogui.mouseDown()
             for i in range(1, 7):
@@ -134,6 +135,8 @@ def run(out):
             pyautogui.mouseUp()
             time.sleep(0.8)
             nx, ny, nw, nh = rect()
+            img = ImageGrab.grab(bbox=(nx, ny, nx + 40, ny + 40), all_screens=True)  # 角に黒い四角が無いこと
+            img.save(os.path.join(out, "4b_corner.png"))
             note(f"角のドラッグ(斜め): {w}x{h} → {nw}x{nh} " + ("OK" if nw < w and nh < h and (nx, ny) == (x, y) else "NG"))
 
             # 全画面にして戻す

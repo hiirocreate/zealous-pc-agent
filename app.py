@@ -289,10 +289,12 @@ class App(ctk.CTk):
         if os.name == "nt":  # Windows の斜めの矢印
             cursors.update(nw="size_nw_se", se="size_nw_se", ne="size_ne_sw", sw="size_ne_sw",
                            n="size_ns", s="size_ns", e="size_we", w="size_we")
-        self._grips = {}
-        for edge, cursor in cursors.items():
-            g = tk.Frame(self, bg=T.BG, cursor=cursor, highlightthickness=0, bd=0)
-            g.bind("<ButtonPress-1>", lambda e, ed=edge: self._resize_start(e, ed))
+        # 角は専用の部品を置かず(背景と色が合わず四角が見えるため)、辺のつまみの端の方をつかむと斜めに動く
+        self._grips, self._cursors = {}, cursors
+        for edge in ("n", "s", "w", "e"):
+            g = tk.Frame(self, bg=T.BG, cursor=cursors[edge], highlightthickness=0, bd=0)
+            g.bind("<Motion>", lambda e, ed=edge: e.widget.configure(cursor=self._cursors[self._grip_edge(e, ed)]))
+            g.bind("<ButtonPress-1>", lambda e, ed=edge: self._resize_start(e, self._grip_edge(e, ed)))
             g.bind("<B1-Motion>", self._resize_move)
             g.bind("<ButtonRelease-1>", self._resize_end)
             self._grips[edge] = g
@@ -736,23 +738,21 @@ class App(ctk.CTk):
         config.save({"WINDOW_POS": list(self._pos)})
 
     # ---- 大きさの変更(端をドラッグ) ----
+    def _grip_edge(self, e, edge):
+        """辺のつまみのどこをつかんだか: 端から 28 の範囲なら斜め(角)。"""
+        k, w = self._px(28), e.widget
+        if edge in ("n", "s"):
+            return edge + "w" if e.x < k else edge + "e" if e.x > w.winfo_width() - k else edge
+        return "n" + edge if e.y < k else "s" + edge if e.y > w.winfo_height() - k else edge
+
     def _show_grips(self):
-        g, c = GRIP, GRIP * 2
-        # 角のつまみ: 窓の角は丸く切り抜かれているので、角ぴったりではなく、丸みの少し内側に大きめに置く
-        k, i = 14, 4  # (近くの丸いボタンの、丸の外側の角だけに重なる大きさ)
-        place = {"n": dict(x=c, y=0, relwidth=1, width=-2 * c, height=g),
-                 "s": dict(x=c, rely=1, y=-g, relwidth=1, width=-2 * c, height=g),
-                 "w": dict(x=0, y=c, relheight=1, height=-2 * c, width=g),
-                 "e": dict(relx=1, x=-g, y=c, relheight=1, height=-2 * c, width=g),
-                 "nw": dict(x=i, y=i, width=k, height=k), "ne": dict(relx=1, x=-k - i, y=i, width=k, height=k),
-                 "sw": dict(x=i, rely=1, y=-k - i, width=k, height=k),
-                 "se": dict(relx=1, x=-k - i, rely=1, y=-k - i, width=k, height=k)}
+        g = GRIP
+        place = {"n": dict(x=0, y=0, relwidth=1, height=g), "s": dict(x=0, rely=1, y=-g, relwidth=1, height=g),
+                 "w": dict(x=0, y=0, relheight=1, width=g), "e": dict(relx=1, x=-g, y=0, relheight=1, width=g)}
         px = lambda d: {key: (self._px(v) if key in ("x", "y", "width", "height") else v) for key, v in d.items()}
         for edge, grip in self._grips.items():
             grip.place(**px(place[edge]))
             grip.lift()
-        for edge in ("nw", "ne", "sw", "se"):  # 角は辺より手前に(重なったところは斜めに動かせる方を優先)
-            self._grips[edge].lift()
 
     def _hide_grips(self):
         for grip in self._grips.values():
