@@ -942,3 +942,21 @@ def test_office_answers_and_titles():
     assert officedoc.generic_title("資料") and officedoc.generic_title("") and not officedoc.generic_title("株式会社才")
     doc = officedoc.parse("## スライドの題名\nスライド1: 会社紹介\n■ 強み\n## 出典\n- a https://x.jp/?srsltid=abc")
     assert doc["sections"][0]["title"] == "会社紹介" and doc["sources"] == ["a https://x.jp/"]
+
+
+def test_tech_model_fits_memory(monkeypatch):
+    import config
+    import llm
+    import models
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "qwen2.5:1.5b")
+    monkeypatch.setattr(config, "TECH_MODEL", "auto")
+    monkeypatch.setattr(llm, "_tech_note", "")
+    monkeypatch.setattr(models, "memory_gb", lambda: (8.0, 3.0))
+    assert llm.tech_model() == "qwen2.5:1.5b"  # メモリ8GB: いつものAIのまま
+    monkeypatch.setattr(models, "memory_gb", lambda: (16.0, 8.0))
+    assert llm.tech_model() == "granite4.2:3b-q4_K_M"
+    monkeypatch.setattr(config, "TECH_MODEL", "maternion/lfm2:8b-a1b")
+    monkeypatch.setattr(models, "memory_gb", lambda: (16.0, 3.0))
+    assert llm.tech_model() == "qwen2.5:1.5b" and "メモリが少ない" in llm._tech_note  # 空きが足りない
+    monkeypatch.setattr(models, "memory_gb", lambda: (8.0, 6.0))
+    assert llm.num_ctx([{"content": "あ" * 30000}]) == 8192  # メモリが少ないPCは読む量の上限を下げる

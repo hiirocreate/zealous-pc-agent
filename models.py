@@ -155,3 +155,47 @@ def warning(name):
             "・保存するとダウンロードを始めます（回線によって数分〜数十分）\n"
             "・大きいモデルほど賢くなりますが、返事が遅くなり、PCのメモリを多く使います\n"
             "・メモリが足りないと、PC全体が重くなったり動かなくなったりします")
+
+
+# ---------------- PCのメモリに合わせたモデル選び ----------------
+def memory_gb():
+    """(搭載メモリ, いま空いているメモリ) を GB で。分からなければ (0, 0)。"""
+    import os
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MEM(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = MEM()
+            m.dwLength = ctypes.sizeof(MEM)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return m.ullTotalPhys / 2 ** 30, m.ullAvailPhys / 2 ** 30
+        info = dict(line.split(":", 1) for line in open("/proc/meminfo"))
+        kb = lambda k: int(info[k].split()[0]) / 2 ** 20  # noqa: E731
+        return kb("MemTotal"), kb("MemAvailable")
+    except Exception:
+        return 0.0, 0.0
+
+
+def need_gb(name):
+    """そのモデルを動かすのに要るメモリの目安(GB)。一覧にないものは 4GB とみなす。"""
+    k = next((k for k in KNOWN if k[0] == name), None)
+    if not k:
+        return 4.0
+    size, unit = float(k[1][:-2]), k[1][-2:]
+    return (size if unit == "GB" else size / 1000) * 1.2 + 0.8  # 本体 + 会話の記憶(KVキャッシュ)などの分
+
+
+# テクニカルモードの「自動」: 搭載メモリが多い順に、入るものを選ぶ(GPU が無くても動く大きさ)
+TECH_AUTO = [(24, "maternion/lfm2:8b-a1b"), (12, "granite4.2:3b-q4_K_M")]
+
+
+def auto_tech(total_gb):
+    """搭載メモリに合うテクニカルモード用のモデル(少なければ "" = いつものAIをそのまま使う)。"""
+    return next((name for gb, name in TECH_AUTO if total_gb >= gb), "")
+

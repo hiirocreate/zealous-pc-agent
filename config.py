@@ -38,7 +38,7 @@ DEFAULTS = {
     "UI_FONT": "",                   # 画面の文字のフォント(空なら標準: Yu Gothic UI)
     "UI_FONT_SCALE": 100,            # 画面の文字の大きさ(%)
     "IME_INLINE": True,              # 日本語の変換中の文字を入力欄の中に表示する(OFF で Windows 標準の表示)
-    "SETTINGS_VERSION": 2,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
+    "SETTINGS_VERSION": 3,           # 設定ファイルの形式(古い設定を読み込むときの移し替え用)
     # ---- フォルダ操作の権限 ----
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,
@@ -72,7 +72,7 @@ DEFAULTS = {
     "OFFICE_REVIEW": True,           #   書いた中身を見直す(誤字・重複・不自然な言い回し)。少し時間がかかる
     "OFFICE_IMAGES": True,           #   写真を入れる(使ってよい許可が明記された Wikimedia Commons の写真だけ)
     "TECH_AUTO": True,               # コード・サーバーなど技術的な質問は、テクニカルモードに自動で切り替える
-    "TECH_MODEL": "maternion/lfm2:8b-a1b",  # テクニカルモードで使うAIモデル(空なら通常と同じ。初めて使うときに自動で取得)
+    "TECH_MODEL": "auto",  # テクニカルモードで使うAIモデル(空なら通常と同じ。初めて使うときに自動で取得)
     # ---- メール(画面を使わずに裏側で操作) ----
     "MAIL_SERVICE": "auto",          # auto / imap / outlook
     "MAIL_IMAP_HOST": "",            # 例: imap.gmail.com
@@ -162,6 +162,9 @@ def load():
             values["WAKE_ENABLED"] = True
             for key, new in (("WAKE_WORDS", DEFAULTS["WAKE_WORDS"]), ("AI_NAME_ALIASES", DEFAULTS["AI_NAME_ALIASES"])):
                 values[key] = list(dict.fromkeys(list(values[key]) + new))
+        if saved.get("SETTINGS_VERSION", 1) < 3 and values.get("TECH_MODEL") == "maternion/lfm2:8b-a1b":
+            values["TECH_MODEL"] = "auto"  # 以前の既定(メモリを多く使う)は「自動」(PCのメモリに合わせて選ぶ)にする
+        values["SETTINGS_VERSION"] = DEFAULTS["SETTINGS_VERSION"]  # 移し替えは1回だけ
     except (OSError, ValueError):
         pass
     globals().update(values)

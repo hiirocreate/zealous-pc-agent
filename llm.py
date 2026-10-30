@@ -221,8 +221,12 @@ def num_ctx(messages):
     """AIが一度に読む量(トークン)。渡す文が長いときだけ広げる。
     広げ方を4段階に限るのは、変えるたびに Ollama がモデルを読み込み直して遅くなるため。"""
     chars = sum(len(m.get("content") or "") for m in messages) + 2500  # 関数の説明などの分
+    import models
+    total = models.memory_gb()[0]
+    # メモリの少ないPCでは上限を下げる(読む量が倍になると、会話の記憶に使うメモリも倍になるため)
+    top = 8192 if 0 < total < 12 else 16384 if 0 < total < 24 else 32768
     for size in (4096, 8192, 16384, 32768):
-        if chars <= size * 0.9:
+        if chars <= size * 0.9 or size >= top:
             return size
     return 32768
 
@@ -445,7 +449,7 @@ def write_document(kind, request, source=""):
                "\n\n(調べた情報はありません。数字や事実は、これまでの会話にあるものだけを使ってください)"))
     messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
     # テクニカルモード用のAIは、テクニカルモードのときだけ使う(ふだんはいつものAIで書く)
-    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
+    model = tech_model() if _tech else config.OLLAMA_MODEL
     _status("構成を考えています…")
     draft = _plan(kind, rule, request, model)
     planned = draft is not None
@@ -480,7 +484,7 @@ def warm():
     if time.monotonic() - _warmed < 120:
         return
     _warmed = time.monotonic()
-    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
+    model = tech_model() if _tech else config.OLLAMA_MODEL
 
     def run():
         try:
@@ -491,9 +495,38 @@ def warm():
     threading.Thread(target=run, daemon=True).start()
 
 
+_tech_note = ""  # テクニカルモードで、メモリが足りずにいつものAIで答えたときの知らせ(1回だけ出す)
+
+
+def tech_model():
+    """テクニカルモードで実際に使うモデル。
+    「自動」なら搭載メモリに合うものを選び、いま空いているメモリで動かせないときは、いつものAIのまま答える
+    (メモリが足りないモデルを読み込むと、PC全体が固まったように遅くなるため)。"""
+    global _tech_note
+    import models
+    want = getattr(config, "TECH_MODEL", "") or ""
+    total, free = models.memory_gb()
+    if want == "auto":
+        want = models.auto_tech(total) if total else ""
+    if not want or want == config.OLLAMA_MODEL:
+        return config.OLLAMA_MODEL
+    if total:
+        # いつものAIは入れ替わりで外れる(同時に読み込むのは1つだけ)ので、その分も空きに数える
+        room = free + models.need_gb(config.OLLAMA_MODEL) * 0.8
+        if room < models.need_gb(want):
+            if not _tech_note:
+                _tech_note = (f"（いま空いているメモリが少ないため、コード向けのAI「{want}」ではなく、いつものAIで答えます。"
+                              "ほかのアプリを閉じると使えるようになります）")
+            return config.OLLAMA_MODEL
+    return want
+
+
 def release_tech_model():
     """テクニカルモード用のAIを、メモリから外す(いつものAIはそのまま)。"""
-    model = getattr(config, "TECH_MODEL", "")
+    model = tech_model() if _tech else (getattr(config, "TECH_MODEL", "") or "")
+    if model == "auto":
+        import models
+        model = models.auto_tech(models.memory_gb()[0])
     if not model or model == config.OLLAMA_MODEL:
         return
     import threading
@@ -535,7 +568,7 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, te
     """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
     関数呼び出し(JSON)らしい返事は画面に出さない。
     guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
-    model = model or ((getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL)
+    model = model or (tech_model() if _tech else config.OLLAMA_MODEL)
     temp = temperature if temperature is not None else 0.2 if _tech else 0
     body = {"model": model, "messages": messages, "stream": True,
             "options": {"temperature": temp, "num_ctx": num_ctx(messages)},
@@ -1267,12 +1300,17 @@ def _ask_tech(text):
     if route:  # 「Wordにまとめて」などは、すぐに資料を作る
         return _run(*route)
     messages = [{"role": "system", "content": tech_prompt()}, *_context(), {"role": "user", "content": text}]
+    global _tech_note
+    tech_model()  # メモリが足りるか、ここで確かめる
+    if _tech_note not in ("", "shown") and on_delta:  # メモリが足りずに、いつものAIで答えることを一度だけ伝える
+        on_delta(_tech_note + "\n\n")
+        _tech_note = "shown"
     for step in range(max(2, config.MAX_TOOL_STEPS)):
         try:
             msg = _chat(messages, use_tools=True, stream_out=True)
         except requests.HTTPError as e:
-            model = getattr(config, "TECH_MODEL", "")
-            if not (model and "404" in str(e)):
+            model = tech_model()
+            if not (model and model != config.OLLAMA_MODEL and "404" in str(e)):
                 raise
             # コード向けのモデルがまだ無い: 裏でダウンロードを始め、今回はいつものモデルで答える
             import threading
