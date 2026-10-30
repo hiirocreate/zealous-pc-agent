@@ -314,7 +314,8 @@ def write_document(kind, request):
             + (f"\n\n【調べた情報】\n{material[:6000]}" if material else
                "\n\n(調べた情報はありません。数字や事実は、これまでの会話にあるものだけを使ってください)"))
     messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
-    model = getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL
+    # テクニカルモード用のAIは、テクニカルモードのときだけ使う(ふだんはいつものAIで書く)
+    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
     _status("資料の中身を書いています…")
     draft = _doc_chat(messages, model, 0.4)
     text = draft
@@ -330,6 +331,22 @@ def write_document(kind, request):
         text += "\n\n## 出典\n" + "\n".join(f"- {s}" for s in sources)
     _status("ファイルを作っています…")
     return text
+
+
+def release_tech_model():
+    """テクニカルモード用のAIを、メモリから外す(いつものAIはそのまま)。"""
+    model = getattr(config, "TECH_MODEL", "")
+    if not model or model == config.OLLAMA_MODEL:
+        return
+    import threading
+
+    def run():
+        try:
+            requests.post(config.OLLAMA_URL.replace("/api/chat", "/api/generate"),
+                          json={"model": model, "keep_alive": 0}, timeout=10)
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _start_pull(model):
@@ -363,7 +380,9 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, te
     model = model or ((getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL)
     temp = temperature if temperature is not None else 0.2 if _tech else 0
     body = {"model": model, "messages": messages, "stream": True,
-            "options": {"temperature": temp, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
+            "options": {"temperature": temp, "num_ctx": num_ctx(messages)},
+            # テクニカルモード用のAIは大きいので、使い終わって10分たったらメモリから外す
+            "keep_alive": "10m" if model != config.OLLAMA_MODEL else "30m"}
     if use_tools:
         body["tools"] = tools.schemas(TECH_TOOLS if _tech else None)
     import models
@@ -497,7 +516,9 @@ def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=
     global _last, _summary, _memory, _full, _tech
     attach(attachments)
     _full = bool(full)
-    _tech = mode == "tech"
+    was_tech, _tech = _tech, mode == "tech"
+    if was_tech and not _tech:
+        release_tech_model()  # テクニカルモードを抜けた: 大きなAIをすぐメモリから外す
     if _full and history is not None:
         history, summary = _fit(list(history), summary or "", tid, base)
     _summary, _memory = summary or "", list(memory or [])

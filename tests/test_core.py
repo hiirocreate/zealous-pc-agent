@@ -826,3 +826,21 @@ def test_attachments_read_and_answer(monkeypatch, tmp_path):
     assert llm.ask("売上の合計は？", history=[], attachments=[str(tmp_path / "sales.csv")]) == "合計は400です"
     assert "合計 400" in seen[0][1]["content"]  # 添付の中身をもとに答える
     llm.attach([])
+
+
+def test_tech_model_only_in_tech_mode(monkeypatch):
+    monkeypatch.setattr(config, "TECH_MODEL", "maternion/lfm2:8b-a1b")
+    used, released = [], []
+    monkeypatch.setattr(llm, "_doc_chat", lambda m, model, t: used.append(model) or "# T\n## A\n- a")
+    monkeypatch.setattr(config, "OFFICE_RESEARCH", False)
+    monkeypatch.setattr(config, "OFFICE_REVIEW", False)
+    llm._tech = False
+    llm.write_document("docx", "報告書を作って")
+    assert used == [config.OLLAMA_MODEL]  # 通常モードでは、テクニカルモード用のAIを使わない
+    llm._tech = True
+    llm.write_document("docx", "報告書を作って")
+    assert used[-1] == "maternion/lfm2:8b-a1b"
+    monkeypatch.setattr(llm, "release_tech_model", lambda: released.append(1))
+    monkeypatch.setattr(llm, "_ask", lambda text: "ok")
+    llm.ask("こんにちは", history=[], mode="")  # テクニカルモードを抜けたら、すぐメモリから外す
+    assert released == [1] and llm._tech is False

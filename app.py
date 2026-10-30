@@ -1045,7 +1045,9 @@ class App(ctk.CTk):
         if on:
             self.thread["mode"] = "tech"
         else:
-            self.thread.pop("mode", None)
+            if self.thread.pop("mode", None):
+                import llm
+                llm.release_tech_model()  # テクニカルモード用の大きなAIを、すぐメモリから外す
         if self.thread["messages"]:
             threads.save(self.thread)
         self._paint_tech()
