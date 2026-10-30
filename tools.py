@@ -538,6 +538,11 @@ def screen_tool(kind, description, **params):
     return deco
 
 
+def _is_browser(hwnd):
+    import screen
+    return screen.class_name(hwnd).startswith(("Chrome_WidgetWin", "MozillaWindowClass"))
+
+
 def _target():
     import screen
     hwnd, title = screen.target_window()
@@ -562,6 +567,19 @@ def click_on(label):
         hit = screen.uia_act(hwnd, label)
     if hit and hit[0] == "done":
         return f"「{title}」の「{hit[1]}」を押しました(マウスは動かしていません)"
+    if not hit and _is_browser(hwnd):
+        # 4. ブラウザのページの中: ページ内検索で文字を探し、検索を閉じるとそのリンクやボタンが選ばれるので Enter で押す
+        with screen.Borrow():
+            screen.focus(hwnd)
+            pyautogui.hotkey("ctrl", "f")
+            time.sleep(0.4)
+            screen.paste_text(label)
+            pyautogui.press("enter")
+            time.sleep(0.4)
+            pyautogui.press("esc")
+            time.sleep(0.3)
+            pyautogui.press("enter")
+        return f"「{title}」のページで「{label}」を探して押しました"
     if not hit:
         return f"「{title}」の中に「{label}」が見つかりませんでした"
     with screen.Borrow():  # 3. マウスでしか押せない: 手が止まるのを待ってから、少しだけ借りる
