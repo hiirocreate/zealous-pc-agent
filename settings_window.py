@@ -147,6 +147,10 @@ _SOURCE = [
          "一覧から選ぶか名前を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
         ("OLLAMA_URL", "Ollama の URL（AIを動かすソフトの接続先）", "str", "通常は変更不要"),
         ("OLLAMA_TIMEOUT", "タイムアウト（返事を待つ最大秒数）", "int", ""),
+        ("AI_CPU", "AIが使うCPU", "choice",
+         "「控えめ」はAIが考えている間もCPUに余裕を残し、ほかのアプリやPC全体が重くなりにくくします"
+         "（返事は少しだけ遅くなります）。「すべて」は速さ優先で、考えている間はCPUがほぼ100%になります",
+         [("save", "控えめ（おすすめ・PCが重くならない）"), ("full", "すべて使う（速さ優先）")]),
         ("USE_GPU", "GPU（NVIDIA製の画像処理チップ）でAIを速くする", "bool",
          "NVIDIA製GPUがあるPCのみ。ONだと追加で約0.6〜0.9GBをダウンロード。"
          "変更後は「更新・情報」の「部品を準備」で反映"),
@@ -235,7 +239,7 @@ LAYOUT = [
              "+AI_NAME_ALIASES", "+WHISPER_MODEL", "+LANGUAGE", "+VAD_THRESHOLD", "+VAD_SILENCE_SEC", "+VAD_MIN_SEC",
              "+VAD_MAX_SEC", "+WHISPER_DEVICE", "+WHISPER_COMPUTE"]),
     ("読み上げ", ["—声", "TTS_ENABLED", "＊voice_picker", "TTS_SPEED", "—読み方", "READINGS", "+VOICEVOX_URL"]),
-    ("AI", ["—性格・話し方", "PERSONA", "—覚えていること", "MEMORY", "—AIモデル", "OLLAMA_MODEL", "USE_GPU",
+    ("AI", ["—性格・話し方", "PERSONA", "—覚えていること", "MEMORY", "—AIモデル", "OLLAMA_MODEL", "AI_CPU", "USE_GPU",
             "+OLLAMA_URL", "+OLLAMA_TIMEOUT", "+MAX_TOOL_STEPS", "+SUMMARIZE_AFTER_TOOL"]),
     ("会話", ["—会話の記憶", "CONTEXT_TURNS", "FULL_CONTEXT", "FULL_CONTEXT_LIMIT", "FULL_CONTEXT_COMPRESS",
             "—テクニカルモード（コード・サーバー・IT）", "TECH_AUTO", "TECH_MODEL"]),

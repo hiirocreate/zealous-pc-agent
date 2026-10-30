@@ -57,6 +57,7 @@ DEFAULTS = {
     "OLLAMA_URL": "http://localhost:11434/api/chat",
     "OLLAMA_MODEL": "qwen2.5:1.5b",
     "OLLAMA_TIMEOUT": 60,
+    "AI_CPU": "save",                # AIが使うCPU: save=控えめ(ほかのアプリが重くならない) / full=すべて(速さ優先)
     "USE_GPU": True,                 # NVIDIA の GPU があれば使う(GPU 用ライブラリを追加で取得)
     "MAX_TOOL_STEPS": 3,             # 1命令あたりの関数呼び出し上限(ループ防止)
     "QUICK_ROUTE": True,             # 「〜を調べて」などはAIの判断を待たずに直接実行(速い)

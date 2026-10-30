@@ -153,10 +153,13 @@ def restart_voicevox():
 def warm_up():
     """起動直後に AIモデルと声を読み込んでおき、最初の返事を速くする(裏で実行)。"""
     import requests
+    import llm
     if _wait(lambda: services.check_ollama()[0], 60):
         try:  # 空の依頼でモデルをメモリに載せる
             requests.post(services.ollama_base() + "/api/generate",
-                          json={"model": config.OLLAMA_MODEL, "keep_alive": "15m"}, timeout=120)
+                          # 返事のときと同じ指定で読み込む(違うと、最初の返事で読み込み直しになる)
+                          json={"model": config.OLLAMA_MODEL, "keep_alive": "15m",
+                                "options": llm.ai_options(num_ctx=4096)}, timeout=120)
         except requests.RequestException:
             pass
     if config.TTS_ENABLED and _wait(lambda: services.check_voicevox()[0], 120):

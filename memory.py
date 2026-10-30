@@ -76,9 +76,10 @@ class Summarizer:
                       "ユーザーの名前・好み・決めたこと・頼まれたこと・話題の流れを優先し、あいさつなどは省いてください。"
                       "要約だけを書いてください。\n\n"
                       + (f"【これまでの要約】\n{prev}\n\n" if prev else "") + f"【新しい会話】\n{convo}")
+            import llm
             body = {"model": config.OLLAMA_MODEL, "stream": True, "keep_alive": "15m",
                     "messages": [{"role": "user", "content": prompt}],
-                    "options": {"temperature": 0, "num_ctx": 4096}}
+                    "options": llm.ai_options(temperature=0, num_ctx=4096)}
             import models
             if models.thinks(config.OLLAMA_MODEL):
                 body["think"] = False

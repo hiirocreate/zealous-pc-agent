@@ -217,6 +217,16 @@ def page_answer(question, title, text):
     return (msg.get("content") or "").strip() or "ページの内容をうまくまとめられませんでした"
 
 
+def ai_options(**extra):
+    """AIへの指定(読む量・温度など)に、使うCPUの数を足す。
+    「控えめ」なら、論理コアの半分から1つ引いた数まで(少なくとも2)。CPUだけで動かすときに、
+    PC全体がほぼ100%に張り付いて重くなるのを防ぐ(返事は少し遅くなるが、操作は軽いまま)。"""
+    import os
+    if getattr(config, "AI_CPU", "save") == "save":
+        extra["num_thread"] = max(2, (os.cpu_count() or 4) // 2 - 1)
+    return extra
+
+
 def num_ctx(messages):
     """AIが一度に読む量(トークン)。渡す文が長いときだけ広げる。
     広げ方を4段階に限るのは、変えるたびに Ollama がモデルを読み込み直して遅くなるため。"""
@@ -489,7 +499,7 @@ def warm():
     def run():
         try:
             requests.post(config.OLLAMA_URL.replace("/api/chat", "/api/generate"),
-                          json={"model": model, "keep_alive": KEEP}, timeout=120)
+                          json={"model": model, "keep_alive": KEEP, "options": ai_options(num_ctx=4096)}, timeout=120)
         except Exception:
             pass
     threading.Thread(target=run, daemon=True).start()
@@ -571,7 +581,7 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, te
     model = model or (tech_model() if _tech else config.OLLAMA_MODEL)
     temp = temperature if temperature is not None else 0.2 if _tech else 0
     body = {"model": model, "messages": messages, "stream": True,
-            "options": {"temperature": temp, "num_ctx": num_ctx(messages)},
+            "options": ai_options(temperature=temp, num_ctx=num_ctx(messages)),
             # テクニカルモード用のAIは大きいので、使い終わって10分たったらメモリから外す
             "keep_alive": "10m" if model != config.OLLAMA_MODEL else KEEP}
     if use_tools:

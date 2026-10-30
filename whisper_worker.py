@@ -46,7 +46,7 @@ def _worker_main(inq, outq):
             if want not in models:
                 for key in [k for k in models if k[0] not in (config.WHISPER_MODEL, config.COMMAND_WHISPER_MODEL)]:
                     del models[key]  # 使わなくなったモデルはメモリから外す
-                models[want] = load_model(*want)
+                models[want] = load_model(*want, light=not command and name != config.COMMAND_WHISPER_MODEL)
             used[want] = time.monotonic()
             if audio is None:  # 前もって読み込むだけ
                 outq.put((job_id, "", None))

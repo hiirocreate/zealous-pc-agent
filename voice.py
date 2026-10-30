@@ -50,12 +50,14 @@ def fix_words(text):
     return text
 
 
-def load_model(name, device, compute):
+def load_model(name, device, compute, light=False):
     from faster_whisper import WhisperModel
     import runtime
-    # CPU の半分だけを使う(全部使うと、常時聞き取りの間 PC 全体が重くなる)
+    # CPU の半分だけを使う(全部使うと、常時聞き取りの間 PC 全体が重くなる)。
+    # 待機中の聞き取り(light)は、さらに4分の1まで(合図の言葉を見つけるだけなので十分速い)
+    cores = os.cpu_count() or 4
     return WhisperModel(name, device=device, compute_type=compute, download_root=runtime.WHISPER_DIR,
-                        cpu_threads=max(2, (os.cpu_count() or 4) // 2))
+                        cpu_threads=max(2, cores // 4 if light else cores // 2))
 
 
 def _repetitive(text):
