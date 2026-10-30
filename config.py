@@ -83,11 +83,43 @@ EMERGENCY_KEYS = ["ctrl", "shift", "e", "s"]
 SAMPLE_RATE = 16000
 WINDOW_W, WINDOW_H = 360, 270
 MARGIN_X, MARGIN_Y = 12, 60    # 右下からの余白(MARGIN_Y はタスクバー分)
-DESKTOP = next(
-    (p for p in (os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
-                 os.path.join(os.path.expanduser("~"), "Desktop")) if os.path.isdir(p)),
-    os.path.join(os.path.expanduser("~"), "Desktop"),
-)
+_FOLDER_IDS = {  # Windows が覚えている、本当のフォルダの場所(OneDrive に移したデスクトップなども正しく分かる)
+    "desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+    "documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
+    "downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+    "pictures": "{33E28130-4E1E-4676-835A-98395C3BC3BB}",
+    "music": "{4BD8D571-6D19-48D3-BE97-422220080E43}",
+    "videos": "{18989B1D-99B5-455B-841C-AB7C74E4DDFC}",
+}
+
+
+def known_folder(kind):
+    """デスクトップ・ドキュメントなどの本当の場所。"""
+    if os.name == "nt":
+        try:
+            import ctypes
+            import uuid
+            from ctypes import wintypes
+            guid = uuid.UUID(_FOLDER_IDS[kind])
+            buf = ctypes.c_wchar_p()
+            gid = (ctypes.c_byte * 16).from_buffer_copy(guid.bytes_le)
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(gid), 0, None, ctypes.byref(buf)) == 0:
+                path = buf.value
+                ctypes.windll.ole32.CoTaskMemFree(buf)
+                if path and os.path.isdir(path):
+                    return path
+        except Exception:
+            pass
+    home = os.path.expanduser("~")
+    name = kind.capitalize()
+    for p in (os.path.join(home, "OneDrive", name), os.path.join(home, "OneDrive", "デスクトップ")
+              if kind == "desktop" else "", os.path.join(home, name)):
+        if p and os.path.isdir(p):
+            return p
+    return os.path.join(home, name)
+
+
+DESKTOP = known_folder("desktop")
 
 
 def current():

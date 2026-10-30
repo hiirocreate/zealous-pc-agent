@@ -478,3 +478,33 @@ def test_export_text():
     t["messages"] = [{"role": "user", "text": "こんにちは", "time": 0}, {"role": "ai", "text": "やあ", "time": 0}]
     out = threads.export_text(t, "Zealous")
     assert "**あなた**" in out and "こんにちは" in out and "**Zealous**" in out
+
+
+def test_find_and_open_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
+    monkeypatch.setitem(tools._KNOWN, "デスクトップ", str(tmp_path))
+    monkeypatch.setattr(tools, "_search_roots", lambda path="": [str(tmp_path)])
+    (tmp_path / "テンプレ.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "テンプレ_古い.txt").write_text("y", encoding="utf-8")
+    res = tools.run_tool("find_files", {"name": "テンプレ"})
+    assert "2 件" in res and str(tmp_path / "テンプレ.txt") in res
+    opened = []
+    monkeypatch.setattr(tools.subprocess, "Popen", lambda args, **k: opened.append(args))
+    if hasattr(tools.os, "startfile"):
+        monkeypatch.setattr(tools.os, "startfile", lambda p: opened.append(p))
+    assert "開きました" in tools.run_tool("open_file", {"name": "テンプレ"})
+    assert str(tmp_path / "テンプレ.txt") in str(opened[0])
+    # すでにあるファイルを、空の中身で上書きしない
+    assert "すでにあります" in tools.run_tool("create_text_file", {"name": "テンプレ"})
+    assert (tmp_path / "テンプレ.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_claim_without_tool_is_retried(monkeypatch):
+    calls = iter([{"content": "ファイルを開きました。"}, {"content": "", "tool_calls": [
+        {"function": {"name": "find_files", "arguments": {"name": "テンプレ"}}}]}])
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: next(calls))
+    monkeypatch.setattr(tools, "find_paths", lambda name, path="", limit=10: ["C:/Users/u/Desktop/テンプレ.txt"])
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    monkeypatch.setattr(config, "SUMMARIZE_AFTER_TOOL", False)
+    assert "見つかりました" in llm.ask("さっきのファイルを探してきて", history=[])

@@ -197,19 +197,29 @@ def launch_app(name):
 
 # ---------------- ファイル・フォルダ ----------------
 _HOME = os.path.expanduser("~")
-_KNOWN = {  # よく使うフォルダの呼び名
+_KNOWN = {  # よく使うフォルダの呼び名 → 本当の場所
     "デスクトップ": config.DESKTOP, "desktop": config.DESKTOP,
-    "ドキュメント": os.path.join(_HOME, "Documents"), "documents": os.path.join(_HOME, "Documents"),
-    "ダウンロード": os.path.join(_HOME, "Downloads"), "downloads": os.path.join(_HOME, "Downloads"),
-    "ピクチャ": os.path.join(_HOME, "Pictures"), "画像": os.path.join(_HOME, "Pictures"),
-    "ミュージック": os.path.join(_HOME, "Music"), "ビデオ": os.path.join(_HOME, "Videos"),
+    "ドキュメント": config.known_folder("documents"), "documents": config.known_folder("documents"),
+    "ダウンロード": config.known_folder("downloads"), "downloads": config.known_folder("downloads"),
+    "ピクチャ": config.known_folder("pictures"), "pictures": config.known_folder("pictures"),
+    "画像": config.known_folder("pictures"),
+    "ミュージック": config.known_folder("music"), "music": config.known_folder("music"),
+    "ビデオ": config.known_folder("videos"), "videos": config.known_folder("videos"),
 }
 
 
 def _base(path):
     if not path:
         return config.DESKTOP
-    return _KNOWN.get(path.strip().lower(), os.path.expandvars(os.path.expanduser(path)))
+    p = path.strip().strip('"')
+    if p.lower() in _KNOWN:
+        return _KNOWN[p.lower()]
+    full = os.path.expandvars(os.path.expanduser(p))
+    # AIが「C:\\Desktop」のように、ありそうな場所を思い込みで書いたとき: 名前が分かるなら本当の場所にする
+    last = os.path.basename(full.rstrip("\\/")).lower()
+    if not os.path.isdir(full) and last in _KNOWN:
+        return _KNOWN[last]
+    return full
 
 
 def _resolve(name, path=""):
@@ -247,17 +257,20 @@ def create_folder(name, path=""):
     return f"フォルダ {p} を作成しました"
 
 
-@tool("テキストファイル(.txt)を作成または上書きする(場所の指定が無ければデスクトップ)",
+@tool("新しいテキストファイル(.txt)を作る(場所の指定が無ければデスクトップ)。"
+      "ファイルを探す・開くときには使わない(探すのは find_files、開くのは open_file)",
       name=("string", "ファイル名", True), content=("string", "書き込む内容", False),
       path=("string", "保存場所のパス", False))
 def create_text_file(name, content="", path=""):
     if not name.lower().endswith(".txt"):
         name += ".txt"
     p = _guard(_resolve(name, path))
+    if os.path.exists(p) and not content:
+        return f"{os.path.basename(p)} はすでにあります（{os.path.dirname(p)}）。中身はそのままにしました"
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"ファイル {p} を作成しました"
+    return f"{os.path.basename(p)} を作成しました（{os.path.dirname(p)}）"
 
 
 @tool("既存のテキストファイルの末尾に追記する",
@@ -483,3 +496,60 @@ def click_position(x, y, double=False):
         return "画面の外の位置はクリックできません"
     pyautogui.click(x, y, clicks=2 if str(double).lower() in ("true", "1") else 1)
     return f"({x}, {y}) をクリックしました"
+
+
+# ---------------- ファイルを探す・開く ----------------
+def _search_roots(path=""):
+    if path:
+        return [_base(path)]
+    roots = [config.DESKTOP] + [_KNOWN[k] for k in ("documents", "downloads", "pictures", "music", "videos")]
+    return [r for i, r in enumerate(roots) if r not in roots[:i] and os.path.isdir(r)]
+
+
+def find_paths(name, path="", limit=10):
+    """名前に name を含むファイル・フォルダを、デスクトップ・ドキュメントなどから探す(深さ4まで)。"""
+    key = name.strip().lower()
+    stem = os.path.splitext(key)[0] or key
+    hits = []
+    for root in _search_roots(path):
+        base_depth = root.rstrip(os.sep).count(os.sep)
+        for cur, dirs, files in os.walk(root):
+            if cur.count(os.sep) - base_depth >= 4:
+                dirs[:] = []
+            dirs[:] = [d for d in dirs if not d.startswith((".", "$")) and d.lower() not in ("node_modules", "appdata")]
+            for n in dirs + files:
+                low = n.lower()
+                if key in low or stem in os.path.splitext(low)[0]:
+                    full = os.path.join(cur, n)
+                    exact = os.path.splitext(low)[0] == stem or low == key
+                    hits.append((not exact, len(n), full))
+            if len(hits) > 200:
+                break
+    return [h[2] for h in sorted(hits)[:limit]]
+
+
+@tool("PCの中のファイルやフォルダを名前で探す(デスクトップ・ドキュメント・ダウンロードなど)。見つかった場所を答える",
+      name=("string", "探す名前(一部でよい)", True), path=("string", "探す場所(指定が無ければ、よく使う場所すべて)", False))
+def find_files(name, path=""):
+    found = find_paths(name, path)
+    if not found:
+        return f"「{name}」という名前のファイルは見つかりませんでした"
+    lines = "\n".join(f"・{p}" for p in found[:5])
+    return f"「{name}」が {len(found)} 件見つかりました。\n{lines}"
+
+
+@tool("ファイルやフォルダを開く(名前だけでもよい。見つからなければ探してから開く)",
+      name=("string", "開くファイル名またはパス", True), path=("string", "ある場所(分かれば)", False))
+def open_file(name, path=""):
+    p = _resolve(name, path)
+    if not os.path.exists(p):
+        found = find_paths(name, path)
+        if not found:
+            return f"「{name}」が見つからないため、開けませんでした"
+        p = found[0]
+    _guard(p)
+    if os.name == "nt":
+        os.startfile(p)  # いつものアプリで開く(テキストならメモ帳など)
+    else:
+        subprocess.Popen(["xdg-open", p])
+    return f"{os.path.basename(p)} を開きました（{os.path.dirname(p)}）"

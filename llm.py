@@ -87,6 +87,8 @@ def system_prompt():
             "【必ず守ること】\n"
             f"・いつも{answer_language()}で答える(ユーザーが別の言葉で話しかけたときだけ、その言葉で答える)。\n"
             "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
+            "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
+            "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
             "「それ」「さっきの」などは、直前の会話を指していると考える。"
             + user_rule() + memory_rule() + persona_rule())
@@ -240,7 +242,17 @@ def ask(text, history=None, summary="", memory=None):
 
 
 # はっきりした言い方は AI に判断させずに直接実行する(速く、小さいモデルでも確実)
+_PLACE = r"(?:(?P<where>デスクトップ|ドキュメント|ダウンロード|ピクチャ)(?:に|の|にある|から)?)?"
 _ROUTES = [
+    # 「デスクトップのテンプレっていうテキストファイル探して」
+    (re.compile(_PLACE + r"(?P<q>.+?)(?:という|っていう|って)?(?:テキスト|エクセル|ワード)?(?:ファイル|フォルダ)[をは]?"
+                r"(?:探して|さがして|見つけて|探してきて|どこ)"), "find_files"),
+    # 「デスクトップのテンプレってファイルを開いて」「メモ.txt を開いて」
+    (re.compile(_PLACE + r"(?P<q>.+?)(?:という|っていう|って)?(?:テキスト|エクセル|ワード)?(?:ファイル|フォルダ)を?"
+                r"(?:開いて|ひらいて)"), "open_file"),
+    # 「メモ.txt を開いて」(拡張子つきの名前。example.com のようなサイトの名前は除く)
+    (re.compile(_PLACE + r"(?P<q>[^\s/]+\.(?!(?:com|net|org|jp|io|co|dev|app|ai|info|me|tv|us|uk)(?![A-Za-z0-9]))"
+                r"[A-Za-z0-9]{1,5})を?(?:開いて|ひらいて)"), "open_file"),
     (re.compile(r"^(?P<q>.+?)の?(?:写真|画像|イラスト|絵)を?(?:探して|さがして|見せて|検索して|表示して|出して|調べて|しらべて|見つけて|ちょうだい|ください|ほしい|欲しい)"),
      "image_search"),
     (re.compile(r"^(?P<q>.+?)を?(?:起動して|立ち上げて)"), "launch_app"),
@@ -257,8 +269,14 @@ def quick_route(text):
     for pattern, name in _ROUTES:
         m = pattern.match(t)
         if m and m.group("q").strip(" 、,をのは"):
+            q = m.group("q").strip(" 、,をのは")
+            if name in ("find_files", "open_file"):
+                args = {"name": q}
+                if m.groupdict().get("where"):
+                    args["path"] = m.group("where")
+                return name, args
             key = "name" if name == "launch_app" else "query"
-            return name, {key: m.group("q").strip(" 、,をのは")}
+            return name, {key: q}
     return None
 
 
@@ -268,6 +286,12 @@ _NEEDS_TOOLS = re.compile(
     r"移動|コピー|名前を変え|リネーム|一覧|ブラウザ|サイト|ページ|URL|画像|写真|ロック|音量|ニュース|天気|最新|"
     r"今日|明日|昨日|いま何|今何|何時|価格|値段|株価|スクリーンショット|デスクトップ|ドキュメント|ダウンロード|"
     r"クリック|押して|入力して|打って|タイプ|スクロール|キーを|ショートカット|貼り付け|ボタン")
+
+
+_CLAIM = re.compile(r"(?:作成し|作り|保存し|削除し|移動し|コピーし|開き|開け|起動し|探し|見つけ|変更し|追記し)"
+                    r"(?:ました|ます|ておきます)")
+_DO_IT = ("あなたはまだ何も操作していません。操作が必要なら、必ず用意された関数を呼び出してください。"
+          "ファイルを探すなら find_files、開くなら open_file を使ってください。")
 
 
 def needs_tools(text):
@@ -288,6 +312,15 @@ def _ask(text):
     for step in range(config.MAX_TOOL_STEPS):
         msg = _chat_on_track(messages, text, use_tools=True) if step == 0 else _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
+        if not calls and not results and step == 0 and _CLAIM.search(msg.get("content") or ""):
+            # 関数を呼ばずに「〜しました」「開きます」と言った(実際は何もしていない): 関数を使うよう促して1回やり直す
+            import zlog
+            zlog.note("操作したと言ったのに関数を呼んでいないため、やり直し")
+            retry = messages[:-1] + [{"role": "system", "content": _DO_IT}, messages[-1]]
+            msg = _chat(retry, stream_out=False)
+            calls = parse_tool_calls(msg)
+            if not calls:
+                return "すみません、その操作はうまくできませんでした。ファイル名や場所を、もう少し詳しく教えてもらえますか？"
         if not calls:
             reply = (msg.get("content") or "").strip() if not results else " ".join(results)
             return reply or "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"

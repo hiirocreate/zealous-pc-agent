@@ -169,6 +169,22 @@ def run(out):
                 on_main(lambda: app._voice_win.close())
             note(f"音声会話画面: {'OK' if ok else 'NG'}")
 
+            # ファイルを探す・開く: 本当のデスクトップに置いたファイルを、名前で探して開く
+            import tools
+            note(f"デスクトップの場所: {config.DESKTOP!r}")
+            test_file = os.path.join(config.DESKTOP, "zealous_テンプレ_確認.txt")
+            with open(test_file, "w", encoding="utf-8") as f:
+                f.write("test")
+            r = tools.run_tool("find_files", {"name": "zealous_テンプレ", "path": "デスクトップ"})
+            note(f"ファイルを探す: {'OK' if test_file in r else 'NG'} ({r[:80]!r})")
+            r = tools.run_tool("open_file", {"name": "zealous_テンプレ_確認"})
+            time.sleep(3)
+            import screen as _scr
+            title = _scr.target_window()[1]
+            note(f"ファイルを開く: {'OK' if 'zealous_テンプレ_確認' in title else 'NG'} ({r[:60]!r} / 手前: {title!r})")
+            sp_kill = __import__("subprocess").run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
+            os.remove(test_file)
+
             # 画面の直接操作: メモ帳に日本語を入力し、キー操作で選択・コピーして確かめる
             import subprocess as sp
             import tools
