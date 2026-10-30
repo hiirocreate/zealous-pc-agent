@@ -60,7 +60,7 @@ on_retract = None    # 書き始めた返事を取り消す関数(返事の途�
 _streamed = False    # 直前の問い合わせで、返事を画面と読み上げへ流したか
 _tech = False        # テクニカルモード(コード・サーバーなど技術的な作業の補助)
 TECH_TOOLS = ("read_text_file", "find_files", "find_in_files", "search_summary", "create_text_file", "open_file",
-              "make_office_file")
+              "make_office_file", "search_by_meaning", "look_at_screen")
 _attached = ""       # チャットに添付されたファイル・フォルダの中身(読み取って要約したもの)
 _attach_key = ()
 _office = None       # 資料づくりの前の聞き取り中 {"kind", "request", "topic", "step", "source", "content", "design"}

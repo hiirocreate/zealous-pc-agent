@@ -87,6 +87,7 @@ class VoiceInput:
         self.command_mode = lambda: False  # 待機中に拾った声を、命令として正確に聞き取るべきか
         self.context = ""  # 直前の会話(聞き取りの手がかりにする)
         self.on_nothing = lambda: None  # ボタンで話したのに、文字にするものが無かったとき
+        self.on_wake = lambda: None  # 合図の言葉のAI(openWakeWord)が合図の言葉を見つけたとき
         self._conversation = False  # 音声会話画面: 合図の言葉なしで、話すたびに聞き取る
         self._rest = False  # 待機中の聞き取りを休む(チャット画面を開いている間など。マイクを閉じてPCの負担を減らす)
         self.level = 0.0  # いまのマイクの音の大きさ(0〜1。音声会話画面の球の動きに使う)
@@ -232,8 +233,39 @@ class VoiceInput:
             else:
                 self._seg = None
 
+    def _gate(self):
+        """合図の言葉のAI(openWakeWord)で待っているか。見つけるまでは、声を文字にするAIを動かさない。"""
+        if getattr(config, "WAKE_ENGINE", "whisper") != "openwakeword" or self._conversation:
+            return None
+        try:
+            if self.command_mode():  # 合図の後の会話: ふつうに聞き取る
+                return None
+        except Exception:
+            pass
+        import audiogate
+        return audiogate.wakenet(getattr(config, "OWW_MODEL", "hey_jarvis"))
+
+    def _is_voice(self, mono, rms):
+        """人の声か。音の大きさで大まかに見て、Silero VAD(使えるとき)で声かどうかを確かめる。"""
+        if rms <= config.VAD_THRESHOLD:
+            return False
+        if getattr(config, "VAD_ENGINE", "silero") != "silero":
+            return True
+        import audiogate
+        model = audiogate.vad()
+        return model is None or model.prob(self._to_16k(mono)) >= 0.5
+
     def _vad(self, mono):
-        loud = float(np.sqrt(np.mean(mono ** 2))) > config.VAD_THRESHOLD
+        net = self._gate()
+        if net is not None:  # 合図の言葉だけを、小さなAIで待つ(物音で聞き取りAIを動かさない)
+            self._seg = None
+            if net.push(self._to_16k(mono)) >= float(getattr(config, "OWW_THRESHOLD", 0.5)):
+                net.fired()
+                self.on_wake()
+            return
+        rms = float(np.sqrt(np.mean(mono ** 2)))
+        # 話し始めは声かどうかを確かめる。話している途中は、音の大きさだけで切れ目を見る(軽く、言葉の間で切れない)
+        loud = self._is_voice(mono, rms) if self._seg is None else rms > config.VAD_THRESHOLD
         if self._seg is None:
             self._pre.append(mono)
             if loud:

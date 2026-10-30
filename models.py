@@ -199,3 +199,152 @@ def auto_tech(total_gb):
     """搭載メモリに合うテクニカルモード用のモデル(少なければ "" = いつものAIをそのまま使う)。"""
     return next((name for gb, name in TECH_AUTO if total_gb >= gb), "")
 
+
+
+# ---------------- 設定の「モデル」タブ: 種類ごとの選択肢 ----------------
+# (保存する値, 表示名, ダウンロードの大きさ, 使うメモリの目安GB, 得意なこと, 主な用途)
+_CHAT = [
+    ("qwen2.5:0.5b", "Qwen2.5 0.5B", "398MB", 1.0, "とても軽い", "古いPC・試しに使う"),
+    ("qwen3.5:0.8b-q8_0", "Qwen3.5 0.8B", "1.0GB", 1.8, "軽い・新しい世代", "ふだんの会話"),
+    ("lfm3:1.7b-q4_K_M", "LFM3 1.7B", "1.1GB", 2.0, "軽いのに賢い・PC操作", "メモリ8GBのPCの標準"),
+    ("qwen2.5:1.5b", "Qwen2.5 1.5B", "986MB", 2.0, "返事が速い", "ふだんの会話(初期設定)"),
+    ("lfm3:1.7b-q8_0", "LFM3 1.7B 高精度版", "1.8GB", 2.8, "軽いのに賢い", "ふだんの会話"),
+    ("qwen3.5:2b-q4_K_M", "Qwen3.5 2B", "1.9GB", 3.0, "日本語・指示の理解", "メモリ16GBのPCの標準"),
+    ("granite4:micro-h", "Granite 4.0 Micro", "1.9GB", 3.0, "指示どおりに動く", "PC操作"),
+    ("qwen2.5:3b", "Qwen2.5 3B", "1.9GB", 3.5, "速さと精度のバランス", "ふだんの会話"),
+    ("granite4.2:3b-q4_K_M", "Granite 4.2 3B", "2.2GB", 3.5, "指示・関数・JSON・コード", "PC操作・資料づくり"),
+    ("llama3.2:3b", "Llama 3.2 3B", "2.0GB", 3.5, "英語の会話", "英語で使う"),
+    ("qwen3.5:4b-q4_K_M", "Qwen3.5 4B", "3.3GB", 5.0, "かなり賢い", "込み入った依頼"),
+    ("granite4:tiny-h", "Granite 4.0 Tiny(MoE)", "4.2GB", 6.0, "関数(PC操作)が正確", "PC操作"),
+    ("maternion/lfm2:8b-a1b", "LFM2 8B-A1B(MoE)", "5.0GB", 6.5, "大きさの割に速い・コード", "会話もコードも"),
+    ("qwen2.5:7b", "Qwen2.5 7B", "4.7GB", 7.0, "詳しい説明", "GPUのあるPC"),
+    ("qwen3.5:9b-q4_K_M", "Qwen3.5 9B", "6.6GB", 9.0, "複雑な依頼・資料づくり", "メモリ16GB以上"),
+    ("gemma4:12b-it-q4_K_M", "Gemma 4 12B", "8.0GB", 11.0, "文章・考える力", "メモリ16GB以上・GPU推奨"),
+    ("qwen2.5:14b", "Qwen2.5 14B", "9.0GB", 12.0, "とても賢い", "GPU推奨"),
+    ("qwen3.8:27b-q4_K_M", "Qwen3.8 27B", "17.7GB", 22.0, "最上位の賢さ", "GPU 24GB・メモリ32GB以上"),
+    ("qwen3.8:27b-mtp-q4_K_M", "Qwen3.8 27B 高速(MTP)", "17.7GB", 22.0, "最上位の賢さ・速い", "GPU 24GB・メモリ32GB以上"),
+    ("gemma4:26b-a4b-it-mtp-q4_K_M", "Gemma 4 26B-A4B 高速(MTP・MoE)", "18.7GB", 23.0, "賢い・MoEで速い",
+     "メモリ32GB以上"),
+    ("qwen3.6:35b-a3b-q4_K_M", "Qwen3.6 35B-A3B(MoE)", "23.9GB", 28.0, "最上位・MoEで速い", "メモリ32GB以上"),
+    ("qwen3.6:35b-a3b-mtp-q4_K_M", "Qwen3.6 35B-A3B 高速(MTP・MoE)", "22.6GB", 27.0, "最上位・さらに速い",
+     "メモリ32GB以上"),
+]
+_TECH = [
+    ("auto", "自動(PCのメモリに合わせる)", "—", 0.0, "メモリに合うものを選ぶ・足りなければいつものAI", "迷ったらこれ"),
+    ("", "いつもと同じAI", "0", 0.0, "メモリが増えない", "メモリの少ないPC"),
+    ("qwen2.5-coder:1.5b", "Qwen2.5-Coder 1.5B", "986MB", 2.0, "コード・軽い", "コードの説明・修正"),
+    ("qwen2.5-coder:3b", "Qwen2.5-Coder 3B", "1.9GB", 3.5, "コード", "コードの作成・修正"),
+    ("granite4.2:3b-q4_K_M", "Granite 4.2 3B", "2.2GB", 3.5, "コード・JSON・関数", "コードと手順の相談"),
+    ("granite4:micro-h", "Granite 4.0 Micro", "1.9GB", 3.0, "指示どおりに動く", "軽い相談"),
+    ("granite4:tiny-h", "Granite 4.0 Tiny(MoE)", "4.2GB", 6.0, "関数が正確", "手順の相談"),
+    ("maternion/lfm2:8b-a1b", "LFM2 8B-A1B(MoE)", "5.0GB", 6.5, "コード・速い", "メモリ24GB以上"),
+    ("nemotron-3.5-bolt:e4b-q4_K_M", "Nemotron 3.5 Bolt", "7.9GB", 10.0, "コード・考える力", "メモリ16GB以上"),
+    ("laguna-xs-2.1:q4_K_M", "Laguna XS 2.1(MoE)", "20.3GB", 24.0, "コード専用・上位", "メモリ32GB以上"),
+    ("qwen3.6:35b-a3b-coding-mtp-q4_K_M", "Qwen3.6 Coding 高速(MTP・MoE)", "22.6GB", 27.0, "コード専用・最上位",
+     "メモリ32GB以上"),
+]
+_VISION = [
+    ("", "使わない", "0", 0.0, "メモリを使わない", "画像を読まない"),
+    ("minicpm-v4.6:1b", "MiniCPM-V 4.6 1B", "1.6GB", 2.5, "写真・画面の説明", "添付した画像・画面を見る"),
+    ("lfm3-vl:2b-q4_K_M", "LFM3-VL 2B", "1.5GB", 2.5, "画像の理解・軽い", "添付した画像・画面を見る"),
+    ("glm-ocr:latest", "GLM-OCR", "2.7GB", 4.0, "文書の文字読み取り(OCR)", "書類の写真・スキャン"),
+]
+_EMBED = [
+    ("embeddinggemma-2:270m-q8_0-text", "EmbeddingGemma 2 270M", "304MB", 0.6, "とても軽い", "意味で探す(軽さ優先)"),
+    ("embeddinggemma:300m", "EmbeddingGemma 300M", "622MB", 0.9, "多くの言語", "意味で探す"),
+    ("qwen3-embedding:0.6b", "Qwen3-Embedding 0.6B", "639MB", 1.0, "日本語の精度", "意味で探す(おすすめ)"),
+]
+_WHISPER_CMD = [
+    ("base", "Whisper base", "145MB", 0.4, "軽い", "命令の聞き取り(軽さ優先)"),
+    ("small", "Whisper small", "480MB", 0.9, "正確さと軽さのバランス", "命令の聞き取り(おすすめ)"),
+    ("kotoba-tech/kotoba-whisper-v2.0-faster", "Kotoba-Whisper v2.0(日本語向け)", "1.5GB", 1.6,
+     "日本語の聞き取りが正確・大きさの割に速い", "日本語の命令の聞き取り"),
+    ("medium", "Whisper medium", "1.5GB", 2.0, "高精度", "命令の聞き取り(重い)"),
+    ("large-v3-turbo", "Whisper large-v3-turbo", "1.6GB", 2.2, "最も正確", "命令の聞き取り(重い)"),
+]
+_WHISPER_WAIT = [
+    ("tiny", "Whisper tiny", "75MB", 0.3, "いちばん軽い", "合図の言葉を待つ"),
+    ("base", "Whisper base", "145MB", 0.4, "標準", "合図の言葉を待つ(おすすめ)"),
+    ("small", "Whisper small", "480MB", 0.9, "正確", "合図の言葉を待つ(重い)"),
+]
+_WAKE = [
+    ("whisper", "Whisper で聞き取って探す", "0", 0.0, "日本語の合図の言葉(「ウェイク、ゼラス」)", "日本語で呼びかける"),
+    ("openwakeword", "openWakeWord(小さなAI)", "4MB", 0.1, "待機中のCPUがほぼゼロ",
+     "英語の合図の言葉(Hey Jarvis など)か、自分で作った合図"),
+]
+_VAD = [
+    ("silero", "Silero VAD(小さなAI)", "同梱", 0.05, "物音・音楽に反応しない", "待機中の聞き取り(おすすめ)"),
+    ("volume", "音の大きさだけ", "0", 0.0, "いちばん軽い", "静かな部屋"),
+]
+_TTS = [
+    ("kokoro", "Kokoro(小さな読み上げAI)", "120MB", 0.5, "とても軽い・CPUだけで速い", "メモリの少ないPC"),
+    ("voicevox", "VOICEVOX", "約1.5GB", 1.5, "声の種類が多い", "標準"),
+    ("aivis", "AivisSpeech", "約1GB", 2.0, "声が自然・感情豊か", "声の自然さ重視"),
+]
+CATALOG = {"OLLAMA_MODEL": _CHAT, "TECH_MODEL": _TECH, "VISION_MODEL": _VISION, "EMBED_MODEL": _EMBED,
+           "COMMAND_WHISPER_MODEL": _WHISPER_CMD, "WHISPER_MODEL": _WHISPER_WAIT, "WAKE_ENGINE": _WAKE,
+           "VAD_ENGINE": _VAD, "TTS_ENGINE": _TTS}
+# 自分で名前を入力してよい種類(Ollama のモデル)
+FREE_INPUT = {"OLLAMA_MODEL", "TECH_MODEL", "VISION_MODEL", "EMBED_MODEL"}
+
+
+def tier(mem):
+    """使うメモリの目安 → ("低" / "中" / "高", 色の名前)。"""
+    return ("低", "ok") if mem <= 2.0 else ("中", "warn") if mem <= 6.0 else ("高", "danger")
+
+
+def entry(key, value):
+    return next((e for e in CATALOG.get(key, []) if e[0] == value), None)
+
+
+def catalog_label(e):
+    """プルダウンの1行: 【低】LFM3 1.7B｜1.1GB｜メモリ約2GB｜得意: …"""
+    value, name, size, mem, good, use = e
+    t, _ = tier(mem)
+    mem_text = "増えない" if mem == 0 else f"約{mem:g}GB"
+    return f"【{t}】{name}｜{size}｜メモリ{mem_text}｜{good}"
+
+
+def estimate(values):
+    """選んだ構成で同時に使うメモリの目安(GB)。Ollama のモデルは同時に1つだけ読み込むので、いちばん大きいものだけ数える。"""
+    total_ram = memory_gb()[0]
+
+    def mem(key):
+        v = values.get(key)
+        if key == "TECH_MODEL" and v == "auto":
+            v = auto_tech(total_ram) if total_ram else ""
+            e = entry("TECH_MODEL", v)
+        else:
+            e = entry(key, v)
+        return e[3] if e else (need_gb(v) if v else 0.0)
+    ollama = max(mem(k) for k in ("OLLAMA_MODEL", "TECH_MODEL", "VISION_MODEL", "EMBED_MODEL"))
+    voice = mem("COMMAND_WHISPER_MODEL") + mem("WHISPER_MODEL") + mem("WAKE_ENGINE") + mem("VAD_ENGINE")
+    return round(ollama + voice + mem("TTS_ENGINE") + 0.6, 1)  # 0.6: Zealous 本体
+
+
+# おすすめ構成(押すと設定の欄に入る。そこから好きに変えられる)
+PRESETS = [
+    ("light", "軽量", "メモリ8GB以下・古いPC", 8, {
+        "OLLAMA_MODEL": "lfm3:1.7b-q4_K_M", "TECH_MODEL": "", "VISION_MODEL": "",
+        "EMBED_MODEL": "embeddinggemma-2:270m-q8_0-text", "COMMAND_WHISPER_MODEL": "base", "WHISPER_MODEL": "tiny",
+        "VAD_ENGINE": "silero", "TTS_ENGINE": "kokoro"}),
+    ("standard", "標準", "メモリ16GB・GPUなし", 16, {
+        "OLLAMA_MODEL": "qwen3.5:2b-q4_K_M", "TECH_MODEL": "auto", "VISION_MODEL": "minicpm-v4.6:1b",
+        "EMBED_MODEL": "qwen3-embedding:0.6b", "COMMAND_WHISPER_MODEL": "small", "WHISPER_MODEL": "base",
+        "VAD_ENGINE": "silero", "TTS_ENGINE": "voicevox"}),
+    ("high", "高性能", "メモリ32GB以上", 32, {
+        "OLLAMA_MODEL": "qwen3.5:9b-q4_K_M", "TECH_MODEL": "maternion/lfm2:8b-a1b", "VISION_MODEL": "lfm3-vl:2b-q4_K_M",
+        "EMBED_MODEL": "qwen3-embedding:0.6b", "COMMAND_WHISPER_MODEL": "kotoba-tech/kotoba-whisper-v2.0-faster",
+        "WHISPER_MODEL": "base", "VAD_ENGINE": "silero", "TTS_ENGINE": "aivis"}),
+    ("top", "最高性能", "メモリ64GB か GPU 24GB", 64, {
+        "OLLAMA_MODEL": "qwen3.6:35b-a3b-mtp-q4_K_M", "TECH_MODEL": "qwen3.6:35b-a3b-coding-mtp-q4_K_M",
+        "VISION_MODEL": "glm-ocr:latest", "EMBED_MODEL": "qwen3-embedding:0.6b",
+        "COMMAND_WHISPER_MODEL": "large-v3-turbo", "WHISPER_MODEL": "base", "VAD_ENGINE": "silero",
+        "TTS_ENGINE": "aivis"}),
+]
+
+
+def recommended_preset(total_gb):
+    """このPCのメモリに合うおすすめ構成の名前。"""
+    fit = [p for p in PRESETS if total_gb + 0.5 >= p[3]]
+    return (fit[-1] if fit else PRESETS[0])[0]

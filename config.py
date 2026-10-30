@@ -73,6 +73,10 @@ DEFAULTS = {
     "OFFICE_REVIEW": True,           #   書いた中身を見直す(誤字・重複・不自然な言い回し)。少し時間がかかる
     "OFFICE_IMAGES": True,           #   写真を入れる(使ってよい許可が明記された Wikimedia Commons の写真だけ)
     "TECH_AUTO": True,               # コード・サーバーなど技術的な質問は、テクニカルモードに自動で切り替える
+    "VISION_MODEL": "minicpm-v4.6:1b",  # 画像を理解するAI(添付した画像・画面の説明。空なら使わない。初めて使うときに取得)
+    "EMBED_MODEL": "qwen3-embedding:0.6b",  # 意味で探すAI(PCの中の文書を「意味」で検索する。初めて使うときに取得)
+    "SEMANTIC_FOLDERS": [],          # 意味で探すフォルダ(空ならドキュメントとデスクトップ)
+    "SEARXNG_URL": "",               # SearXNG(自分で動かす検索エンジン)の URL。空ならいつもの検索
     "TECH_MODEL": "auto",  # テクニカルモードで使うAIモデル(空なら通常と同じ。初めて使うときに自動で取得)
     # ---- メール(画面を使わずに裏側で操作) ----
     "MAIL_SERVICE": "auto",          # auto / imap / outlook
@@ -88,6 +92,10 @@ DEFAULTS = {
     "TTS_SPEED": 1.1,                # 話す速さ(1.0 が標準)
     "VOICEVOX_URL": "http://localhost:50021",
     "VOICEVOX_SPEAKER": 3,
+    "TTS_ENGINE": "voicevox",        # 読み上げのソフト: voicevox / aivis(AivisSpeech) / kokoro(小さな読み上げAI・軽い)
+    "AIVIS_URL": "http://127.0.0.1:10101",
+    "AIVIS_SPEAKER": 0,              # AivisSpeech の声の番号(0 なら入っている最初の声)
+    "KOKORO_VOICE": "jf_alpha",      # Kokoro の声
     # ---- 音声認識 (Faster-Whisper) ----
     "WHISPER_MODEL": "base",         # 待機中(合図の言葉を待つ間)の聞き取り用。軽さ優先
     "COMMAND_WHISPER_MODEL": "small",  # 話しかけた命令を文字にする用。正確さ優先(初回に約0.5GBを取得)
@@ -97,6 +105,10 @@ DEFAULTS = {
     "WHISPER_DEVICE": "cpu",
     "WHISPER_COMPUTE": "int8",
     "LANGUAGE": "ja",
+    "VAD_ENGINE": "silero",          # 声かどうかの判定: silero(小さなAI・物音に反応しない) / volume(音の大きさだけ)
+    "WAKE_ENGINE": "whisper",        # 合図の言葉の見つけ方: whisper(声を文字にして探す・日本語) / openwakeword(小さなAI・とても軽い)
+    "OWW_MODEL": "hey_jarvis",       # openWakeWord の合図の言葉(hey_jarvis / alexa / hey_mycroft / 自分で作った .onnx のパス)
+    "OWW_THRESHOLD": 0.5,            # openWakeWord の感度(小さいほど反応しやすい)
     "MIC_DEVICE": "",                # 使うマイクの名前(空なら Windows の既定のマイク)
     # ---- 常時待ち受けの発話区切り ----
     "VAD_THRESHOLD": 0.015,

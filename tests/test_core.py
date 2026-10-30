@@ -960,3 +960,65 @@ def test_tech_model_fits_memory(monkeypatch):
     assert llm.tech_model() == "qwen2.5:1.5b" and "メモリが少ない" in llm._tech_note  # 空きが足りない
     monkeypatch.setattr(models, "memory_gb", lambda: (8.0, 6.0))
     assert llm.num_ctx([{"content": "あ" * 30000}]) == 8192  # メモリが少ないPCは読む量の上限を下げる
+
+
+def test_model_catalog_and_presets():
+    import models
+    for _, _, _, _, values in models.PRESETS:
+        for key, value in values.items():
+            assert models.entry(key, value), (key, value)  # おすすめ構成の値は、どれも一覧にある
+    sizes = [models.estimate(p[4]) for p in models.PRESETS]
+    assert sizes == sorted(sizes)  # 軽量 < 標準 < 高性能 < 最高性能
+    assert models.catalog_label(models.entry("OLLAMA_MODEL", "lfm3:1.7b-q4_K_M")).startswith("【低】")
+    assert models.recommended_preset(8) == "light" and models.recommended_preset(16) == "standard"
+
+
+def test_semantic_search_with_fake_embedding(tmp_path, monkeypatch):
+    import numpy as np
+    import config
+    import runtime
+    import semantic
+    monkeypatch.setattr(runtime, "DATA_DIR", str(tmp_path))
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.txt").write_text("見積書 デザイン料金", encoding="utf-8")
+    (docs / "b.txt").write_text("旅行の計画 京都", encoding="utf-8")
+    monkeypatch.setattr(config, "SEMANTIC_FOLDERS", [str(docs)])
+    words = ["見積", "料金", "旅行", "京都"]
+
+    def fake(texts, query=False):
+        v = np.array([[t.count(w) for w in words] + [0.01] for t in texts], np.float32)
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+    monkeypatch.setattr(semantic, "embed", fake)
+    assert semantic.index()
+    assert semantic.search("料金の見積")[0][0].endswith("a.txt")
+
+
+def test_wake_gate_skips_transcription(monkeypatch):
+    import numpy as np
+    import audiogate
+    import config
+    import voice
+    v = voice.VoiceInput.__new__(voice.VoiceInput)
+    v._conversation, v._rate, v._seg, v._jobs = False, 16000, None, __import__("queue").Queue()
+    v.command_mode = lambda: False
+    woke = []
+    v.on_wake = lambda: woke.append(1)
+
+    class Net:
+        def push(self, audio):
+            return 0.9
+
+        def fired(self):
+            pass
+    monkeypatch.setattr(config, "WAKE_ENGINE", "openwakeword")
+    monkeypatch.setattr(audiogate, "wakenet", lambda model: Net())
+    v._vad(np.ones(1600, np.float32) * 0.3)
+    assert woke == [1] and v._jobs.empty()  # 合図を見つけるまで、声を文字にするAIは動かさない
+
+
+def test_searxng_results():
+    import json
+    import websearch
+    page = json.dumps({"results": [{"title": "t", "url": "https://a.jp", "content": "c"}]})
+    assert websearch._searxng(page) == [{"title": "t", "url": "https://a.jp", "snippet": "c"}]

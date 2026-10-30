@@ -105,18 +105,34 @@ _SOURCE = [
          "「表記=よみ」の形でカンマ（,）区切り。例: 生物=なまもの, 才=さい。"
          "「行っている」など、文の流れで読み方が変わる言葉は自動で読み分けます"),
         ("VOICEVOX_URL", "VOICEVOX の URL（読み上げソフトの接続先）", "str", "通常は変更不要"),
+        ("TTS_ENGINE", "読み上げのソフト", "catalog",
+         "Kokoro はとても軽く、別のソフトを起動しません。AivisSpeech は声がより自然です（初めて使うときに自動で準備）"),
+        ("KOKORO_VOICE", "Kokoro の声", "choice", "読み上げのソフトが Kokoro のときに使う声",
+         [("jf_alpha", "女性・はっきり（おすすめ）"), ("jf_gongitsune", "女性・やわらか"), ("jf_nezumi", "女性・かわいい"),
+          ("jf_tebukuro", "女性・おちついた"), ("jm_kumo", "男性")]),
+        ("AIVIS_URL", "AivisSpeech の URL", "str", "通常は変更不要"),
+        ("AIVIS_SPEAKER", "AivisSpeech の声の番号", "int", "0 なら入っている最初の声"),
+        ("VISION_MODEL", "画像を理解するAI", "catalog",
+         "添付した画像や、「画面に何が出てる？」と聞いたときに使います（初めて使うときにダウンロード）"),
+        ("EMBED_MODEL", "意味で探すAI（埋め込みAI）", "catalog",
+         "「先月の見積もりの資料どこ？」のように、PCの中の文書を内容で探すときに使います"),
+        ("SEMANTIC_FOLDERS", "意味で探すフォルダ", "list", "カンマ（,）区切り。空ならドキュメントとデスクトップ"),
+        ("SEARXNG_URL", "SearXNG の URL（自分で動かす検索エンジン）", "str",
+         "例: http://localhost:8080 。設定すると調べものに最初に使います（JSON の出力を有効にしてください）。空ならいつもの検索"),
         ("—", "聞き取り"),
         ("VOICE_SPELL_CHECK", "名前の書き方を選んでから付ける", "bool",
          "声でフォルダやファイルを作る・名前を変えるときは、聞き取った名前の書き方（漢字・カタカナ・英語など）の"
          "候補を出して、正しいものを選んでもらいます"),
         ("MIC_DEVICE", "マイク", "mic", "聞き取れないことが多いときは、使っているマイクを選んでください"),
-        ("COMMAND_WHISPER_MODEL", "命令の聞き取りに使うAI（Whisper：声を文字にするAI）", "choice",
-         "話しかけた命令を文字にするときに使います。大きいほど正確ですが、返事までが少し遅くなります",
-         [("base", "base（軽い・約0.15GB）"), ("small", "small（おすすめ・約0.5GB）"),
-          ("medium", "medium（高精度・約1.5GB・重い）"), ("large-v3-turbo", "large-v3-turbo（最も正確・約1.6GB・重い）")]),
-        ("WHISPER_MODEL", "待機中の聞き取りに使うAI", "choice",
-         "合図の言葉を待つ間ずっと使うので、軽いものがおすすめ",
-         [("tiny", "tiny（いちばん軽い）"), ("base", "base（標準）"), ("small", "small（正確・PCが重くなりやすい）")]),
+        ("COMMAND_WHISPER_MODEL", "命令の聞き取りに使うAI（声を文字にするAI）", "catalog",
+         "話しかけた命令を文字にします。大きいほど正確ですが、返事までが少し遅くなります"),
+        ("WHISPER_MODEL", "待機中の聞き取りに使うAI", "catalog", "合図の言葉を待つ間に使うので、軽いものがおすすめ"),
+        ("WAKE_ENGINE", "合図の言葉の見つけ方", "catalog",
+         "openWakeWord は待機中のCPUがほぼゼロですが、合図の言葉は英語（Hey Jarvis など）か、自分で作ったものになります"),
+        ("OWW_MODEL", "openWakeWord の合図の言葉", "str",
+         "hey_jarvis / alexa / hey_mycroft のどれか、または自分で作ったモデル（.onnx）のファイルの場所"),
+        ("OWW_THRESHOLD", "openWakeWord の感度", "float", "小さいほど反応しやすく、大きいほど聞き間違いが減ります"),
+        ("VAD_ENGINE", "声かどうかの判定", "catalog", "Silero VAD は物音や音楽では聞き取りAIを動かさないので、CPUの無駄が減ります"),
         ("VOICE_WORDS", "ユーザー辞書（正しく聞き取ってほしい言葉）", "list",
          "人や会社の名前、よく使う専門用語などをカンマ（,）区切りで。例: 株式会社才, Zealous"),
         ("VOICE_REPLACE", "置き換え（よく間違う言葉の直し方）", "list",
@@ -143,8 +159,8 @@ _SOURCE = [
         ("MEMORY", "AIが覚えていること", "lines",
          "1行に1つ。会話で「〜を覚えておいて」と言うと増え、「〜を忘れて」で消えます。ここで直接書き直すこともできます"),
         ("—", "AIの頭脳"),
-        ("OLLAMA_MODEL", "AIモデル（使う頭脳の種類）", "model",
-         "一覧から選ぶか名前を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
+        ("OLLAMA_MODEL", "会話のAI（ふだん使う頭脳）", "catalog",
+         "一覧から選ぶか、Ollama のモデル名を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
         ("OLLAMA_URL", "Ollama の URL（AIを動かすソフトの接続先）", "str", "通常は変更不要"),
         ("OLLAMA_TIMEOUT", "タイムアウト（返事を待つ最大秒数）", "int", ""),
         ("AI_CPU", "AIが使うCPU", "choice",
@@ -165,21 +181,8 @@ _SOURCE = [
         ("TECH_AUTO", "技術的な質問では自動で切り替える", "bool",
          "コードの添削・作成、サーバーやネットワークの設定などを聞かれたら、テクニカルモードにして、コードや手順を添えて"
          "くわしく答えます。チャットの上の「</>」ボタンや「通常モードに戻して」でも切り替えられます"),
-        ("TECH_MODEL", "テクニカルモードで使うAI", "choice",
-         "どれも「必要な部分だけを動かす」仕組み(MoE)などで軽くしたAIで、PCの中だけで動きます"
-         "（初めて使うときに自動でダウンロード。準備ができるまでは、いつものAIで答えます）。"
-         "テクニカルモードのときだけ読み込み、通常モードに戻すとメモリから外します",
-         [("auto", "自動（おすすめ・PCのメモリに合わせて選び、足りないときはいつものAIで答える）"),
-          ("maternion/lfm2:8b-a1b", "LFM2-8B-A1B（動くのは約15億・約5GB・メモリ24GB以上向け）"),
-          ("granite4:tiny-h", "Granite 4.0 Tiny（IBM・動くのは約10億・約4.2GB）"),
-          ("sam860/olmoe-1b-7b-0924", "OLMoE（AllenAI・動くのは約10億・約3GB・英語向け）"),
-          ("granite4:micro-h", "Granite 4.0 Micro（IBM・軽い・約1.9GB）"),
-          ("qwen2.5-coder:3b", "Qwen2.5-Coder 3B（コード向け・軽い・約1.9GB）"),
-          ("granite4.2:3b-q4_K_M", "Granite 4.2 3B（IBM・コードも得意・軽い・約2.2GB）"),
-          ("nemotron-3.5-bolt:e4b-q4_K_M", "Nemotron 3.5 Bolt（NVIDIA・コード向け・約7.9GB・メモリ12GB以上）"),
-          ("laguna-xs-2.1:q4_K_M", "Laguna XS 2.1（コード専用の上位・約20GB・メモリ32GB以上）"),
-          ("qwen3.6:35b-a3b-coding-mtp-q4_K_M", "Qwen3.6 Coding（コード専用の最上位・約23GB・メモリ32GB以上）"),
-          ("", "いつもと同じAI")]),
+        ("TECH_MODEL", "テクニカルモード（コード・IT の相談）で使うAI", "catalog",
+         "テクニカルモードのときだけ読み込み、通常モードに戻すとメモリから外します（初めて使うときに自動でダウンロード）"),
         ("—", "会話をすべて参照"),
         ("FULL_CONTEXT", "会話をすべて参照して答える", "bool",
          "同じチャットの最初からのやりとりを、省略せずに参照して答えます（上の「やりとりの数」は使いません）。"
@@ -235,14 +238,19 @@ LAYOUT = [
              "+IME_INLINE", "+SMOOTH_FRAME"]),
     ("マイク", ["＊mic_test", "—マイク", "MIC_DEVICE", "INPUT_MODE", "PTT_ENABLED", "PTT_KEY",
              "—呼びかけ（合図の言葉）", "WAKE_ENABLED", "WAKE_WORDS",
-             "—聞き取りの正確さ", "VOICE_WORDS", "VOICE_REPLACE", "VOICE_SPELL_CHECK", "COMMAND_WHISPER_MODEL",
-             "+AI_NAME_ALIASES", "+WHISPER_MODEL", "+LANGUAGE", "+VAD_THRESHOLD", "+VAD_SILENCE_SEC", "+VAD_MIN_SEC",
+             "—聞き取りの正確さ", "VOICE_WORDS", "VOICE_REPLACE", "VOICE_SPELL_CHECK",
+             "+AI_NAME_ALIASES", "+LANGUAGE", "+VAD_THRESHOLD", "+VAD_SILENCE_SEC", "+VAD_MIN_SEC",
              "+VAD_MAX_SEC", "+WHISPER_DEVICE", "+WHISPER_COMPUTE"]),
     ("読み上げ", ["—声", "TTS_ENABLED", "＊voice_picker", "TTS_SPEED", "—読み方", "READINGS", "+VOICEVOX_URL"]),
-    ("AI", ["—性格・話し方", "PERSONA", "—覚えていること", "MEMORY", "—AIモデル", "OLLAMA_MODEL", "AI_CPU", "USE_GPU",
+    ("モデル", ["＊model_presets", "—会話・資料づくり", "OLLAMA_MODEL", "TECH_MODEL",
+              "—画像・検索", "VISION_MODEL", "EMBED_MODEL", "SEMANTIC_FOLDERS",
+              "—声の聞き取り", "COMMAND_WHISPER_MODEL", "WHISPER_MODEL", "VAD_ENGINE", "WAKE_ENGINE",
+              "—読み上げ", "TTS_ENGINE", "KOKORO_VOICE",
+              "+OWW_MODEL", "+OWW_THRESHOLD", "+AIVIS_URL", "+AIVIS_SPEAKER"]),
+    ("AI", ["—性格・話し方", "PERSONA", "—覚えていること", "MEMORY", "—AIの動かし方", "AI_CPU", "USE_GPU",
             "+OLLAMA_URL", "+OLLAMA_TIMEOUT", "+MAX_TOOL_STEPS", "+SUMMARIZE_AFTER_TOOL"]),
     ("会話", ["—会話の記憶", "CONTEXT_TURNS", "FULL_CONTEXT", "FULL_CONTEXT_LIMIT", "FULL_CONTEXT_COMPRESS",
-            "—テクニカルモード（コード・サーバー・IT）", "TECH_AUTO", "TECH_MODEL"]),
+            "—テクニカルモード（コード・サーバー・IT）", "TECH_AUTO"]),
     ("権限", ["—画面の直接操作", "SCREEN_CONTROL_ENABLED", "SCREEN_ALLOW_CLICK", "SCREEN_ALLOW_TYPE", "SCREEN_ALLOW_KEYS",
             "SCREEN_ALLOW_SCROLL", "SCREEN_ALLOW_WINDOWS", "SCREEN_WAIT_IDLE",
             "—ファイル・フォルダ", "FOLDER_OPS_ENABLED", "FOLDER_DELETE_ENABLED", "—確認", "CONFIRM_VOICE_DANGER",
@@ -250,7 +258,7 @@ LAYOUT = [
     ("資料づくり", ["—Word・PowerPoint・Excel", "OFFICE_FONT", "OFFICE_RESEARCH", "OFFICE_REVIEW", "OFFICE_IMAGES"]),
     ("ブラウザ・検索", ["—Webページの操作", "WEB_CONTROL_ENABLED", "WEB_CONFIRM_RISKY", "BROWSER",
                  "—調べものの返事", "SAFE_SITES_ONLY", "SOURCE_COUNT", "SEARCH_IMAGE_COUNT", "IMAGE_COUNT",
-                 "+SEARCH_URL"]),
+                 "+SEARCH_URL", "+SEARXNG_URL"]),
     ("メール", ["—メールの操作（メールアプリを開かずに行います）", "MAIL_SERVICE", "MAIL_IMAP_HOST", "MAIL_IMAP_USER",
              "MAIL_IMAP_PASSWORD", "+MAIL_IMAP_PORT"]),
     ("更新・情報", ["—アップデート（新しい版への更新）", "AUTO_UPDATE"]),
@@ -263,6 +271,7 @@ assert {f[0] for _, fs in TABS for f in fs if f[0] not in ("—", "＊")} == set
 # 数を「つまみ」で選べる項目: (最小, 最大, 刻み)
 SLIDERS = {
     "TTS_SPEED": (0.5, 2.0, 0.05),
+    "OWW_THRESHOLD": (0.2, 0.9, 0.05),
     "VAD_THRESHOLD": (0.002, 0.06, 0.001),
     "VAD_SILENCE_SEC": (0.3, 3.0, 0.1),
     "VAD_MIN_SEC": (0.1, 2.0, 0.1),
@@ -461,6 +470,8 @@ class SettingsWindow(ctk.CTkToplevel):
             if f[0] == "＊":
                 if f[1] == "mic_test":
                     self._mic_test_card(page)
+                elif f[1] == "model_presets":
+                    self._preset_card(page)
                 else:
                     self._voice_card(page)
                 continue
@@ -513,6 +524,8 @@ class SettingsWindow(ctk.CTkToplevel):
                     lab.configure(text=v.get())
                     s_.set(min(hi, max(lo, x)))
                 var.trace_add("write", show)
+            elif kind == "catalog":
+                var = self._catalog_field(row, key, ctl)
             elif kind == "model":
                 var = ctk.StringVar()
                 ctk.CTkComboBox(row, values=[models.label(k[0]) for k in models.KNOWN], variable=var,
@@ -654,6 +667,117 @@ class SettingsWindow(ctk.CTkToplevel):
         self._action(page, "アンインストール（削除）", "Zealous をこのPCから取り除きます", "アンインストール",
                      self._uninstall, danger=True)
 
+    # ---------------- モデル(種類ごとの選択と、おすすめ構成) ----------------
+    TIER_COLORS = {"ok": T.OK, "warn": T.WARN, "danger": T.DANGER}
+
+    def _catalog_field(self, row, key, ctl):
+        """モデルのプルダウン: 1行で「メモリの低・中・高｜名前｜大きさ｜使うメモリ｜得意なこと」。
+        左に低・中・高の札、下に得意なことと主な用途。Ollama のモデルは名前を入力してもよい。"""
+        var = ctk.StringVar()
+        items = models.CATALOG[key]
+        self._choices[key] = {models.catalog_label(e): e[0] for e in items}
+        box = ctk.CTkFrame(row, fg_color="transparent")
+        box.grid(**ctl)
+        box.grid_columnconfigure(1, weight=1)
+        badge = ctk.CTkLabel(box, text="", width=34, height=26, corner_radius=8, font=T.font(11, "bold"),
+                             text_color="white", fg_color=T.OK)
+        badge.grid(row=0, column=0, padx=(0, 8))
+        common = dict(values=list(self._choices[key]), variable=var, fg_color=T.BG, button_color=T.BG,
+                      button_hover_color=T.BORDER, dropdown_fg_color=T.SURFACE, dropdown_text_color=T.TEXT,
+                      text_color=T.TEXT, font=T.font(11), dropdown_font=T.font(11))
+        if key in models.FREE_INPUT:
+            ctk.CTkComboBox(box, border_color=T.BORDER, **common).grid(row=0, column=1, sticky="ew")
+        else:
+            ctk.CTkOptionMenu(box, dynamic_resizing=False, **common).grid(row=0, column=1, sticky="ew")
+        info = ctk.CTkLabel(row, text="", font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=420)
+        info.grid(row=3, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 10))
+
+        def show(*_):
+            e = self._choices[key].get(var.get())
+            e = models.entry(key, e) if e is not None else None
+            if e:
+                t, color = models.tier(e[3])
+                badge.configure(text=t, fg_color=self.TIER_COLORS[color])
+                info.configure(text=f"得意なこと: {e[4]}　／　主な用途: {e[5]}　／　ダウンロード: {e[2]}")
+            else:
+                badge.configure(text="？", fg_color=T.BORDER)
+                info.configure(text="一覧にないモデルです。保存のときに大きさを調べてお知らせします")
+            self._update_meter()
+        var.trace_add("write", show)
+        return var
+
+    def _preset_card(self, page):
+        """おすすめ構成のボタン(このPCに合うものに★)と、使うメモリの目安のメーター。"""
+        total = models.memory_gb()[0]
+        rec = models.recommended_preset(total) if total else "standard"
+        card = ctk.CTkFrame(page, fg_color=T.SURFACE, corner_radius=12)
+        kw = dict(fill="x", padx=4, pady=(6, 3))
+        card.pack(**kw)
+        self._items.setdefault(page, []).append((card, kw, "おすすめ構成 プリセット メモリ", None))
+        ctk.CTkLabel(card, text="おすすめ構成", font=T.font(13, "bold"), text_color=T.TEXT, anchor="w").pack(
+            anchor="w", padx=14, pady=(12, 0))
+        ctk.CTkLabel(card, text=(f"このPCのメモリ: {total:.0f}GB。" if total else "") +
+                     "押すと下の欄にまとめて入ります。そこから1つずつ変えて、保存で決まります。",
+                     font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=440).pack(
+            anchor="w", padx=14, pady=(2, 8))
+        grid = ctk.CTkFrame(card, fg_color="transparent")
+        grid.pack(fill="x", padx=10)
+        for i, (pid, name, desc, _, values) in enumerate(models.PRESETS):
+            grid.grid_columnconfigure(i % 2, weight=1)
+            mine = pid == rec
+            btn = ctk.CTkButton(grid, text=f"{'★ ' if mine else ''}{name}\n{desc}・約{models.estimate(values):g}GB",
+                                height=52, corner_radius=12, font=T.font(11, "bold" if mine else "normal"),
+                                fg_color=T.ACCENT if mine else T.BG, hover_color=T.ACCENT_HOVER if mine else T.BORDER,
+                                text_color="white" if mine else T.TEXT, border_width=0 if mine else 1,
+                                border_color=T.BORDER, command=lambda v=values: self._apply_preset(v))
+            btn.grid(row=i // 2, column=i % 2, sticky="ew", padx=4, pady=4)
+        # 使うメモリの目安(選んでいる構成の合計)
+        meter = ctk.CTkFrame(card, fg_color="transparent")
+        meter.pack(fill="x", padx=14, pady=(8, 4))
+        meter.grid_columnconfigure(0, weight=1)
+        self._meter_text = ctk.CTkLabel(meter, text="", font=T.font(11, "bold"), text_color=T.TEXT, anchor="w")
+        self._meter_text.grid(row=0, column=0, sticky="w")
+        self._meter_bar = ctk.CTkProgressBar(meter, height=10, corner_radius=5, progress_color=T.OK, fg_color=T.BG)
+        self._meter_bar.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        legend = ctk.CTkFrame(card, fg_color="transparent")
+        legend.pack(anchor="w", padx=12, pady=(4, 12))
+        for t, color, text in (("低", T.OK, "メモリ2GBまで"), ("中", T.WARN, "6GBまで"), ("高", T.DANGER, "6GBより多い")):
+            ctk.CTkLabel(legend, text=t, width=26, height=20, corner_radius=6, fg_color=color, text_color="white",
+                         font=T.font(10, "bold")).pack(side="left", padx=(2, 4))
+            ctk.CTkLabel(legend, text=text, font=T.font(10), text_color=T.SUB).pack(side="left", padx=(0, 10))
+        self._pc_total = total
+
+    def _apply_preset(self, values):
+        """おすすめ構成を欄に入れる(保存はまだ。ここから好きに変えられる)。"""
+        for key, value in values.items():
+            if key in self._vars:
+                e = models.entry(key, value)
+                self._vars[key][1].set(models.catalog_label(e) if e else value)
+        self.msg.configure(text="おすすめ構成を入れました。必要なら変えてから「保存」を押してください", text_color=T.SUB)
+
+    def _update_meter(self):
+        """選んでいる構成で使うメモリの目安を、このPCのメモリと比べて見せる。"""
+        if not getattr(self, "_meter_bar", None) or not self._meter_bar.winfo_exists():
+            return
+        values = {}
+        for key in models.CATALOG:
+            if key in self._vars:
+                try:
+                    values[key] = self._value(key)
+                except (ValueError, KeyError):
+                    pass
+            else:
+                values[key] = getattr(config, key, "")
+        need = models.estimate(values)
+        total = self._pc_total or 16
+        share = need / total
+        t, color = ("低", "ok") if share <= 0.4 else ("中", "warn") if share <= 0.7 else ("高", "danger")
+        self._meter_bar.configure(progress_color=self.TIER_COLORS[color])
+        self._meter_bar.set(min(1.0, share))
+        self._meter_text.configure(
+            text=f"使うメモリの目安: 約{need:g}GB（このPCの{share * 100:.0f}%・負担 {t}）" +
+                 ("　メモリが足りない可能性があります" if share > 0.85 else ""))
+
     def _build_page(self, name):
         """タブの中身を、初めて開いたときに作る。作ったら、今の値を入れ、変更の見張りを付ける。"""
         if name in self._built:
@@ -740,9 +864,19 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_quit()
 
     # ---------------- 変更の管理 ----------------
+    def _catalog_value(self, key, text):
+        """プルダウンの表示 → 保存する値(一覧にない名前は、入力されたまま)。"""
+        if text in self._choices[key]:
+            return self._choices[key][text]
+        if key in models.FREE_INPUT:
+            return text.strip()
+        raise ValueError
+
     def _value(self, key):
         """入力欄の値を設定値にする(不正なら ValueError / KeyError)。"""
         kind, var = self._vars[key]
+        if kind == "catalog":
+            return self._catalog_value(key, var.get())
         if kind == "model":
             name = models.name_of(var.get())
             if not name:
@@ -1009,6 +1143,9 @@ class SettingsWindow(ctk.CTkToplevel):
             v = values[key]
             if kind == "model":
                 var.set(models.label(v))
+            elif kind == "catalog":
+                e = models.entry(key, v)
+                var.set(models.catalog_label(e) if e else v)
             elif kind == "font":
                 var.set(v or DEFAULT_LABEL)
             elif kind == "choice":
@@ -1034,7 +1171,9 @@ class SettingsWindow(ctk.CTkToplevel):
         changes = {f[0]: self._fill_source[f[0]] for f in FIELDS if f[0] in self._fill_source}
         for key, (kind, var) in self._vars.items():
             try:
-                if kind == "model":
+                if kind == "catalog":
+                    changes[key] = self._catalog_value(key, var.get())
+                elif kind == "model":
                     changes[key] = models.name_of(var.get())
                     if not changes[key]:
                         raise ValueError

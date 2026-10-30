@@ -146,8 +146,15 @@ class Speaker:
             self._texts.put((self._gen, text))
 
     def _synth(self, text):
-        p = {"text": text, "speaker": config.VOICEVOX_SPEAKER}
-        q = requests.post(f"{config.VOICEVOX_URL}/audio_query", params=p, timeout=10)
+        engine = getattr(config, "TTS_ENGINE", "voicevox")
+        if engine == "kokoro":  # 小さな読み上げAI(別のソフトを使わない)
+            import kokoro_tts
+            speed, _ = persona_voice()
+            return kokoro_tts.synth(text, getattr(config, "KOKORO_VOICE", "jf_alpha"), config.TTS_SPEED * speed)
+        # VOICEVOX と AivisSpeech は、同じ使い方(API)で読み上げられる
+        url, speaker = engine_url(), engine_speaker()
+        p = {"text": text, "speaker": speaker}
+        q = requests.post(f"{url}/audio_query", params=p, timeout=10)
         q.raise_for_status()
         query = q.json()
         speed, pitch = persona_voice()
@@ -157,7 +164,7 @@ class Speaker:
         query["outputSamplingRate"] = 24000
         query["prePhonemeLength"] = 0.05
         query["postPhonemeLength"] = 0.1  # 短すぎると語尾が切れて聞こえる
-        w = requests.post(f"{config.VOICEVOX_URL}/synthesis", params={"speaker": config.VOICEVOX_SPEAKER},
+        w = requests.post(f"{url}/synthesis", params={"speaker": speaker},
                           json=query, timeout=30)
         w.raise_for_status()
         return _decode(w.content)
@@ -168,7 +175,7 @@ class Speaker:
         if self._on_error and now - self._last_error > 60:
             self._last_error = now
             reason = "接続できません" if isinstance(error, requests.ConnectionError) else str(error)[:80]
-            self._on_error(f"読み上げできませんでした（VOICEVOX: {reason}）")
+            self._on_error(f"読み上げできませんでした（{engine_name()}: {reason}）")
 
     def _synth_loop(self):
         """合成を順に依頼する(2つまで同時)。再生の順番は依頼した順のまま。"""
@@ -245,6 +252,31 @@ class Speaker:
             finally:
                 self._playing = False
                 self._quiet_since = time.monotonic()
+
+
+ENGINES = {"voicevox": "VOICEVOX", "aivis": "AivisSpeech", "kokoro": "Kokoro"}
+_aivis_speaker = None
+
+
+def engine_name():
+    return ENGINES.get(getattr(config, "TTS_ENGINE", "voicevox"), "VOICEVOX")
+
+
+def engine_url():
+    return config.AIVIS_URL if getattr(config, "TTS_ENGINE", "") == "aivis" else config.VOICEVOX_URL
+
+
+def engine_speaker():
+    """読み上げに使う声の番号。AivisSpeech で「自動」なら、入っている最初の声を使う。"""
+    global _aivis_speaker
+    if getattr(config, "TTS_ENGINE", "") != "aivis":
+        return config.VOICEVOX_SPEAKER
+    if getattr(config, "AIVIS_SPEAKER", 0):
+        return config.AIVIS_SPEAKER
+    if _aivis_speaker is None:
+        speakers = requests.get(f"{config.AIVIS_URL}/speakers", timeout=10).json()
+        _aivis_speaker = speakers[0]["styles"][0]["id"]
+    return _aivis_speaker
 
 
 def _envelope(data, rate):

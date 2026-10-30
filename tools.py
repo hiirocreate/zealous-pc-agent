@@ -1127,6 +1127,43 @@ def search_contents(text, path="", kind="", limit=30):
     return sorted(hits, key=lambda h: -h[1])[:limit]
 
 
+@tool("PCの中の文書を「意味」で探す(言葉が一致しなくても、内容の近いファイルを見つける)。"
+      "「先月の見積もりの資料どこ？」「旅行の計画を書いたファイル」のように、内容で探すときに使う",
+      query=("string", "探したい内容(文章でよい)", True),
+      open=("boolean", "いちばん近いファイルを開くなら true", False))
+def search_by_meaning(query, open=False):
+    import llm
+    import semantic
+    llm._status("PCの中の文書を、意味で探しています…（初回は読み込みに時間がかかります）")
+    try:
+        done = semantic.index(budget=45)
+        hits = semantic.search(query, 5)
+    except Exception as e:
+        return f"意味で探せませんでした（{type(e).__name__}）。Ollama が動いているか確認してください"
+    if not hits:
+        return "近い内容のファイルは見つかりませんでした" + ("" if done else "（まだ読み込みの途中です。少し後でもう一度試してください）")
+    if open:
+        open_file(hits[0][0])
+    lines = [f"{i}. {os.path.basename(p)}（{os.path.dirname(p)}）— {t[:60]}…" for i, (p, _, t) in enumerate(hits, 1)]
+    note = "" if done else "\n（まだ全部は読み込めていません。続きは裏で読み込んでいます）"
+    return "内容の近いファイル:\n" + "\n".join(lines) + note
+
+
+@tool("いま画面に映っているものを見て説明する(「画面に何が出てる？」「このエラーの意味は？」)。画像を理解するAIを使う",
+      question=("string", "画面について知りたいこと(省略すると全体の説明)", False))
+def look_at_screen(question=""):
+    import llm
+    import vision
+    if not vision.enabled():
+        return "画像を理解するAIが選ばれていません（設定の「モデル」で選べます）"
+    from PIL import ImageGrab
+    llm._status("画面を見ています…")
+    shot = ImageGrab.grab(all_screens=False)
+    text = vision.describe(shot, (question or "この画面に何が表示されているか") + "。日本語で、具体的に答えてください。",
+                           status=llm._status)
+    return text or "画面をうまく読み取れませんでした"
+
+
 @tool("ファイルの中身を読んで、ある言葉や話題が書かれているファイルを探す(open=true なら開く)。"
       "例:「デスクトップのメモ帳のファイルから、旅行について書いてあるものを開いて」",
       text=("string", "中に書かれている言葉・話題", True),

@@ -16,6 +16,10 @@ OLLAMA_DIR = os.path.join(DATA_DIR, "ollama")
 OLLAMA_MODELS = os.path.join(DATA_DIR, "models")
 VOICEVOX_DIR = os.path.join(DATA_DIR, "voicevox")
 WHISPER_DIR = os.path.join(DATA_DIR, "whisper")
+AIVIS_DIR = os.path.join(DATA_DIR, "aivisspeech")
+AIVIS_VERSION = "1.2.0"
+AIVIS_PKG = ("https://github.com/Aivis-Project/AivisSpeech-Engine/releases/download/"
+             f"{AIVIS_VERSION}/AivisSpeech-Engine-Windows-x64-{AIVIS_VERSION}.7z.001")
 
 VOICEVOX_VERSION = "0.26.0"
 OLLAMA_ZIP = "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip"
@@ -136,8 +140,12 @@ def start_services():
                    OLLAMA_MAX_LOADED_MODELS="1", OLLAMA_NUM_PARALLEL="1",
                    OLLAMA_FLASH_ATTENTION="1", OLLAMA_KV_CACHE_TYPE="q8_0")
         _spawn([ollama_exe(), "serve"], env)
-    if not services.check_voicevox()[0] and voicevox_exe():
+    engine = getattr(config, "TTS_ENGINE", "voicevox")
+    # 読み上げは、選んでいるソフトだけを起動する(使わないソフトでメモリを使わない)
+    if config.TTS_ENABLED and engine == "voicevox" and not services.check_voicevox()[0] and voicevox_exe():
         _spawn(_voicevox_args())
+    if config.TTS_ENABLED and engine == "aivis":
+        start_aivis()
 
 
 def restart_voicevox():
@@ -162,7 +170,16 @@ def warm_up():
                                 "options": llm.ai_options(num_ctx=4096)}, timeout=120)
         except requests.RequestException:
             pass
-    if config.TTS_ENABLED and _wait(lambda: services.check_voicevox()[0], 120):
+    engine = getattr(config, "TTS_ENGINE", "voicevox")
+    if config.TTS_ENABLED and engine == "kokoro":
+        try:
+            import kokoro_tts
+            kokoro_tts.prepare()  # 声のモデルを読み込んでおく(初回はダウンロード)
+        except Exception as e:
+            import zlog
+            zlog.error(f"Kokoro の準備に失敗: {e!r}")
+        return
+    if config.TTS_ENABLED and engine == "voicevox" and _wait(lambda: services.check_voicevox()[0], 120):
         try:
             requests.post(f"{config.VOICEVOX_URL}/initialize_speaker",
                           params={"speaker": config.VOICEVOX_SPEAKER, "skip_reinit": "true"}, timeout=120)
@@ -170,9 +187,54 @@ def warm_up():
             pass
 
 
+def aivis_exe():
+    return _find(AIVIS_DIR, "run.exe") if os.path.isdir(AIVIS_DIR) else None
+
+
+def aivis_running():
+    try:
+        with urllib.request.urlopen(config.AIVIS_URL + "/version", timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+def install_aivis(progress=lambda share, text: None):
+    """AivisSpeech Engine を Zealous 専用フォルダへ入れる(約210MB。声のモデルは初回起動時に取得)。"""
+    if aivis_exe():
+        return
+    import py7zr
+    pkg = os.path.join(DATA_DIR, "aivisspeech.7z")
+    download(AIVIS_PKG, pkg, progress)
+    progress(1.0, "読み上げソフト(AivisSpeech)を展開しています…")
+    with py7zr.SevenZipFile(pkg) as z:
+        z.extractall(AIVIS_DIR)
+    os.remove(pkg)
+
+
+def start_aivis(progress=lambda share, text: None):
+    """AivisSpeech を起動する(入っていなければ入れてから)。"""
+    if aivis_running():
+        return
+    install_aivis(progress)
+    exe = aivis_exe()
+    if exe:
+        port = config.AIVIS_URL.rsplit(":", 1)[-1].strip("/") or "10101"
+        threads = max(2, (os.cpu_count() or 4) // 2)
+        _spawn([exe, "--host", "127.0.0.1", "--port", port, "--cpu_num_threads", str(threads)])
+
+
 def wait_voicevox(seconds=120):
     """VOICEVOX が応答するまで待つ(声の読み込み直し後など)。"""
     return _wait(lambda: services.check_voicevox()[0], seconds)
+
+
+def stop_voicevox():
+    """Zealous が起動した VOICEVOX を止める(ほかの読み上げに切り替えたとき、メモリを空けるため)。"""
+    for p in list(_procs):
+        if str(p.args[0]).endswith("run.exe") and os.path.dirname(p.args[0]) == VOICEVOX_DIR and p.poll() is None:
+            p.kill()
+            _procs.remove(p)
 
 
 def stop_services():

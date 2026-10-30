@@ -10,3 +10,9 @@ python-docx
 python-pptx
 openpyxl
 pypdf
+onnxruntime
+py7zr
+kokoro-onnx
+misaki[ja]
+markitdown[docx,pptx,pdf]
+sqlite-vec

@@ -95,8 +95,18 @@ def read_file(path, limit=12000):
                 info = f"画像 {im.width}×{im.height} ({im.format})"
                 exif = im.getexif() if hasattr(im, "getexif") else {}
                 taken = exif.get(36867) or exif.get(306)
+                import llm
+                import vision
+                # 小さな画像対応AIで、写っているもの・書かれている文字を文章にする
+                seen = vision.describe(im, status=llm._status) if vision.enabled() else ""
             return head + f"\n{info}" + (f"・撮影日時 {taken}" if taken else "") + \
-                "\n(画像の中身は、文字の情報としては読み取れません)"
+                (f"\n【画像の内容（画像を理解するAIが読み取ったもの）】\n{seen}" if seen else
+                 "\n(画像の中身は、文字の情報としては読み取れません)")
+        if ext in (".docx", ".pptx", ".pdf"):
+            text = markdown(path)  # 見出し・表・箇条書きの形を保ったまま読む
+            if text:
+                cut = f"\n…(長いので最初の{limit}文字だけ。全体は{len(text)}文字)" if len(text) > limit else ""
+                return head + "\n" + text[:limit] + cut
         if ext in OFFICE or ext in TEXT or size < 200_000:
             text = tools.file_text(path, limit=600_000)
             if ext not in OFFICE and "\x00" in text[:2000]:
@@ -107,6 +117,21 @@ def read_file(path, limit=12000):
         return head + "\n(この種類のファイルの中身は読み取れません)"
     except Exception as e:
         return head + f"\n(読み取りに失敗しました: {type(e).__name__})"
+
+
+_md = None
+
+
+def markdown(path):
+    """MarkItDown で、Word・PowerPoint・PDF を見出しや表の形を保った文(Markdown)にする。使えなければ ""。"""
+    global _md
+    try:
+        if _md is None:
+            from markitdown import MarkItDown
+            _md = MarkItDown(enable_plugins=False)
+        return (_md.convert(path).text_content or "").strip()
+    except Exception:
+        return ""
 
 
 def read_folder(path, limit=16000):

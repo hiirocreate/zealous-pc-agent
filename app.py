@@ -212,7 +212,9 @@ class App(ctk.CTk):
             lambda: self._state == "recog" and self._set_state("idle"))
         # 考え中・読み上げ中は待機中の聞き取りを休む(自分の声を拾わず、PC も重くならない)
         self.voice.should_listen = lambda: self._state != "think" and not self.speaker.busy
-        self.voice.command_mode = lambda: self._following() or self._voice_win is not None  # 合図の後の会話は命令として正確に聞き取る
+        self.voice.command_mode = lambda: self._following() or self._voice_win is not None
+        self.voice.on_wake = lambda: self._events.put(self._heard_wake)
+        self._tts_engine = config.TTS_ENGINE  # 読み上げのソフトを変えたかを見るため  # 合図の後の会話は命令として正確に聞き取る
         # 合図の言葉で話しかける設定のときだけ、命令用の聞き取りAIを前もって準備(使わない人のメモリを使わない)
         self.after(15000, lambda: config.WAKE_ENABLED and self.voice.preload())  # 命令用の聞き取りAIを前もって準備(初回はダウンロード)
         try:
@@ -1784,6 +1786,13 @@ class App(ctk.CTk):
             self._show_pill()
         self._set_state("idle")
 
+    def _heard_wake(self):
+        """合図の言葉のAI(openWakeWord)が合図の言葉を見つけた: チャットを開き、続けて話す命令を聞き取る。"""
+        if self.speaker.busy:
+            return  # 読み上げ中は、自分の声を拾っただけ
+        self._wake_up()
+        self._start_follow()
+
     def _wake_up(self):
         """合図の言葉で呼ばれたとき: ウィジェットを表に出してチャット画面を開く。"""
         self._voice_session = True
@@ -1883,11 +1892,33 @@ class App(ctk.CTk):
         self._apply_settings()
         self._log("設定を保存しました")
         self._set_state("idle")
-        if runtime.voicevox_exe() and voicevox.needs_change(config.VOICEVOX_SPEAKER):
+        self._switch_tts()
+        if config.TTS_ENGINE == "voicevox" and runtime.voicevox_exe() and voicevox.needs_change(config.VOICEVOX_SPEAKER):
             self._background("声", self._prepare_voice)
         running, has_model, _ = services.check_ollama()
         if running and not has_model:
             self._background(f"AIモデル {config.OLLAMA_MODEL}", lambda p: services.pull_model(lambda t: p(None, t)))
+
+    def _switch_tts(self):
+        """読み上げのソフトを変えたとき: 使わなくなったソフトを止めてメモリを空け、選んだものを準備する。"""
+        engine = config.TTS_ENGINE
+        if engine == getattr(self, "_tts_engine", engine) and engine != "aivis":
+            self._tts_engine = engine
+            return
+        self._tts_engine = engine
+        self.speaker.stop()
+        if engine != "voicevox":
+            runtime.stop_voicevox()
+        if engine != "kokoro":
+            import kokoro_tts
+            kokoro_tts.release()
+        if engine == "voicevox":
+            threading.Thread(target=runtime.start_services, daemon=True).start()
+        elif engine == "aivis" and not runtime.aivis_running():
+            self._background("読み上げ(AivisSpeech)", runtime.start_aivis)
+        elif engine == "kokoro":
+            import kokoro_tts
+            self._background("読み上げ(Kokoro)", lambda p: kokoro_tts.prepare(lambda t: p(None, t)))
 
     def _prepare_voice(self, progress):
         """選んだ声のモデルだけを取得し(使わない声は削除)、VOICEVOX を読み込み直す。"""

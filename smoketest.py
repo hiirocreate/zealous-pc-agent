@@ -440,6 +440,24 @@ def run(out):
             still = on_main(lambda: win.winfo_exists())
             note(f"設定の保存(画面は閉じない): {'OK' if still else 'NG'} 名前={config.AI_NAME!r}")
             on_main(lambda: win.destroy())
+            # 新しい部品: 小さな読み上げAI・合図の言葉のAI・声の判定AI(ダウンロードして実際に動かす)
+            try:
+                import time as _t
+                import kokoro_tts
+                t0 = _t.time()
+                pcm, rate = kokoro_tts.synth("こんにちは、ゼラスです。")
+                note(f"Kokoro: OK ({len(pcm) / rate:.1f}秒の声を {_t.time() - t0:.1f}秒で作成・初回はダウンロード込み)")
+            except Exception as e:
+                note(f"Kokoro: NG {e!r}")
+            try:
+                import audiogate
+                import numpy as np
+                net = audiogate.wakenet("hey_jarvis")
+                score = max(net.push(np.zeros(1600, np.float32)) for _ in range(20))
+                prob = audiogate.vad().prob(np.zeros(1600, np.float32))
+                note(f"openWakeWord / Silero VAD: OK (無音の点数 {score:.2f} / {prob:.2f})")
+            except Exception as e:
+                note(f"openWakeWord / Silero VAD: NG {e!r}")
             note("ALL DONE")
         except Exception:
             note("エラー: " + traceback.format_exc())

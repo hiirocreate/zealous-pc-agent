@@ -30,13 +30,27 @@ def selftest(out):
     import importlib
     import traceback
     mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime", "updater", "gallery", "websearch", "apps", "models", "voicevox", "voice_picker", "ime", "winutil", "single_instance", "threads",
-            "faster_whisper", "ctranslate2", "sounddevice", "keyboard", "pyautogui", "customtkinter"]
+            "faster_whisper", "ctranslate2", "sounddevice", "keyboard", "pyautogui", "customtkinter",
+            "audiogate", "kokoro_tts", "vision", "semantic", "onnxruntime", "kokoro_onnx", "misaki.ja", "fugashi",
+            "markitdown", "sqlite_vec", "py7zr"]
     errors = []
     for m in mods:
         try:
             importlib.import_module(m)
         except Exception:
             errors.append(f"{m}: {traceback.format_exc(limit=1)}")
+    # 読み込めるだけでなく、実際に動くか(辞書・モデルのファイルが同梱されているか)
+    checks = [
+        ("声の判定AI(Silero VAD)", lambda: __import__("audiogate").vad() is not None or 1 / 0),
+        ("日本語の読み(Kokoro 用)", lambda: __import__("misaki.ja", fromlist=["JAG2P"]).JAG2P()("テスト")),
+        ("sqlite-vec", lambda: __import__("semantic")._open()[1] or 1 / 0),
+        ("MarkItDown", lambda: __import__("markitdown").MarkItDown(enable_plugins=False)),
+    ]
+    for name, check in checks:
+        try:
+            check()
+        except Exception:
+            errors.append(f"{name}: {traceback.format_exc(limit=2)}")
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(errors) or "OK")
     sys.exit(1 if errors else 0)

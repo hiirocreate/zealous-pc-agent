@@ -1,10 +1,13 @@
 """Web検索と本文の取り出し(APIキー不要)。検索結果は Bing、だめなら DuckDuckGo の HTML から読む。"""
 import base64
 import html
+import json
 import re
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+
+import config
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
@@ -155,12 +158,22 @@ def safe_only(items, *keys):
     return out
 
 
+def _searxng(page):
+    """SearXNG の結果(JSON)。"""
+    data = json.loads(page)
+    return [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")}
+            for r in data.get("results", []) if r.get("url")]
+
+
 def search(query, limit=5):
     """複数の検索サイトから集め、検索した言葉を含む結果を上位にする(言葉が一般的な語に分解されて、
     関係ない結果が混ざるのを防ぐ)。十分に関係する結果がそろったら、残りの検索サイトは使わない。"""
     q = urllib.parse.quote_plus(query)
     found, seen = [], set()
-    for url, parse in _ENGINES:
+    engines = list(_ENGINES)
+    if getattr(config, "SEARXNG_URL", ""):  # 自分で動かしている検索エンジン(SearXNG)を最初に使う
+        engines.insert(0, (config.SEARXNG_URL.rstrip("/") + "/search?q={q}&format=json&language=ja", _searxng))
+    for url, parse in engines:
         try:
             results = [r for r in parse(_get(url.format(q=q), timeout=5)) if r["url"].startswith("http")]
         except Exception:
