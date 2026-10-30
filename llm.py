@@ -65,6 +65,7 @@ _attached = ""       # チャットに添付されたファイル・フォルダ
 _attach_key = ()
 _office = None       # 資料づくりの前の聞き取り中 {"kind", "request", "topic", "step", "source", "content", "design"}
 _office_ready = False  # 聞き取りが済んだ(本当に作ってよい)
+_current_text = ""   # いま答えている、ユーザーの発言
 _choice = None       # どれにするか聞いている候補 {"tool", "arg", "options", "labels", "args"}
 
 
@@ -529,7 +530,8 @@ def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=
     """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。
     summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと
     full: スレッドの会話をすべて参照する(長すぎれば古い部分を圧縮。tid・base はその保存用)"""
-    global _last, _summary, _memory, _full, _tech
+    global _last, _summary, _memory, _full, _tech, _current_text
+    _current_text = text
     attach(attachments)
     _full = bool(full)
     was_tech, _tech = _tech, mode == "tech"
@@ -727,6 +729,8 @@ def office_route(t):
         return "convert_to_pdf", {"name": m.group("q").strip(" 、「」")}
     m = _OFFICE.search(t)
     if not m:
+        if _GENERIC_DOC.search(t):  # 「資料つくって」: 形式は聞き取りで決める
+            return "make_office_file", {"kind": "", "request": t}
         return None
     return "make_office_file", {"kind": OFFICE_KINDS[m.group("kind").lower()], "request": t}
 
@@ -935,26 +939,72 @@ def _pick(text, choice):
     return None
 
 
-# ---------------- 資料づくりの前の聞き取り(内容・材料・デザイン) ----------------
+# ---------------- 資料づくりの前の聞き取り(形式・内容・材料・デザイン) ----------------
 KIND_NAMES = {"pptx": "PowerPoint の資料", "docx": "Word の文書", "xlsx": "Excel の表", "pdf": "PDF の資料"}
 _SKIP = re.compile(r"おまかせ|お任せ|任せ|特に(?:ない|なし|無い)|^なし|^ない|いらない|大丈夫|そのまま|どれでも|^特には")
 _CANCEL = re.compile(r"^(?:やっぱり)?[、\s]*(?:やめ|キャンセル|中止|作らなくて|いいや|やっぱいい)")
 _NUM = {"1": 1, "一": 1, "いち": 1, "2": 2, "二": 2, "に": 2, "3": 3, "三": 3, "さん": 3}
-_PLAIN_TOPIC = re.compile(r"^(?:資料|文書|書類|表|ファイル|スライド|プレゼン(?:資料)?|報告書|企画書|提案書|何か|なにか)?$")
+_PLAIN_TOPIC = re.compile(r"^(?:資料|文書|書類|表|ファイル|スライド|プレゼン(?:資料)?|報告書|企画書|提案書|何か|なにか|"
+                          r"これ|それ|まとめ)?$")
+_PICK = re.compile(r"^(?:じゃあ|では)?[、\s]*(1|2|3|一|二|三|いち|に|さん)(?:番|つ目|ばん|で|、|。|\s|$)")
+# 形式を言わない「資料つくって」「プレゼン資料を作成して」
+_GENERIC_DOC = re.compile(r"(?:資料|プレゼン(?:資料)?|スライド|報告書|企画書|提案書|書類|ドキュメント|まとめ)を?[、\s]*"
+                          r"(?:つくって|作って|作成して|用意して|まとめて|ちょうだい|ください)")
+_KIND_WORD = re.compile(r"パワポ|パワーポイント|powerpoint|pptx|スライド|プレゼン|ワード|word|docx|エクセル|excel|xlsx|pdf",
+                        re.I)
+_WEB_WORD = re.compile(r"インターネット|ネット|ウェブ|web|検索|調べ", re.I)
+_ATTACH_WORD = re.compile(r"添付|アップロード|送った|渡した")
+# 内容(題名)を取り出すときに除く言葉
+_NOT_TOPIC = re.compile(
+    r"(?:インターネット|ネット|ウェブ|web)(?:で|から)(?:調べて)?|調べて|検索して|添付(?:した)?(?:ファイル|もの)?(?:で|から|をもとに)?|"
+    r"(?:パワポ|パワーポイント|powerpoint|pptx|スライド|プレゼン(?:資料)?|ワード|word|docx|エクセル|excel|xlsx|pdf)"
+    r"(?:の?ファイル|形式|資料)?(?:で|に|として|へ)?|"
+    r"(?:の|を)?(?:資料|文書|書類|表)?(?:を)?(?:つくって|作って|作成して|まとめて|用意して|にして|して)(?:ください|ほしい)?$|"
+    r"(?:について|に関して|に関する)(?:の)?(?:資料|内容)?|(?:を)?まとめ(?:て|た|る)?(?=\s|$|パ|ワ|エ|p|w|e|P|W|E)|"
+    r"(?:お願い|おねがい)(?:します)?$", re.I)
+
+
+def office_topic(text):
+    """頼まれた文から、資料の内容(題名)だけを取り出す。何も残らなければ ""。"""
+    t = _NOT_TOPIC.sub(" ", text or "")
+    t = re.sub(r"[、。,\s]+", " ", t).strip(" をのでにはがと")
+    return "" if _PLAIN_TOPIC.match(_key(t)) else t
+
+
+def _kind_of(text):
+    m = _KIND_WORD.search(text or "")
+    if not m:
+        return None
+    w = m.group(0).lower()
+    return OFFICE_KINDS.get(w) or ("pptx" if w in ("スライド", "プレゼン") else None)
+
+
+def _absorb(st, text):
+    """答えの中に、形式・材料・内容が含まれていれば取り込む(順番どおりでなくてもよい)。"""
+    kind = _kind_of(text)
+    if kind:
+        st["kind"] = kind
+    if not st["source"]:
+        if _WEB_WORD.search(text):
+            st["source"] = "web"
+        elif _ATTACH_WORD.search(text):
+            st["source"] = "attach"
+    topic = office_topic(text)
+    if topic and (not st["topic"] or re.search(r"について|に関して|に関する|の資料|まとめ", text)):
+        st["topic"] = topic
 
 
 def start_office(kind, request, args=None):
-    """資料を作る前に、内容・材料(ネット/添付/自分で伝える)・デザインを聞く。最初の質問を返す。"""
+    """資料を作る前に、形式・内容・材料(ネット/添付/自分で伝える)・デザインを聞く。最初の質問を返す。"""
     global _office
-    topic = doc_topic(request)
-    _office = {"kind": kind, "request": request, "topic": topic, "source": "", "content": "", "design": "",
-               "args": dict(args or {})}
+    _office = st = {"kind": kind if kind in KIND_NAMES else None, "topic": "", "source": "", "content": "",
+                    "design": "", "args": dict(args or {}), "request": request}
     if _ABOUT_CHAT.search(request):
-        _office["source"] = "chat"  # 「今の内容を Word に」: 材料は会話の内容
-    if _PLAIN_TOPIC.match(_key(topic)):
-        _office["step"] = "topic"
-        return f"{KIND_NAMES[kind]}を作ります。どんな内容にしますか？（テーマ・目的・誰に見せるか など）"
-    return _next_question(f"「{topic}」の{KIND_NAMES[kind]}を作ります。")
+        st["source"] = "chat"  # 「今の内容を Word に」: 材料は会話の内容
+    _absorb(st, request)
+    if st["source"] == "chat" and not st["topic"]:
+        st["topic"] = "これまでの会話の内容"
+    return _next_question()
 
 
 def _key(s):
@@ -963,10 +1013,23 @@ def _key(s):
 
 def _next_question(lead=""):
     st = _office
+    if not st["kind"] and not st["topic"]:
+        st["step"] = "kind_topic"
+        return (f"{lead}資料を作ります。どんな内容を、どの形式で作りますか？\n"
+                "形式: PowerPoint（発表用のスライド）／Word（報告書などの文書）／Excel（表・データ）\n"
+                "例:「株式会社〇〇の紹介をパワポで」「月別の売上表をエクセルで」")
+    if not st["kind"]:
+        st["step"] = "kind"
+        return (f"{lead}「{st['topic']}」の資料を、どの形式で作りますか？\n1. PowerPoint（発表・説明用のスライド）\n"
+                "2. Word（報告書などの文書）\n3. Excel（表・データ）\n番号か言葉で答えてください。")
+    if not st["topic"]:
+        st["step"] = "topic"
+        return f"{lead}{KIND_NAMES[st['kind']]}を作ります。どんな内容にしますか？（テーマ・目的・誰に見せるか など）"
     if not st["source"]:
         st["step"] = "source"
         have = f"（いま添付: {len(_attach_key)}件）" if _attach_key else "（＋ボタンかドラッグ＆ドロップで添付）"
-        return (f"{lead}中身はどうしますか？\n1. インターネットで調べて作る\n2. 添付したファイル・フォルダをもとに作る{have}\n"
+        return (f"{lead}「{st['topic']}」の{KIND_NAMES[st['kind']]}を作ります。中身はどうしますか？\n"
+                f"1. インターネットで調べて作る\n2. 添付したファイル・フォルダをもとに作る{have}\n"
                 "3. 入れたい内容を自分で伝える\n番号か言葉で答えてください。")
     if st["source"] == "user" and not st["content"]:
         st["step"] = "content"
@@ -977,8 +1040,8 @@ def _next_question(lead=""):
                 "「添付した」と答えてください。")
     if not st.get("asked_design"):
         st["step"], st["asked_design"] = "design", True
-        return (f"{lead}デザインの希望はありますか？（例: 青系・明朝体・10枚くらい・シンプル／ポップ）"
-                "なければ「おまかせ」と答えてください。")
+        return (f"{lead}「{st['topic']}」の{KIND_NAMES[st['kind']]}のデザインの希望はありますか？"
+                "（例: 青系・明朝体・10枚くらい・シンプル／ポップ）なければ「おまかせ」と答えてください。")
     return None
 
 
@@ -990,33 +1053,36 @@ def continue_office(text):
         _office = None
         return "わかりました。資料づくりはやめておきます。"
     step = st["step"]
-    if step == "topic":
-        st["topic"] = t
-        st["request"] = f"{t}（{st['request']}）"
-    elif step == "source":
-        m = re.match(r"^(?:じゃあ)?[、\s]*(1|2|3|一|二|三|いち|に|さん)(?:番|つ目|ばん)?", t)
-        pick = _NUM[m.group(1)] if m else (1 if re.search(r"ネット|インターネット|調べ|検索|web", t, re.I) else
-                                            2 if re.search(r"添付|アップロード|ファイル|フォルダ", t) else
-                                            3 if re.search(r"自分|伝える|言う|話す|考え", t) else 0)
-        if not pick:
-            return _next_question("すみません、うまく聞き取れませんでした。")
-        st["source"] = {1: "web", 2: "attach", 3: "user"}[pick]
-        rest = re.sub(r"^.{0,12}?(?:1|2|3|一|二|三|番|つ目)[、。\s]*", "", t) if m else ""
-        if pick == 3 and len(rest) > 10:  # 「3、〜と〜を入れて」: その場で内容も言った
-            st["content"] = rest
+    m = _PICK.match(t)
+    if step == "design":
+        st["design"] = "" if _SKIP.search(t) else text.strip()
     elif step == "content":
         st["content"] = text.strip()
-    elif step == "attach":
-        if not _attach_key:
+    elif step == "kind" and m:
+        st["kind"] = {1: "pptx", 2: "docx", 3: "xlsx"}[_NUM[m.group(1)]]
+    elif step == "source" and m:
+        st["source"] = {1: "web", 2: "attach", 3: "user"}[_NUM[m.group(1)]]
+        rest = t[m.end():].strip(" 、。")
+        if st["source"] == "user" and len(rest) > 10:  # 「3、〜と〜を入れて」: その場で内容も言った
+            st["content"] = rest
+    else:
+        before = (st["kind"], st["topic"], st["source"])
+        _absorb(st, t)
+        if step in ("topic", "kind_topic") and not st["topic"]:
+            st["topic"] = office_topic(t) or (t if not _kind_of(t) else "")
+        if step == "source" and not st["source"] and re.search(r"自分|伝える|言う|話す|考え", t):
+            st["source"] = "user"
+        if step == "attach" and not _attach_key:
             return "まだ添付が見つかりません。「＋」ボタンかドラッグ＆ドロップで添付してから、もう一度答えてください。"
-    elif step == "design":
-        st["design"] = "" if _SKIP.search(t) else text.strip()
+        if (st["kind"], st["topic"], st["source"]) == before and step in ("kind", "source", "kind_topic"):
+            return _next_question("すみません、うまく聞き取れませんでした。")
     question = _next_question()
     if question:
         return question
     _office = None
     args = dict(st["args"], kind=st["kind"], source=st["source"], design=st["design"],
-                request=st["request"] + (f"\n【入れる内容】{st['content']}" if st["content"] else "")
+                request=f"{st['topic']}の{KIND_NAMES[st['kind']]}を作る"
+                + (f"\n【入れる内容】{st['content']}" if st["content"] else "")
                 + (f"\n【デザインの希望】{st['design']}" if st["design"] else ""))
     _office_ready = True
     try:
@@ -1027,11 +1093,10 @@ def continue_office(text):
 
 def _run(name, args):
     if name == "make_office_file" and not _office_ready:
-        # 資料づくりは、作る前に必ず内容・材料・デザインを聞く
+        # 資料づくりは、作る前に必ず形式・内容・材料・デザインを聞く。AIが考えた依頼文ではなく、ユーザーの言葉で始める
         kind = OFFICE_KINDS.get(str(args.get("kind", "")).lower().lstrip("."), str(args.get("kind", "")).lower())
-        if kind in KIND_NAMES:
-            return start_office(kind, str(args.get("request") or ""), {k: v for k, v in args.items()
-                                                                         if k in ("name", "path", "font")})
+        return start_office(kind, _current_text or str(args.get("request") or ""),
+                            {k: v for k, v in args.items() if k in ("name", "path", "font")})
     if name == "scroll":  # ゼラス用ブラウザが手前なら、ページの中を直接スクロールする(画面の操作の許可は要らない)
         import browser
         try:
@@ -1080,7 +1145,7 @@ def _ask_tech(text):
         messages.append(msg)
         for name, args in calls:
             res = _run(name, args)
-            if tools.CONFIRM in res or _choice:
+            if tools.CONFIRM in res or _choice or _office:
                 return res
             messages.append({"role": "tool", "content": res.partition(SOURCES)[0][:16000]})
     return (_chat(messages, use_tools=False, stream_out=True).get("content") or "").strip()
@@ -1143,7 +1208,7 @@ def _ask(text):
             calls = [("search_summary", a) if n == "web_search" else (n, a) for n, a in calls]
         for name, args in calls:
             res = _run(name, args)
-            if tools.CONFIRM in res or _choice:  # 確認・選択が要る操作: 実行せずに聞き返す
+            if tools.CONFIRM in res or _choice or _office:  # 確認・選択・聞き取りが要る操作: 実行せずに聞き返す
                 return res
             results.append(res)
             messages.append({"role": "tool", "content": res})

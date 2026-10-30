@@ -887,3 +887,27 @@ def test_zip_attachment(tmp_path):
     assert "【ZIP: proj.zip】" in text and "在庫管理" in text and "合計 400" in text
     assert "外へ出るパス" not in text and "../evil.txt" in text  # 一覧には出すが、外へ出るパスは取り出さない
     assert not (tmp_path.parent / "evil.txt").exists()
+
+
+def test_office_interview_flexible(monkeypatch):
+    made = []
+    monkeypatch.setattr(tools, "make_office_file", lambda **kw: made.append(kw) or "作りました")
+    tools.TOOLS["make_office_file"] = (tools.make_office_file, tools.TOOLS["make_office_file"][1])
+    monkeypatch.setattr(config, "QUICK_ROUTE", True)
+    llm._office = None
+    llm.attach([])
+    # 形式も内容も言わない: まず両方を聞く。答えに形式・材料・内容が全部入っていれば、まとめて受け取る
+    q = llm.ask("資料つくって", history=[])
+    assert "どの形式" in q and "どんな内容" in q
+    q = llm.ask("インターネットで株式会社才についてまとめてパワポにして", history=[])
+    assert "デザイン" in q and "「株式会社才」" in q
+    llm.ask("おまかせ", history=[])
+    assert made[-1]["kind"] == "pptx" and made[-1]["source"] == "web" and made[-1]["request"].startswith("株式会社才の")
+    # AIが勝手に考えた依頼文ではなく、ユーザーの言葉で聞き取りを始める
+    llm._current_text = "資料を作成して"
+    q = llm._run("make_office_file", {"kind": "docx", "request": "新プロジェクトの概要"})
+    assert "新プロジェクト" not in q and "どんな内容" in q and llm._office["kind"] == "docx"
+    # 途中で形式を変えても受け取る
+    q = llm.ask("やっぱりエクセルで、店舗ごとの売上", history=[])
+    assert llm._office["kind"] == "xlsx" and "中身はどうしますか" in q
+    llm.ask("やめて", history=[])

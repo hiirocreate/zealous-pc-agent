@@ -124,22 +124,31 @@ class DotSpinner(ctk.CTkLabel):
             self.configure(image=self._frames[t])
 
 
-class CodeSpinner(ctk.CTkLabel):
-    """テクニカルモードのローディング表示: 角かっこの中を四角が行き来する(等幅の文字なので軽い)。"""
+class FrameSpinner(ctk.CTkLabel):
+    """用意したコマ画像を、時刻に合わせて切り替えるローディング表示(コマは最初に一度だけ作る)。"""
 
-    FRAMES = [f"[{'·' * i}■{'·' * (5 - i)}]" for i in list(range(6)) + list(range(4, 0, -1))]
-    PERIOD = 0.9
-
-    def __init__(self, master):
-        super().__init__(master, text=self.FRAMES[0], font=("Consolas", 15, "bold"), text_color=T.TECH,
-                         fg_color="transparent")
+    def __init__(self, master, frames, period, size):
+        import loaders
+        self._frames, self.PERIOD = frames, period
+        super().__init__(master, text="", width=size[0], height=size[1], fg_color="transparent")
         self._t = -1
+        loaders.warm()
 
     def tick(self):
-        t = int((time.monotonic() % self.PERIOD) / self.PERIOD * len(self.FRAMES))
+        import loaders
+        frames = loaders.ready(self._frames)  # 裏で作り終えるまでは何も出さない(画面を止めない)
+        if not frames:
+            return
+        t = int((time.monotonic() % self.PERIOD) / self.PERIOD * len(frames))
         if t != self._t:
             self._t = t
-            self.configure(text=self.FRAMES[t])
+            self.configure(image=frames[t])
+
+
+def tech_spinner(master):
+    """テクニカルモード: 回る二重のリングと、流れるデータの光。"""
+    import loaders
+    return FrameSpinner(master, loaders.tech, 1.6, (44, 18))
 
 
 class App(ctk.CTk):
@@ -393,17 +402,19 @@ class App(ctk.CTk):
         self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
         self.typing_spin = DotSpinner(self.typing, dot=7, gap=5)
         self.typing_spin.pack(padx=14, pady=10)
-        self.code_spin = CodeSpinner(self.typing)  # テクニカルモードのときは、こちらを出す
-        # 資料(ファイル)を作っている間だけ出す札: 書類の印・途中経過・流れる帯
+        self.code_spin = tech_spinner(self.typing)  # テクニカルモードのときは、こちらを出す
+        # 資料(ファイル)を作っている間だけ出す札: 行が書き込まれていく書類・途中経過・光が走る帯
+        import loaders
         self.office_card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
-        ctk.CTkLabel(self.office_card, text="資料", width=40, height=40, corner_radius=8, fg_color=T.ACCENT,
-                     text_color="white", font=T.font(10, "bold")).grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12)
-        self.office_text = ctk.CTkLabel(self.office_card, text="資料を作っています…", font=T.font(11, "bold"),
-                                        text_color=T.TEXT, anchor="w")
-        self.office_text.grid(row=0, column=1, sticky="sw", padx=(0, 14), pady=(12, 2))
-        self.office_bar = ctk.CTkProgressBar(self.office_card, mode="indeterminate", width=170, height=6, corner_radius=3,
-                                             progress_color=T.ACCENT, fg_color=T.BG)
-        self.office_bar.grid(row=1, column=1, sticky="nw", padx=(0, 14), pady=(4, 14))
+        self.office_doc = FrameSpinner(self.office_card, loaders.document, 3.2, (44, 52))
+        self.office_doc.grid(row=0, column=0, rowspan=3, padx=(14, 12), pady=12)
+        ctk.CTkLabel(self.office_card, text="資料を作成中", font=T.font(12, "bold"), text_color=T.TEXT,
+                     anchor="w").grid(row=0, column=1, sticky="sw", padx=(0, 16), pady=(14, 0))
+        self.office_text = ctk.CTkLabel(self.office_card, text="", font=T.font(10), text_color=T.SUB, anchor="w")
+        self.office_text.grid(row=1, column=1, sticky="w", padx=(0, 16))
+        self.office_bar = FrameSpinner(self.office_card, loaders.bar, 1.4, (170, 6))
+        self.office_bar.grid(row=2, column=1, sticky="nw", padx=(0, 16), pady=(6, 14))
+
         # 複数選択してコピーするときの帯
         self.select_bar = ctk.CTkFrame(p, fg_color=T.RAISED, corner_radius=18)
         self.select_text = ctk.CTkLabel(self.select_bar, text="", font=T.font(11, "bold"), text_color=T.TEXT)
@@ -416,8 +427,11 @@ class App(ctk.CTk):
         self._selected = None  # 複数選択中なら、選んだ吹き出しの集まり
 
         # 1行のときの高さ(ボタン32 + 上下の余白4×2 = 40)のちょうど半分の丸みにして、両端をきれいな半円にする
-        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
-        box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
+        # 外側の輪(テクニカルモードのときだけ緑にする)。入力欄の中のボタンが縁に重ならないよう、縁は外側に付ける
+        self._input_ring = ctk.CTkFrame(p, fg_color="transparent", corner_radius=22)
+        self._input_ring.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 4))
+        box = ctk.CTkFrame(self._input_ring, fg_color=T.SURFACE, corner_radius=20)
+        box.pack(fill="x", padx=2, pady=2)
         box.grid_columnconfigure(1, weight=1)
         self._input_box = box
         # 添付したファイル・フォルダ(入力欄の上に、名前の札を並べる。×で外す)
@@ -1109,7 +1123,8 @@ class App(ctk.CTk):
                 self.tech_badge.pack(side="left", padx=(6, 0))
             else:
                 self.tech_badge.pack_forget()
-            self._input_box.configure(border_width=2 if on else 0, border_color=T.TECH)
+            self._input_ring.configure(fg_color=T.TECH if on else "transparent")
+            self._input_box.configure(bg_color=T.TECH if on else "transparent")
 
     def _log_code(self, text):
         """コード(``` で囲んだ部分)のある返事: 文はふつうに、コードは等幅の枠に入れ、コピーのボタンを付ける。"""
@@ -1272,14 +1287,12 @@ class App(ctk.CTk):
         if not self._showing_pending():
             return
         self.typing.grid_remove()
-        self.office_text.configure(text="資料を作っています…")
+        self.office_text.configure(text="準備しています…")
         self.office_card.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
-        self.office_bar.start()
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
     def _office_done(self):
         if self.office_card.winfo_ismapped():
-            self.office_bar.stop()
             self.office_card.grid_remove()
         if self._voice_win is not None:
             self._voice_win.office_done()
@@ -1404,7 +1417,7 @@ class App(ctk.CTk):
         if self._state not in BUSY:
             self._spinning = False
             return
-        for sp in (self.pill_spin, self.head_spin, self.typing_spin, self.code_spin):
+        for sp in (self.pill_spin, self.head_spin, self.typing_spin, self.code_spin, self.office_doc, self.office_bar):
             if sp.winfo_ismapped():
                 sp.tick()
         self.after(16, self._spin)

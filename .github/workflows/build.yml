@@ -55,7 +55,7 @@ jobs:
           --collect-all customtkinter --collect-all faster_whisper --collect-all ctranslate2
           --collect-all _sounddevice_data --collect-data docx --collect-data pptx --hidden-import docx --hidden-import pptx --hidden-import openpyxl --hidden-import pypdf
           --hidden-import llm --hidden-import tools --hidden-import app --hidden-import setup_wizard
-          --hidden-import updater --hidden-import smoketest --hidden-import whisper_worker --hidden-import zlog --hidden-import voice_mode --hidden-import orb --hidden-import screen --hidden-import persona --hidden-import weather --hidden-import memory --hidden-import reading --hidden-import tooltip --hidden-import browser --hidden-import mail --hidden-import secret --hidden-import mail_ui --hidden-import mictest --hidden-import officedoc --hidden-import fonts --hidden-import attachments --hidden-import dropfiles --hidden-import filecard
+          --hidden-import updater --hidden-import smoketest --hidden-import whisper_worker --hidden-import zlog --hidden-import voice_mode --hidden-import orb --hidden-import screen --hidden-import persona --hidden-import weather --hidden-import memory --hidden-import reading --hidden-import tooltip --hidden-import browser --hidden-import mail --hidden-import secret --hidden-import mail_ui --hidden-import mictest --hidden-import officedoc --hidden-import fonts --hidden-import attachments --hidden-import dropfiles --hidden-import filecard --hidden-import loaders
 
       - name: 起動確認(すべての部品が exe から読み込めるか)
         shell: pwsh

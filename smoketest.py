@@ -182,7 +182,7 @@ def run(out):
             color = on_main(lambda: app.tech_btn.cget("fg_color"))
             note(f"テクニカルモード: {'OK' if has_code and color != 'transparent' else 'NG'} (コード枠={has_code}, ボタン={color})")
             badge = on_main(lambda: app.tech_badge.winfo_ismapped())
-            border = on_main(lambda: app._input_box.cget("border_width"))
+            border = 2 if on_main(lambda: app._input_ring.cget("fg_color")) != "transparent" else 0
             on_main(lambda: app._set_tech(False))
             note(f"テクニカルモードの見た目: {'OK' if badge and border == 2 else 'NG'} (札={badge}, 縁={border})")
             # 資料づくりの札 → できたファイルの札(開く・保存)、複数選択コピー

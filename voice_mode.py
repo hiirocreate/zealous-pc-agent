@@ -37,9 +37,14 @@ class VoiceMode(ctk.CTkToplevel):
         self.state_label = ctk.CTkLabel(self, text="", font=T.font(14, "bold"), text_color=T.TEXT)
         self.state_label.pack()
         self.note = ""  # 考え中の途中経過(「調べています…」など)
-        # 資料(ファイル)を作っている間だけ出す、流れる帯
-        self.making = ctk.CTkProgressBar(self, mode="indeterminate", width=200, height=6, corner_radius=3,
-                                         progress_color=T.ACCENT, fg_color=T.SURFACE)
+        # 資料(ファイル)を作っている間だけ出す: 行が書き込まれていく書類と、光が走る帯
+        import loaders
+        self.making = ctk.CTkFrame(self, fg_color="transparent")
+        loaders.warm()  # コマ画像は裏で作る(できるまでは絵を出さない)
+        self.making_doc = ctk.CTkLabel(self.making, text="", width=44, height=52)
+        self.making_doc.pack()
+        self.making_bar = ctk.CTkLabel(self.making, text="", width=170, height=6)
+        self.making_bar.pack(pady=(6, 0))
         self.user_label = ctk.CTkLabel(self, text="", font=T.font(11), text_color=T.SUB, wraplength=310,
                                        justify="center")
         self.user_label.pack(padx=20, pady=(10, 2))
@@ -92,6 +97,13 @@ class VoiceMode(ctk.CTkToplevel):
             look, level = mode, 0.0
         self.photo.paste(self.orb.frame(time.monotonic(), look, level))
         self.state_label.configure(text=self.note if mode == "think" and self.note else LABELS[mode])
+        if self.making.winfo_ismapped():
+            import loaders
+            now = time.monotonic()
+            for label, fn, period in ((self.making_doc, loaders.document, 3.2), (self.making_bar, loaders.bar, 1.4)):
+                frames = loaders.ready(fn)
+                if frames:
+                    label.configure(image=frames[int(now % period / period * len(frames))])
         if mode != "think" and self.making.winfo_ismapped():
             self.office_done()
         self.after(33, self._tick)  # 30コマ/秒
@@ -115,14 +127,12 @@ class VoiceMode(ctk.CTkToplevel):
     def status(self, text):
         """途中経過を出す。「@office」は資料づくりの始まり(流れる帯を出す)。"""
         if text == "@office":
-            self.note = "資料を作っています…"
-            self.making.pack(after=self.state_label, pady=(6, 0))
-            self.making.start()
+            self.note = "資料を作成中…"
+            self.making.pack(after=self.state_label, pady=(8, 0))
         else:
             self.note = text
 
     def office_done(self):
-        self.making.stop()
         self.making.pack_forget()
 
     def show_files(self, files, on_done=None):
