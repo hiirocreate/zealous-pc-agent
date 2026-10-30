@@ -46,6 +46,7 @@ DANGEROUS = {
     "shutdown_pc": "PCをシャットダウン",
     "click_on": "「{label}」をクリック",
     "press_keys": "「{keys}」キーを押",
+    "window_action": "「{name}」のウィンドウを終了",
 }
 REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロセスが依頼ごとに設定する)
 CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
@@ -54,6 +55,8 @@ CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待
 def needs_confirm(name, args):
     if not (REQUIRE_CONFIRM and getattr(config, "CONFIRM_VOICE_DANGER", True)) or name not in DANGEROUS:
         return False
+    if name == "window_action":  # ウィンドウは「閉じる」ときだけ確かめる
+        return str(args.get("action", "")) in ("close", "閉じる")
     return not (name == "shutdown_pc" and str(args.get("cancel", "")).lower() in ("true", "1"))
 
 
@@ -68,6 +71,8 @@ def run_tool(name, args, confirmed=False):
     if not confirmed and needs_confirm(name, args):
         import json
         what = DANGEROUS[name].format_map({k: args.get(k, "") for k in ("name", "dest", "new_name", "label", "keys")})
+        if name == "window_action" and not args.get("name"):
+            what = "いま使っているウィンドウを終了"
         return (f"{what}してよいですか？「はい」か「いいえ」で答えてください。"
                 + CONFIRM + json.dumps({"tool": name, "args": args, "what": what}, ensure_ascii=False))
     try:
@@ -411,12 +416,21 @@ def bluetooth_connect(device, connect=True):
 
 
 # ---------------- 画面の直接操作(マウス・キーボード) ----------------
-def screen_tool(description, **params):
-    """画面を直接操作する関数。設定で許可していなければ実行しない。"""
+# まずはマウスを動かさずに(ボタンや入力欄へ直接伝えて)操作し、あなたの操作を邪魔しない。
+# それができないアプリのときだけ、あなたの手が止まるのを待ってから本物のマウス・キーボードを少し借り、
+# 終わったらマウスの位置と使っていた窓を元に戻す。
+_SCREEN_KINDS = {"click": "クリック", "type": "文字の入力", "keys": "キー操作", "scroll": "スクロール",
+                 "windows": "ウィンドウの操作"}
+
+
+def screen_tool(kind, description, **params):
+    """画面を直接操作する関数。全体のスイッチと、操作の種類ごとのスイッチの両方が ON のときだけ実行する。"""
     def deco(func):
         def run(**kw):
             if not getattr(config, "SCREEN_CONTROL_ENABLED", False):
                 raise PermissionError("画面の直接操作は設定で許可されていません（設定の「権限」タブ）")
+            if not getattr(config, f"SCREEN_ALLOW_{kind.upper()}", True):
+                raise PermissionError(f"画面の{_SCREEN_KINDS[kind]}は設定で許可されていません（設定の「権限」タブ）")
             return func(**kw)
         run.__name__ = func.__name__
         SCREEN_TOOLS.add(func.__name__)
@@ -432,77 +446,124 @@ def _target():
     return hwnd, title
 
 
-@screen_tool("直前まで使っていたウィンドウの中の、ボタンや項目を名前で探してクリックする(例: 「保存」「OK」「次へ」)",
-             label=("string", "クリックするボタンや項目の名前(画面に表示されている文字)", True))
+@screen_tool("click", "直前まで使っていたウィンドウの中の、ボタンや項目を名前で探して押す(例: 「保存」「OK」「次へ」)",
+             label=("string", "押すボタンや項目の名前(画面に表示されている文字)", True))
 def click_on(label):
     import pyautogui
     import screen
     hwnd, title = _target()
-    hit = screen.find_control(hwnd, label)
+    name = screen.press_button(hwnd, label)  # 1. 昔ながらのボタン: マウスを使わずに押す
+    if name:
+        return f"「{title}」の「{name}」を押しました(マウスは動かしていません)"
+    hit = screen.uia_act(hwnd, label)  # 2. 新しいアプリ: マウスを使わずに押す・選ぶ・開く
+    if hit and hit[0] == "done":
+        return f"「{title}」の「{hit[1]}」を押しました(マウスは動かしていません)"
     if not hit:
         return f"「{title}」の中に「{label}」が見つかりませんでした"
-    screen.focus(hwnd)
-    pyautogui.click(hit[0], hit[1])
-    return f"「{title}」の「{hit[2]}」をクリックしました"
+    with screen.Borrow():  # 3. マウスでしか押せない: 手が止まるのを待ってから、少しだけ借りる
+        pyautogui.click(hit[1], hit[2])
+    return f"「{title}」の「{hit[3]}」をクリックしました"
 
 
-@screen_tool("直前まで使っていたウィンドウに、文字を入力する(日本語も可)", text=("string", "入力する文字", True))
+@screen_tool("type", "直前まで使っていたウィンドウに、文字を入力する(日本語も可)", text=("string", "入力する文字", True))
 def type_text(text):
     import screen
     hwnd, title = _target()
-    screen.focus(hwnd)
-    screen.paste_text(text)
+    if screen.insert_text(hwnd, text):  # 入力欄へ直接(キーボードを使わない)
+        return f"「{title}」に入力しました(キーボードは使っていません)"
+    with screen.Borrow():
+        screen.focus(hwnd)
+        screen.paste_text(text)
     return f"「{title}」に入力しました"
 
 
-@screen_tool("直前まで使っていたウィンドウで、キーやショートカットを押す(例: enter, ctrl+s, ctrl+c, alt+tab, f5)",
+@screen_tool("keys", "直前まで使っていたウィンドウで、キーやショートカットを押す(例: enter, ctrl+s, ctrl+c, alt+f, f5)",
              keys=("string", "押すキー。同時に押すものは + でつなぐ", True))
 def press_keys(keys):
     import pyautogui
     import screen
     names = [k.strip().lower() for k in str(keys).replace("＋", "+").split("+") if k.strip()]
     alias = {"control": "ctrl", "コントロール": "ctrl", "エンター": "enter", "改行": "enter", "シフト": "shift",
-             "オルト": "alt", "タブ": "tab", "エスケープ": "esc", "削除": "delete", "スペース": "space"}
+             "オルト": "alt", "タブ": "tab", "エスケープ": "esc", "削除": "delete", "スペース": "space",
+             "上": "up", "下": "down", "左": "left", "右": "right", "ウィンドウズ": "win", "windows": "win"}
     names = [alias.get(k, k) for k in names]
     bad = [k for k in names if k not in pyautogui.KEYBOARD_KEYS]
     if not names or bad:
         return f"「{keys}」というキーは押せません"
     hwnd, title = _target()
-    screen.focus(hwnd)
-    pyautogui.hotkey(*names)
+    with screen.Borrow():  # キーは手前の窓にしか届かないので、手が止まるのを待ってから少しだけ借りる
+        screen.focus(hwnd)
+        pyautogui.hotkey(*names)
     return f"「{title}」で {'+'.join(names)} を押しました"
 
 
-@screen_tool("直前まで使っていたウィンドウを上下にスクロールする",
+@screen_tool("scroll", "直前まで使っていたウィンドウを上下にスクロールする",
              direction=("string", "up(上) または down(下)", True), amount=("integer", "量(1〜20。既定5)", False))
 def scroll(direction, amount=5):
     import pyautogui
     import screen
     hwnd, title = _target()
-    screen.focus(hwnd)
+    down = not (str(direction).lower().startswith("u") or "上" in str(direction))
     n = max(1, min(20, int(amount or 5)))
-    pyautogui.scroll((n if str(direction).lower().startswith("u") or "上" in str(direction) else -n) * 120)
+    if screen.scroll_window(hwnd, down, n):
+        return f"「{title}」をスクロールしました(マウスは動かしていません)"
+    with screen.Borrow():
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
+        pyautogui.moveTo((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+        pyautogui.scroll((-n if down else n) * 120)
     return f"「{title}」をスクロールしました"
 
 
-@screen_tool("画面の位置(ピクセル)を指定してクリックする。ボタン名で探せないときだけ使う",
+@screen_tool("click", "画面の位置(ピクセル)を指定してクリックする。ボタン名で探せないときだけ使う",
              x=("integer", "横の位置", True), y=("integer", "縦の位置", True),
              double=("boolean", "ダブルクリックならtrue", False))
 def click_position(x, y, double=False):
     import pyautogui
+    import screen
     w, h = pyautogui.size()
     x, y = int(x), int(y)
     if not (0 <= x < w and 0 <= y < h):
         return "画面の外の位置はクリックできません"
-    pyautogui.click(x, y, clicks=2 if str(double).lower() in ("true", "1") else 1)
+    with screen.Borrow():
+        pyautogui.click(x, y, clicks=2 if str(double).lower() in ("true", "1") else 1)
     return f"({x}, {y}) をクリックしました"
+
+
+@screen_tool("windows", "ウィンドウを手前に出す(切り替える)。例:「メモ帳に切り替えて」",
+             name=("string", "ウィンドウの題名やアプリ名の一部", True))
+def switch_window(name):
+    import screen
+    hwnd, title = screen.find_window(name)
+    if not hwnd:
+        return f"「{name}」のウィンドウは見つかりませんでした"
+    screen.bring_front(hwnd)
+    return f"「{title}」に切り替えました"
+
+
+@screen_tool("windows", "ウィンドウを最小化・最大化・元の大きさに戻す・閉じる",
+             action=("string", "minimize(最小化) / maximize(最大化) / restore(元に戻す) / close(閉じる)", True),
+             name=("string", "ウィンドウの題名の一部(省略すると直前まで使っていたウィンドウ)", False))
+def window_action(action, name=""):
+    import screen
+    act = {"最小化": "minimize", "最大化": "maximize", "元に戻す": "restore", "閉じる": "close"}.get(action, action)
+    if act not in ("minimize", "maximize", "restore", "close"):
+        return f"「{action}」という操作はできません"
+    hwnd, title = screen.find_window(name) if name else _target()
+    if not hwnd:
+        return f"「{name}」のウィンドウは見つかりませんでした"
+    screen.window_command(hwnd, act)
+    return f"「{title}」を{ {'minimize': '最小化', 'maximize': '最大化', 'restore': '元の大きさに', 'close': '閉じ'}[act] }しました"
 
 
 # ---------------- ファイルを探す・開く ----------------
 def _search_roots(path=""):
     if path:
         return [_base(path)]
-    roots = [config.DESKTOP] + [_KNOWN[k] for k in ("documents", "downloads", "pictures", "music", "videos")]
+    public = os.path.join(os.environ.get("PUBLIC", r"C:\\Users\\Public"), "Desktop")  # 全員に見えるデスクトップ
+    roots = [config.DESKTOP, public] + [_KNOWN[k] for k in ("documents", "downloads", "pictures", "music", "videos")]
     return [r for i, r in enumerate(roots) if r not in roots[:i] and os.path.isdir(r)]
 
 

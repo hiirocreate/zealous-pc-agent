@@ -41,6 +41,12 @@ DEFAULTS = {
     "FOLDER_OPS_ENABLED": True,      # 作成・移動・コピー・名前変更などを許可
     "FOLDER_DELETE_ENABLED": True,
     "SCREEN_CONTROL_ENABLED": False, # マウス・キーボードで画面を直接操作する(ボタンを押す・文字を入力する など)
+    "SCREEN_ALLOW_CLICK": True,      #   ボタン・項目を押す
+    "SCREEN_ALLOW_TYPE": True,       #   文字を入力する
+    "SCREEN_ALLOW_KEYS": True,       #   キー・ショートカットを押す
+    "SCREEN_ALLOW_SCROLL": True,     #   スクロールする
+    "SCREEN_ALLOW_WINDOWS": True,    #   ウィンドウの切り替え・最小化・最大化・閉じる
+    "SCREEN_WAIT_IDLE": True,        #   マウス・キーボードを借りるときは、あなたの手が止まるまで待つ
     "CONFIRM_VOICE_DANGER": True,    # 声で頼まれた削除・移動・名前変更・シャットダウンは、実行前に確認する   # 削除(ごみ箱へ移動)を許可
     # ---- ブラウザ: chrome / edge / firefox / default ----
     "BROWSER": "chrome",
