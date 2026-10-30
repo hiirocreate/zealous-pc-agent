@@ -427,20 +427,19 @@ class App(ctk.CTk):
         self._selected = None  # 複数選択中なら、選んだ吹き出しの集まり
 
         # 1行のときの高さ(ボタン32 + 上下の余白4×2 = 40)のちょうど半分の丸みにして、両端をきれいな半円にする
-        # 外側の輪(テクニカルモードのときだけ緑にする)。入力欄の中のボタンが縁に重ならないよう、縁は外側に付ける
-        self._input_ring = ctk.CTkFrame(p, fg_color="transparent", corner_radius=22)
-        self._input_ring.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 4))
-        box = ctk.CTkFrame(self._input_ring, fg_color=T.SURFACE, corner_radius=20)
-        box.pack(fill="x", padx=2, pady=2)
+        # 入力欄: 高さ 48(ボタン 30 + 上下 9)のちょうど半分の丸みで、両端を半円にする。
+        # 縁(テクニカルモードで緑)はいつも描いておき(ふだんは背景と同じ色)、両端のボタンは縁の丸みの内側に収める
+        box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=24, border_width=2, border_color=T.SURFACE)
+        box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
         box.grid_columnconfigure(1, weight=1)
         self._input_box = box
         # 添付したファイル・フォルダ(入力欄の上に、名前の札を並べる。×で外す)
         self.attach_bar = ctk.CTkFrame(box, fg_color="transparent")
-        self.mic = self._mic(box, 32)
-        self.mic.grid(row=1, column=0, padx=4, pady=4, sticky="s")
+        self.mic = self._mic(box, 30)
+        self.mic.grid(row=1, column=0, padx=(9, 4), pady=9, sticky="s")
         self.entry = ctk.CTkTextbox(box, border_width=0, fg_color="transparent", font=T.font(12),
                                     text_color=T.TEXT, height=30, wrap="char", activate_scrollbars=False)
-        self.entry.grid(row=1, column=1, sticky="ew", padx=2, pady=4)
+        self.entry.grid(row=1, column=1, sticky="ew", padx=2, pady=9)
         self.entry.bind("<Return>", self._on_return)
         import ime  # 日本語の変換中の文字を、この入力欄の中に表示させる
         self._ime = ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
@@ -459,18 +458,18 @@ class App(ctk.CTk):
                 bind_all(c)
         bind_all(box)
         # ファイル・フォルダを添付するボタン
-        clip = ctk.CTkButton(box, text="＋", width=34, height=34, corner_radius=17, font=T.font(16, "bold"),
+        clip = ctk.CTkButton(box, text="＋", width=30, height=30, corner_radius=15, font=T.font(15, "bold"),
                              fg_color="transparent", hover_color=T.RAISED, text_color=T.SUB,
                              command=lambda: self._attach_menu())
-        clip.grid(row=1, column=2, padx=(3, 0), pady=3, sticky="s")
+        clip.grid(row=1, column=2, padx=(3, 0), pady=9, sticky="s")
         import tooltip
         tooltip.tip(clip, "ファイル・フォルダを添付（ドラッグ＆ドロップ・貼り付けでも）")
         # 音声会話画面へ切り替えるボタン(声の波の印)
-        self._round(box, 34, icons.waves(17, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED,
+        self._round(box, 30, icons.waves(15, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED,
                     tip="音声で会話する").grid(
-            row=1, column=3, padx=(3, 0), pady=3, sticky="s")
-        self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER, tip="送信（Enter）").grid(
-            row=1, column=4, padx=3, pady=3, sticky="s")
+            row=1, column=3, padx=(4, 0), pady=9, sticky="s")
+        self._round(box, 30, icons.send(16), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER, tip="送信（Enter）").grid(
+            row=1, column=4, padx=(4, 9), pady=9, sticky="s")
         import dropfiles
         self.after(500, lambda: dropfiles.enable(self, self._add_attachments))
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
@@ -1093,7 +1092,7 @@ class App(ctk.CTk):
             chip.pack(side="left", padx=(0, 4), pady=(2, 0))
             import tooltip
             tooltip.tip(chip, f"{p}\n押すと添付を外します")
-        self.attach_bar.grid(row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(6, 0))
+        self.attach_bar.grid(row=0, column=0, columnspan=5, sticky="w", padx=18, pady=(8, 0))
 
     # ================= テクニカルモード =================
     def _tech_on(self):
@@ -1123,8 +1122,7 @@ class App(ctk.CTk):
                 self.tech_badge.pack(side="left", padx=(6, 0))
             else:
                 self.tech_badge.pack_forget()
-            self._input_ring.configure(fg_color=T.TECH if on else "transparent")
-            self._input_box.configure(bg_color=T.TECH if on else "transparent")
+            self._input_box.configure(border_color=T.TECH if on else T.SURFACE)
 
     def _log_code(self, text):
         """コード(``` で囲んだ部分)のある返事: 文はふつうに、コードは等幅の枠に入れ、コピーのボタンを付ける。"""
@@ -1203,6 +1201,8 @@ class App(ctk.CTk):
                 b.grid_configure(row=i)
         if self.typing.winfo_manager():
             self.typing.grid_configure(row=len(self._bubbles))  # 入力中表示は常に最後尾
+        if self.office_card.winfo_manager():
+            self.office_card.grid_configure(row=len(self._bubbles))  # 資料づくり中の表示も最後尾
         self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
     # ---- 返事を書けた分から表示・読み上げ ----
