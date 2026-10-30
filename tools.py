@@ -59,6 +59,19 @@ REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロ�
 CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
 
 
+CHOICE = "\n\n選択:\n"  # 返事のうち、これより後ろは「どれにするか選んでもらう」候補(画面用。読み上げない)
+
+
+def ask_choice(question, tool_name, arg, options, labels=None, args=None):
+    """操作する相手の候補が複数あるとき、どれにするかを聞く返事。次の発言(番号か名前)で選ばれたものを実行する。"""
+    import json
+    labels = labels or options
+    lines = "\n".join(f"{i}. {label}" for i, label in enumerate(labels, 1))
+    return (f"{question}\n{lines}\n番号か名前で教えてください。" + CHOICE
+            + json.dumps({"tool": tool_name, "arg": arg, "options": options, "labels": labels, "args": args or {}},
+                         ensure_ascii=False))
+
+
 def needs_confirm(name, args):
     if name == "web_click" and getattr(config, "WEB_CONFIRM_RISKY", True):
         # 購入・送信・削除などのボタンは、声でも文字でも、押す前に確かめる
@@ -761,7 +774,11 @@ def web_tool(description, **params):
           target=("string", "押すものの名前(ページに表示されている文字の一部でよい)", True))
 def web_click(target):
     import browser
-    return browser.click(target)[0]
+    text, hit = browser.click(target)
+    if hit and hit.get("alts"):  # 同じくらい当てはまるものが複数: どれを押すか確かめる
+        return ask_choice(f"ページの中に「{target}」に当てはまるものが{len(hit['alts'])}つあります。どれを押しますか？",
+                          "web_click", "target", hit["alts"])
+    return text
 
 
 @web_tool("開いているWebページの入力欄に文字を入れる。submit=true なら入れたあと Enter で決定(検索など)",
@@ -881,7 +898,14 @@ def open_file(name, path=""):
         found = find_paths(name, path)
         if not found:
             return f"「{name}」が見つからないため、開けませんでした"
-        p = found[0]
+        key = os.path.splitext(name.strip().lower())[0]
+        exact = [f for f in found if os.path.splitext(os.path.basename(f).lower())[0] == key or
+                 os.path.basename(f).lower() == name.strip().lower()]
+        same = exact if exact else found
+        if len(same) > 1:  # 同じような名前が複数: どれを開くか確かめる
+            return ask_choice(f"「{name}」に当てはまるものが{len(same)}件あります。どれを開きますか？", "open_file", "name",
+                              same[:6], [f"{os.path.basename(f)}（{os.path.dirname(f)}）" for f in same[:6]])
+        p = same[0]
     _guard(p)
     if os.name == "nt":
         os.startfile(p)  # いつものアプリで開く(テキストならメモ帳など)

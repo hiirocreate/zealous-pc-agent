@@ -43,6 +43,9 @@ _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 on_summary = None    # 長い会話の古い部分を圧縮したときに知らせる関数(スレッド番号, 要約, 要約した往復数)
 _full = False        # このスレッドの会話をすべて参照するモード
+on_retract = None    # 書き始めた返事を取り消す関数(返事の途中で操作を始めたとき。「開きます」などを話さないように)
+_streamed = False    # 直前の問い合わせで、返事を画面と読み上げへ流したか
+_choice = None       # どれにするか聞いている候補 {"tool", "arg", "options", "labels", "args"}
 
 
 _LANG_NAMES = {"ja": "日本語", "en": "英語", "zh": "中国語", "ko": "韓国語", "fr": "フランス語", "de": "ドイツ語",
@@ -94,6 +97,7 @@ def system_prompt():
             "・URLを推測で作らない。サイトを開く・サイト内で探すときは open_site、動画を流すときは play_video を使う。\n"
             "・開いているWebページの中の操作(リンクやボタンを押す・入力する・選ぶ・スクロール・戻る・動画の操作・"
             "ページの内容を読む)は、web_ で始まる関数を使う。押す名前が見つからなければ、返ってきた項目の名前から選び直す。\n"
+            "・アプリを開く・起動するときは launch_app を使う(click_on は、開いているウィンドウの中のボタンを押すときだけ)。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
@@ -216,7 +220,9 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
     import models
     if models.thinks(config.OLLAMA_MODEL):
         body["think"] = False  # 考える過程を書かせない(書かせると、話し始めるまでが遅くなる)
+    global _streamed
     content, calls, shown = "", [], 0
+    _streamed = False
     with requests.post(config.OLLAMA_URL, json=body, timeout=config.OLLAMA_TIMEOUT, stream=True) as r:
         r.raise_for_status()
         for line in r.iter_lines():
@@ -239,12 +245,14 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
                 if len(ok) > shown:
                     on_delta(ok[shown:])
                     shown = len(ok)
+                    _streamed = True
     if guard is not None and not calls and off_track(guard, content):
         raise OffTrack(content[:40])
     if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
         ok = visible(content)
         if len(ok) > shown:
             on_delta(ok[shown:])  # 短い返事(待っている間に書き終わった分)
+            _streamed = True
     return {"role": "assistant", "content": content, "tool_calls": calls}
 
 
@@ -451,6 +459,9 @@ def page_route(t):
 _NOT_SEARCH = re.compile(r"ブラウザ|あなた|きみ|君|お前|自分|さっき|それ|これ|あれ")  # 会話の続き・ブラウザ指定は AI に任せる
 
 
+_OPEN_APP = re.compile(r"^(?P<q>[^、。,\s]{1,30}?)(?:を)?(?:開いて|ひらいて|起動して|立ち上げて|つけて)(?:ください)?$")
+_NOT_APP = re.compile(r"ファイル|フォルダ|サイト|ページ|ブラウザ|\.|それ|これ|あれ|デスクトップ|ドキュメント|ダウンロード|ピクチャ")
+
 # 直前の画面操作(「もっと下に」「少し戻って」など、続きの指示に使う)
 _last_scroll = {"direction": None, "amount": 5}
 _MORE = r"(?:もっと|もう(?:少し|ちょっと|すこし)|さらに|更に|続けて|もう一回|もう1回|もういっかい)"
@@ -545,6 +556,11 @@ def quick_route(text):
                 if name == "scroll":
                     small = re.search(r"少し|ちょっと", t)
                     return name, {"direction": "down" if q in ("下", "した") else "up", "amount": 2 if small else 5}
+    m = _OPEN_APP.match(t)  # 「サンダーバード開いて」: このPCのアプリの名前なら、そのアプリを起動する
+    if m and not _NOT_APP.search(m.group("q")):
+        import apps
+        if apps.is_app(m.group("q")):
+            return "launch_app", {"name": m.group("q")}
     if _NOT_SEARCH.search(t):
         return None
     for pattern, name in _ROUTES:
@@ -600,6 +616,34 @@ def needs_tools(text):
     return bool(_NEEDS_TOOLS.search(text))
 
 
+_NUMS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6}
+
+
+def _pick(text, choice):
+    """候補を聞いたあとの返事から、選ばれた番号(0から)。やめるなら "cancel"、関係ない話なら None。"""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", text).strip().rstrip("。.!！?？").lower()
+    n = len(choice["options"])
+    if re.fullmatch(r"(?:やっぱり)?(?:やめて|やめる|キャンセル|いいえ|いらない|どれでもない|なし)(?:ておく|とく)?", t):
+        return "cancel"
+    m = re.fullmatch(r"(?:じゃあ|では)?[、\s]*(?:(\d)|([一二三四五六]))\s*(?:番目?|つ目|個目|こめ|の方|のほう)?(?:で|を|に)?"
+                     r"(?:お願い|おねがい|開いて|押して|して|ください)?", t)
+    if m:
+        k = int(m.group(1)) if m.group(1) else _NUMS[m.group(2)]
+        return k - 1 if 1 <= k <= n else None
+    if re.fullmatch(r"(?:最初|いちばん上|一番上|上)の?(?:方|ほう|やつ)?(?:で|を)?(?:お願い|開いて|押して)?", t):
+        return 0
+    if re.fullmatch(r"(?:最後|いちばん下|一番下|下)の?(?:方|ほう|やつ)?(?:で|を)?(?:お願い|開いて|押して)?", t):
+        return n - 1
+    core = re.sub(r"(?:の方|のほう|のやつ)?(?:で|を)?(?:お願い|おねがい|開いて|押して|ください)?$", "", t).strip()
+    if len(core) >= 2:
+        hits = [i for i, label in enumerate(choice["labels"])
+                if core in unicodedata.normalize("NFKC", str(label)).lower()]
+        if len(hits) == 1:
+            return hits[0]
+    return None
+
+
 def _run(name, args):
     if name == "scroll":  # ゼラス用ブラウザが手前なら、ページの中を直接スクロールする(画面の操作の許可は要らない)
         import browser
@@ -608,7 +652,12 @@ def _run(name, args):
                 name = "web_scroll"
         except Exception:
             pass
+    global _choice
     res = tools.run_tool(name, args)
+    if tools.CHOICE in res:  # 当てはまるものが複数: 次の発言で選んでもらう
+        res, _, data = res.partition(tools.CHOICE)
+        _choice = json.loads(data)
+        return res
     if name in ("scroll", "web_scroll") and "スクロールしました" in res:  # 「もっと下に」などのために覚えておく
         down = not (str(args.get("direction", "")).lower().startswith("u") or "上" in str(args.get("direction", "")))
         _last_scroll.update(direction="down" if down else "up", amount=int(args.get("amount") or 5))
@@ -616,6 +665,15 @@ def _run(name, args):
 
 
 def _ask(text):
+    global _choice
+    if _choice:  # 「どれにしますか？」への答え
+        choice, _choice = _choice, None
+        k = _pick(text, choice)
+        if k == "cancel":
+            return "わかりました。やめておきます。"
+        if k is not None:
+            args = dict(choice["args"], **{choice["arg"]: choice["options"][k]})
+            return _run(choice["tool"], args)
     route = quick_route(text)
     if route:
         return _run(*route)
@@ -631,6 +689,8 @@ def _ask(text):
     for step in range(config.MAX_TOOL_STEPS):
         msg = _chat_on_track(messages, text, use_tools=True) if step == 0 else _chat(messages, stream_out=True)
         calls = parse_tool_calls(msg)
+        if calls and _streamed and on_retract:
+            on_retract()  # 「〇〇を開きます」と書き始めてから操作した: 書いた分は取り消し、操作の結果だけを伝える
         if not calls and not results and step == 0 and _REFUSE.search(msg.get("content") or ""):
             return _run("search_summary", {"query": text})  # 「最新情報は提供できません」: 実際に調べて答える
         if not calls and not results and step == 0 and _CLAIM.search(msg.get("content") or ""):
@@ -650,7 +710,7 @@ def _ask(text):
             calls = [("search_summary", a) if n == "web_search" else (n, a) for n, a in calls]
         for name, args in calls:
             res = _run(name, args)
-            if tools.CONFIRM in res:  # 声で頼まれた危険な操作: 実行せずに確認を返す
+            if tools.CONFIRM in res or _choice:  # 確認・選択が要る操作: 実行せずに聞き返す
                 return res
             results.append(res)
             messages.append({"role": "tool", "content": res})

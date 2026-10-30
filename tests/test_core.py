@@ -362,6 +362,8 @@ def test_open_url_rejects_bad(monkeypatch):
     opened = []
     monkeypatch.setattr(tools, "_browser_path", lambda: None)
     monkeypatch.setattr(tools.webbrowser, "open", lambda u: opened.append(u))
+    import browser
+    monkeypatch.setattr(browser, "enabled", lambda: False)
     assert "開きませんでした" in tools.run_tool("open_url", {"url": "https://bad.example/x"})
     assert "開きませんでした" in tools.run_tool("open_url", {"url": "http://1.2.3.4/"})
     tools.run_tool("open_url", {"url": "https://ok.example/"})
@@ -609,3 +611,38 @@ def test_full_context_compress(monkeypatch):
     monkeypatch.setattr(config, "FULL_CONTEXT_COMPRESS", False)  # 圧縮しない: 古い部分は参照しない
     assert llm._fit(pairs, "", t["id"], 0)[1] == ""
     assert llm.num_ctx([{"content": "あ" * 100}]) == 4096 and llm.num_ctx([{"content": "あ" * 12000}]) == 16384
+
+
+def test_app_name_variants_and_choice(monkeypatch):
+    import apps
+    found = [{"Name": n, "AppID": n} for n in
+             ("Mozilla Thunderbird", "Discord", "Microsoft Edge", "Zoom Workplace", "Zoom Rooms")]
+    assert [a["Name"] for a in apps.matches("サンダーバード", found)] == ["Mozilla Thunderbird"]
+    assert [a["Name"] for a in apps.matches("でぃすこーど", found)] == ["Discord"]
+    assert apps.matches("請求書", found, fuzzy=False) == []
+    monkeypatch.setattr(apps, "start_apps", lambda: found)
+    monkeypatch.setattr(apps.subprocess, "Popen", lambda *a, **k: None)
+    llm._choice = None
+    reply = llm._run("launch_app", {"name": "ズーム"})  # 「Zoom」が2つ: どちらか聞く
+    assert "2つ" in reply and "1. Zoom Rooms" in reply and tools.CHOICE not in reply and llm._choice
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    assert llm._ask("2番で") == "Zoom Workplace を起動しました"
+    llm._run("launch_app", {"name": "ズーム"})
+    assert llm._ask("やめて") == "わかりました。やめておきます。" and llm._choice is None
+    assert llm._pick("ワークプレイスの方", {"options": ["a", "b"], "labels": ["Zoom Rooms", "Zoom ワークプレイス"]}) == 1
+
+
+def test_streamed_text_is_retracted_when_tool_runs(monkeypatch):
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    sent = []
+    monkeypatch.setattr(llm, "on_retract", lambda: sent.append("retract"))
+
+    def fake_chat(messages, use_tools=True, **kw):
+        llm._streamed = True  # 「サンダーバードを開きます」と書き始めてから、関数を呼んだ
+        return {"content": "サンダーバードを開きます", "tool_calls": [
+            {"function": {"name": "launch_app", "arguments": {"name": "サンダーバード"}}}]}
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    monkeypatch.setattr(llm, "_run", lambda n, a: "「サンダーバード」というアプリが見つかりませんでした")
+    monkeypatch.setattr(config, "SUMMARIZE_AFTER_TOOL", False)
+    assert llm._ask("サンダーバード開いて") == "「サンダーバード」というアプリが見つかりませんでした"
+    assert sent == ["retract"]

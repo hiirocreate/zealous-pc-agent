@@ -8,6 +8,11 @@ def _worker_main(inq, outq):
     import llm
     import tools
     llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
+    llm.on_retract = lambda: outq.put(("retract", None))  # 書き始めた返事を取り消す
+    import os
+    if os.name == "nt":  # アプリの一覧を先に読んでおく(「〇〇を開いて」をすぐ判断できるように)
+        import apps
+        threading.Thread(target=lambda: apps.start_apps(), daemon=True).start()
     llm.on_summary = lambda tid, text, upto: outq.put(("summary", (tid, text, upto)))  # 長い会話を圧縮した
     while True:
         text, history, by_voice, extra = inq.get()

@@ -1675,6 +1675,13 @@ class App(ctk.CTk):
                 self._on_delta(text)
             elif kind == "reply":
                 self._on_reply(text)
+            elif kind == "retract":  # 返事の途中で操作を始めた: 書いた分(「開きます」など)を消し、話すのもやめる
+                self.speaker.stop()
+                if self._stream is not None:
+                    self._remove_widget(self._stream[0])
+                    self._stream = None
+                if self._voice_win is not None:
+                    self._voice_win.reply_done("")
             elif kind == "summary":  # 長くなった会話の古い部分を圧縮した(全部を参照するモード)
                 tid, summary, upto = text
                 self._save_summary(tid, summary, upto, full=True)

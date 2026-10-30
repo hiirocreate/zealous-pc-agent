@@ -299,6 +299,7 @@ _FIND = r"""
     return best + (interactive ? 20 : 0);
   };
   let hit = null, top = 0;
+  const cands = [];
   const editable = el => el.matches(FIELD) && !el.disabled && !el.readOnly;
   for (const [el, dx, dy] of all) {
     if (!shown(el)) continue;
@@ -312,8 +313,12 @@ _FIND = r"""
       s = score(el, el.matches(CLICK));
     }
     if (s > top) { top = s; hit = [el, dx, dy]; }
+    if (s > 0) cands.push([s, el]);
   }
   if (!hit) return null;
+  // 同じくらい当てはまる、名前の違う候補(どれを押すか確かめるため)。ちょうど同じ名前のものがあれば、それに決める
+  const alts = [...new Set(cands.filter(c => c[0] === top).map(c => (name(c[1]).find(Boolean) || '').slice(0, 40)))]
+    .filter(Boolean);
   let [el, dx, dy] = hit;
   if (mode !== 'field' && !el.matches(CLICK)) el = el.closest(CLICK) || el;
   el.scrollIntoView({block: 'center', inline: 'center'});
@@ -325,6 +330,7 @@ _FIND = r"""
   const label = (name(el).find(Boolean) || el.tagName).slice(0, 40);
   const kind = (el.type || '').toLowerCase();
   return {x, y, free, label, tag: el.tagName, kind, password: kind === 'password',
+          alts: (mode !== 'field' && alts.length > 1 && !alts.some(a => norm(a) === want)) ? alts.slice(0, 6) : null,
           risky: /購入|注文|支払|決済|送金|振込|削除|退会|解約|確定|投稿|送信|申し込|申込|buy|order|checkout|pay|purchase|delete|submit|send|post/i.test(name(el).join(' '))};
 })
 """
@@ -366,6 +372,8 @@ def click(label):
             near = items(p)
             return (f"ページの中に「{label}」が見つかりませんでした" +
                     (f"。いま見えている項目: {'、'.join(near[:15])}" if near else "")), None
+        if hit.get("alts"):
+            return "", hit  # 押さずに、どれにするか聞く
         time.sleep(0.15)  # 画面の中へ動かしたあと、位置が落ち着くのを待つ
         hit = _find(p, label) or hit
         if hit["free"]:
