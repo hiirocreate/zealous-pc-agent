@@ -187,16 +187,21 @@ def run(out):
             note("部品の一覧(確認用): " + screen.list_controls(hwnd)[:300])
             note("メニュー: " + tools.run_tool("click_on", {"label": "File"}))
             pyautogui.press("esc")
-            # ふつうのボタン: 検索の小窓を開き、「Cancel」を名前で押して閉じる
-            tools.run_tool("press_keys", {"keys": "ctrl+f"})
-            time.sleep(1.5)
-            note("小窓: " + repr([screen.target_window()[1]] + [t for t in (screen._child_windows(w) for w in
-                                                                           screen._same_app_windows(hwnd))][:3])[:300])
-            note("ボタン: " + tools.run_tool("click_on", {"label": "Cancel"}))
-            time.sleep(1.0)
-            hwnd2, title2 = screen.target_window()
-            note(f"ボタンで小窓を閉じる: {'OK' if title2 == title else 'NG'} (いちばん手前: {title2!r})")
             pad.kill()
+            # ふつうのボタン: 「テストボタン」だけの小さな窓を出し、名前で押せるか(押すとファイルができる)
+            flag = os.path.join(out, "clicked.txt")
+            form = sp.Popen(["powershell", "-NoProfile", "-Command",
+                             "Add-Type -AssemblyName System.Windows.Forms;"
+                             "$f=New-Object Windows.Forms.Form; $f.Text='Zealous Test'; $f.TopMost=$true;"
+                             "$b=New-Object Windows.Forms.Button; $b.Text='テストボタン'; $b.Width=160; $b.Height=40;"
+                             f"$b.Add_Click({{ Set-Content -Path '{flag}' -Value ok; $f.Close() }});"
+                             "$f.Controls.Add($b); [void]$f.ShowDialog()"])
+            time.sleep(4)
+            note("ボタンの窓: " + repr(screen.target_window()[1]))
+            note("ボタン: " + tools.run_tool("click_on", {"label": "テストボタン"}))
+            time.sleep(1.5)
+            note(f"名前でボタンを押す: {'OK' if os.path.exists(flag) else 'NG'}")
+            form.kill()
             config.SCREEN_CONTROL_ENABLED = False
 
             # 設定画面を開いて(入力欄すべてに日本語入力の処理が付く)、入力欄に打って保存する(閉じないこと)
