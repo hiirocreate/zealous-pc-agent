@@ -9,14 +9,14 @@ def _worker_main(inq, outq):
     import tools
     llm.on_delta = lambda piece: outq.put(("delta", piece))  # 返事は書けた分から画面へ送る
     while True:
-        text, history, by_voice = inq.get()
+        text, history, by_voice, extra = inq.get()
         try:
             if text == "__confirmed__":  # 確認で「はい」と言われた操作を実行する
                 name, args = history
                 outq.put(("reply", tools.run_tool(name, args, confirmed=True)))
                 continue
             tools.REQUIRE_CONFIRM = by_voice
-            outq.put(("reply", llm.ask(text, history)))
+            outq.put(("reply", llm.ask(text, history, **(extra or {}))))
         except Exception as e:
             outq.put(("error", str(e)))
 
@@ -34,18 +34,18 @@ class AgentWorker:
         self._proc = self._ctx.Process(target=_worker_main, args=(self._inq, self._outq), daemon=True)
         self._proc.start()
 
-    def submit(self, text, history=None, by_voice=False):
+    def submit(self, text, history=None, by_voice=False, extra=None):
         """history: そのスレッドの直前のやりとり [(発言, 返事)]。None なら作業プロセス側の記憶を使う。
         by_voice: 声で頼まれた(危険な操作は実行前に確認する)。"""
         with self._lock:
             self.pending += 1
-            self._inq.put((text, history, by_voice))
+            self._inq.put((text, history, by_voice, extra))
 
     def run_confirmed(self, name, args):
         """確認が取れた操作を実行する。"""
         with self._lock:
             self.pending += 1
-            self._inq.put(("__confirmed__", (name, args), False))
+            self._inq.put(("__confirmed__", (name, args), False, None))
 
     def poll(self):
         out = []

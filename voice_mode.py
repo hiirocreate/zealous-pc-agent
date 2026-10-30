@@ -102,7 +102,7 @@ class VoiceMode(ctk.CTkToplevel):
         import gallery
         self.clear_images()
         items = images["items"]
-        open_all = lambda: gallery.Gallery(self, images["query"], items)  # noqa: E731
+        open_all = lambda: gallery.show(self, images["query"], items)  # noqa: E731
         row = ctk.CTkFrame(self.pics, fg_color="transparent")
         row.pack()
         for item in items[:4]:

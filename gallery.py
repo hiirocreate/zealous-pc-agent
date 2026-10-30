@@ -29,6 +29,33 @@ def load_async(widget, urls, size, on_image, fit=False):
     _pool.submit(job)
 
 
+_windows = {}  # 開いている窓 (種類, 内容) → 窓。同じものは1つだけ開き、もう一度押したら手前に出す
+
+
+def _reuse(key):
+    w = _windows.get(key)
+    if w is not None and w.winfo_exists():
+        w.deiconify()
+        w.lift()
+        w.focus_force()
+        return True
+    return False
+
+
+def show(master, query, items):
+    """画像一覧を開く(同じ検索の一覧がもう開いていれば、それを手前に出す)。"""
+    key = ("list", query, tuple(it.get("full", "") for it in items))
+    if not _reuse(key):
+        _windows[key] = Gallery(master, query, items)
+
+
+def preview(master, item):
+    """1枚を大きく表示する(同じ画像がもう開いていれば、それを手前に出す)。"""
+    key = ("one", item.get("full") or item.get("thumb"))
+    if not _reuse(key):
+        _windows[key] = Preview(master, item)
+
+
 class Gallery(ctk.CTkToplevel):
     def __init__(self, master, query, items):
         super().__init__(master, fg_color=T.BG)
@@ -51,7 +78,7 @@ class Gallery(ctk.CTkToplevel):
             cap = ctk.CTkLabel(cell, text=_short(item.get("title", ""), 12), font=T.font(9), text_color=T.SUB)
             cap.place(relx=0.5, y=THUMB + 14, anchor="center")
             for w in (pic, cell):
-                w.bind("<Button-1>", lambda e, it=item: Preview(self, it))
+                w.bind("<Button-1>", lambda e, it=item: preview(self, it))
             load_async(pic, [item["thumb"], item.get("mid", "")], (THUMB, THUMB),
                        lambda im, _, p=pic: p.configure(image=im, text=""))
 

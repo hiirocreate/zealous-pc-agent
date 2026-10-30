@@ -30,7 +30,8 @@ DEFAULTS = {
     "SEARCH_IMAGE_COUNT": 8,         # 調べものの返事に添える画像の枚数
     "SOURCE_COUNT": 3,               # 調べものの返事に添える参考リンクの数
     "SAFE_SITES_ONLY": True,         # 危険と判定されたサイトは表示・案内しない
-    "PERSONA": "",                   # AIの性格・話し方(空なら標準の丁寧な話し方)
+    "PERSONA": "",
+    "MEMORY": [],                    # AIがユーザーについてずっと覚えておくこと(「〜を覚えておいて」で増える)                   # AIの性格・話し方(空なら標準の丁寧な話し方)
     "UI_THEME": "midnight",          # 画面の配色(midnight / ocean / sakura / light)
     "UI_FONT": "",                   # 画面の文字のフォント(空なら標準: Yu Gothic UI)
     "UI_FONT_SCALE": 100,            # 画面の文字の大きさ(%)
@@ -51,7 +52,7 @@ DEFAULTS = {
     "USE_GPU": True,                 # NVIDIA の GPU があれば使う(GPU 用ライブラリを追加で取得)
     "MAX_TOOL_STEPS": 3,             # 1命令あたりの関数呼び出し上限(ループ防止)
     "QUICK_ROUTE": True,             # 「〜を調べて」などはAIの判断を待たずに直接実行(速い)
-    "CONTEXT_TURNS": 4,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
+    "CONTEXT_TURNS": 6,              # 会話の記憶: 直前の何往復を覚えるか(0で記憶しない)
     "CONTEXT_RESET_MIN": 10,         # スレッドを使わない呼び出しで、この分数話しかけなければ記憶を消す
     "SUMMARIZE_AFTER_TOOL": False,   # True: 関数実行後にLLMで返答文を作る(遅くなる)
     "DRY_RUN": False,                # True: 関数を実行せず呼び出し内容だけ返す(モック)

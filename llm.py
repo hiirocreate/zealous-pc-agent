@@ -43,10 +43,30 @@ _last = 0.0
 on_delta = None      # 返事を少しずつ受け取る関数(作業プロセスが設定)。届いた分から表示・読み上げする
 
 
+_LANG_NAMES = {"ja": "日本語", "en": "英語", "zh": "中国語", "ko": "韓国語", "fr": "フランス語", "de": "ドイツ語",
+               "es": "スペイン語", "it": "イタリア語", "pt": "ポルトガル語", "ru": "ロシア語"}
+
+
+def answer_language():
+    """返事に使う言葉(設定の「言語コード」に合わせる)。"""
+    return _LANG_NAMES.get((getattr(config, "LANGUAGE", "ja") or "ja").lower(), "日本語")
+
+
 def user_rule():
     """設定の「あなたの呼び方」をAIへの指示にする。"""
     call = (getattr(config, "USER_CALL", "") or "").strip()
     return f"ユーザーのことは「{call}」と呼んでください。" if call else ""
+
+
+_summary = ""   # このスレッドの古いやりとりの要約(依頼ごとに受け取る)
+_memory = []    # ユーザーについて、ずっと覚えておくこと(依頼ごとに受け取る)
+
+
+def memory_rule():
+    facts = [f for f in (_memory or []) if f]
+    if not facts:
+        return ""
+    return "\n\n【ユーザーについて覚えていること】\n" + "\n".join(f"・{f}" for f in facts[:30])
 
 
 def persona_rule():
@@ -65,11 +85,11 @@ def system_prompt():
             "調べものや質問には search_summary、画像や写真を探すときは image_search 関数を使ってください。"
             "関数が不要な会話には日本語で一文だけ短く答えてください。\n"
             "【必ず守ること】\n"
-            "・いつも日本語で答える(ユーザーが英語など別の言葉で話したときだけ、その言葉で答える)。\n"
+            f"・いつも{answer_language()}で答える(ユーザーが別の言葉で話しかけたときだけ、その言葉で答える)。\n"
             "・ユーザーの発言を翻訳したり、言い換えたりしない(翻訳を頼まれたときだけ翻訳する)。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
             "「それ」「さっきの」などは、直前の会話を指していると考える。"
-            + user_rule() + persona_rule())
+            + user_rule() + memory_rule() + persona_rule())
 
 
 def _remember(text, reply):
@@ -85,6 +105,8 @@ def _context():
     if time.monotonic() - _last > config.CONTEXT_RESET_MIN * 60:
         _history.clear()
     msgs = []
+    if _summary:  # 古いやりとりは要約で(新しいやりとりは下にそのまま)
+        msgs.append({"role": "system", "content": f"【この会話のこれまでの要約】\n{_summary}"})
     for user, reply in _history:
         msgs += [{"role": "user", "content": user}, {"role": "assistant", "content": reply}]
     return msgs
@@ -109,6 +131,8 @@ _JA = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 
 def off_track(question, reply):
     """日本語で聞かれたのに、返事の書き出しが英語ばかりになっているか(小さなモデルが「質問の英訳」を始める癖)。"""
+    if (getattr(config, "LANGUAGE", "ja") or "ja").lower() != "ja":
+        return False  # 日本語以外で使う設定のときは、確かめない
     if not question or not _JA.search(question) or re.search(r"英語|英訳|翻訳|english|translate", question, re.I):
         return False
     head = reply.strip()[:40]
@@ -201,9 +225,11 @@ def parse_tool_calls(message):
     return []
 
 
-def ask(text, history=None):
-    """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。"""
-    global _last
+def ask(text, history=None, summary="", memory=None):
+    """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。
+    summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと"""
+    global _last, _summary, _memory
+    _summary, _memory = summary or "", list(memory or [])
     if history is not None:
         _history.clear()
         _history.extend(history)

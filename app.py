@@ -156,6 +156,8 @@ class App(ctk.CTk):
         if os.name == "nt":
             config.AUTOSTART = shortcut.is_autostart()
         self.worker = AgentWorker()
+        import memory
+        self.summarizer = memory.Summarizer()  # 古いやりとりを、空き時間に要約する
         self.speaker = Speaker(on_error=self._post_log)
         self.voice = VoiceInput(on_text=lambda t, b: self._events.put(lambda: self._on_voice(t, b)),
                                 on_status=self._post_log)
@@ -307,6 +309,7 @@ class App(ctk.CTk):
         self.head_spin = DotSpinner(row2, dot=5, gap=3)
         buttons = ctk.CTkFrame(head, fg_color="transparent")
         buttons.grid(row=0, column=3, rowspan=2)
+        self._round(buttons, 30, icons.export(15), lambda: self._export_thread(self.thread)).pack(side="left")
         self._round(buttons, 30, icons.plus(15), self._new_thread).pack(side="left")
         self.max_btn = self._round(buttons, 30, icons.maximize(14), self._toggle_max)
         self.max_btn.pack(side="left")
@@ -797,6 +800,7 @@ class App(ctk.CTk):
                                 fg=base, hover=T.BORDER)
             for w in (row, title, when):
                 w.bind("<Button-1>", lambda e, tid=t["id"]: self._open_thread(tid))
+                w.bind("<Button-3>", lambda e, tid=t["id"]: self._thread_menu(e, tid))  # 右クリック: コピー・書き出し
             # マウスを乗せた行だけ明るくし、削除ボタンを出す
             row.bind("<Enter>", lambda e, r=row, b=trash: (r.configure(fg_color=T.SURFACE),
                                                           b.grid(row=0, column=1, rowspan=2, padx=(0, 6))))
@@ -861,6 +865,7 @@ class App(ctk.CTk):
                              fg_color=T.ACCENT if user else T.SURFACE, text_color="white" if user else T.TEXT,
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
+            w.bind("<Button-3>", lambda e, b=w: self._bubble_menu(e, b))  # 右クリック: コピー・書き出し
         w._bubble = True
         self._add_widget(w, None)
         return w
@@ -936,6 +941,7 @@ class App(ctk.CTk):
         self._refresh_threads()
         if self._voice_session:  # 声で会話しているときは、読み上げが終わったらまた聞き取る
             self.after(300, self._start_follow)
+        self.after(2500, self._summarize_later)  # 手が空いたら、古いやりとりを要約しておく
 
     def _log_sources(self, sources):
         """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
@@ -952,7 +958,7 @@ class App(ctk.CTk):
         """画像のサムネイルを横に並べ、クリックで一覧ウィンドウを開く。画像検索なら一覧も自動で開く。"""
         import gallery
         items = images["items"]
-        open_all = lambda: gallery.Gallery(self, images["query"], items)  # noqa: E731
+        open_all = lambda: gallery.show(self, images["query"], items)  # noqa: E731
         box = ctk.CTkFrame(self.chat, fg_color="transparent")
         for i, item in enumerate(items[:4]):
             # 角丸を付けると幅が広がってはみ出すため、角丸なしの正方形で並べる
@@ -1047,6 +1053,12 @@ class App(ctk.CTk):
     def _submit(self, text, by_voice=False):
         if self._pending_confirm is not None and self._answer_confirm(text):
             return  # 「はい」「いいえ」: 確認待ちの操作への答え
+        self.summarizer.cancel()  # 要約の途中なら、すぐやめて返事を優先する
+        import memory
+        change = memory.parse(text)
+        if change:  # 「〜を覚えておいて」「〜を忘れて」
+            self._change_memory(text, change)
+            return
         import persona
         change = persona.parse(text)
         if change:  # 「関西弁で話して」「話し方を元に戻して」など: AIの性格・話し方を変える
@@ -1065,7 +1077,8 @@ class App(ctk.CTk):
         history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
         threads.add(self.thread, "user", text)
         self._pending_tid = self.thread["id"]
-        self.worker.submit(text, history, by_voice=by_voice)
+        extra = {"summary": self.thread.get("summary", ""), "memory": list(config.MEMORY)}
+        self.worker.submit(text, history, by_voice=by_voice, extra=extra)
         self._set_state("think")
         self._refresh_threads()
 
@@ -1179,6 +1192,108 @@ class App(ctk.CTk):
             self._remove_widget(b)
         self._new_thread()
         config.VOICE_CONTEXT = ""
+
+    # ================= 記憶 =================
+    def _change_memory(self, text, change):
+        import memory
+        kind, value = change
+        if kind == "remember" and value.startswith(("この", "その", "それ", "さっき", "今の", "いまの")):
+            # 「これを覚えておいて」: 直前の返事の中身もあわせて覚える
+            last = next((m["text"] for m in reversed(self.thread["messages"]) if m["role"] == "ai"), "")
+            change = (kind, f"{value}: {last[:120]}" if last else value)
+        new = memory.apply(config.MEMORY, change)
+        reply = {"remember": f"はい、「{change[1][:40]}」を覚えました。",
+                 "forget": (f"わかりました、「{value}」に関することは忘れました。" if len(new) < len(config.MEMORY)
+                            else f"「{value}」に関することは、覚えていませんでした。"),
+                 "forget_all": "わかりました、覚えていたことをすべて忘れました。"}[kind]
+        config.save({"MEMORY": new})
+        self._log(text, "user")
+        self._log(reply, "ai")
+        threads.add(self.thread, "user", text)
+        threads.add(self.thread, "ai", reply)
+        self.speaker.say(reply)
+        self._refresh_threads()
+        zlog.note(f"記憶を変更: {kind}(覚えていること {len(new)}件)")
+
+    def _summarize_later(self):
+        if self._state == "think" or self.worker.pending:
+            return
+        tid = self.thread["id"]
+        self.summarizer.start(self.thread, max(2, config.CONTEXT_TURNS),
+                              lambda text, upto: self._events.put(lambda: self._save_summary(tid, text, upto)))
+
+    def _save_summary(self, tid, text, upto):
+        t = self.thread if self.thread["id"] == tid else threads.load(tid)
+        if t is None:
+            return
+        t["summary"], t["summary_upto"] = text, upto
+        threads.save(t)
+        zlog.note(f"会話を要約({upto}往復分)")
+
+    # ================= コピー・書き出し =================
+    def _menu(self, e, items):
+        """右クリックのメニュー。items: [(名前, 動作) または None(区切り)]"""
+        m = tk.Menu(self, tearoff=0, bg=T.SURFACE, fg=T.TEXT, activebackground=T.ACCENT, activeforeground="white",
+                    bd=0, relief="flat", font=(T.FONT, max(9, round(10 * T.SCALE))))
+        for it in items:
+            if it is None:
+                m.add_separator()
+            else:
+                m.add_command(label=it[0], command=it[1])
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
+    def _bubble_menu(self, e, widget):
+        self._menu(e, [("この発言をコピー", lambda: self._copy(widget.cget("text"))),
+                       ("チャット全体をコピー", lambda: self._copy(threads.export_text(self.thread, config.AI_NAME))),
+                       None,
+                       ("このチャットを書き出す…", lambda: self._export_thread(self.thread))])
+
+    def _thread_menu(self, e, tid):
+        t = threads.load(tid)
+        if not t:
+            return
+        self._menu(e, [("開く", lambda: self._open_thread(tid)),
+                       ("まとめてコピー", lambda: self._copy(threads.export_text(t, config.AI_NAME))),
+                       ("書き出す…", lambda: self._export_thread(t)),
+                       None,
+                       ("削除", lambda: self._delete_thread(tid))])
+
+    def _copy(self, text):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._toast("コピーしました")
+
+    def _export_thread(self, t):
+        """スレッドを Markdown(.md)またはテキスト(.txt)で保存する。"""
+        if not t.get("messages"):
+            self._toast("まだ会話がありません")
+            return
+        from tkinter import filedialog
+        docs = os.path.join(os.path.expanduser("~"), "Documents")
+        path = filedialog.asksaveasfilename(
+            parent=self, title="チャットを書き出す", initialdir=docs if os.path.isdir(docs) else None,
+            initialfile=f"{threads.safe_name(t['title'])}.md", defaultextension=".md",
+            filetypes=[("Markdown（見出しつき）", "*.md"), ("テキスト", "*.txt")])
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(threads.export_text(t, config.AI_NAME))
+        self._toast("書き出しました")
+
+    def _toast(self, text):
+        """会話画面の下に、短いお知らせを少しだけ出す。"""
+        if not getattr(self, "_toast_label", None):
+            self._toast_label = ctk.CTkLabel(self.panel, text="", font=T.font(11, "bold"), text_color="white",
+                                             fg_color=T.OK, corner_radius=14, height=30)
+        self._toast_label.configure(text=f"✓  {text}")
+        self._toast_label.place(relx=0.5, rely=1.0, y=-110, anchor="s")
+        self._toast_label.lift()
+        if getattr(self, "_toast_job", None):
+            self.after_cancel(self._toast_job)
+        self._toast_job = self.after(1500, self._toast_label.place_forget)
 
     def _change_persona(self, text, change):
         import persona

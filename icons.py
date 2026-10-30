@@ -81,6 +81,17 @@ def mic(size=18, color="white"):
 
 
 @functools.lru_cache(maxsize=None)
+def export(size=16, color=LINE):
+    """書き出し: 下向きの矢印と受け皿。"""
+    img, d = _canvas()
+    w = 20
+    d.line((128, 40, 128, 160), fill=color, width=w)
+    d.line((80, 116, 128, 164, 176, 116), fill=color, width=w, joint="curve")
+    d.line((52, 168, 52, 212, 204, 212, 204, 168), fill=color, width=w, joint="curve")
+    return _img(img, size, size)
+
+
+@functools.lru_cache(maxsize=None)
 def waves(size=18, color="white"):
     """音声会話のボタン: 高さの違う縦の棒(声の波)。"""
     img, d = _canvas()

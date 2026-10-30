@@ -94,3 +94,34 @@ def when(ts):
     """一覧に出す日時(今日なら時刻、それ以外は日付)。"""
     t, now = time.localtime(ts), time.localtime()
     return time.strftime("%H:%M" if t[:3] == now[:3] else "%m/%d", t)
+
+
+def pairs(thread):
+    """やりとり [(ユーザーの発言, 返事)] をすべて(古い順)。"""
+    out, user = [], None
+    for m in thread["messages"]:
+        if m["role"] == "user":
+            user = m["text"]
+        elif m["role"] == "ai" and user is not None:
+            out.append((user, m["text"][:300]))
+            user = None
+    return out
+
+
+def export_text(thread, ai_name="AI"):
+    """スレッドを読みやすい文章(Markdown)にする。書き出し・まとめてコピー用。"""
+    lines = [f"# {thread['title']}", "", f"作成: {time.strftime('%Y/%m/%d %H:%M', time.localtime(thread['created']))}", ""]
+    for m in thread["messages"]:
+        who = "あなた" if m["role"] == "user" else ai_name
+        at = time.strftime("%m/%d %H:%M", time.localtime(m.get("time", thread["updated"])))
+        lines += [f"**{who}**（{at}）", "", m["text"], ""]
+        if m.get("sources"):
+            lines += ["出典:", m["sources"], ""]
+        if m.get("images"):
+            lines += [f"画像: {m['images'].get('query', '')}（{len(m['images'].get('items', []))}枚）", ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def safe_name(title):
+    import re
+    return re.sub(r'[\\/:*?"<>|\s]+', "_", title).strip("_")[:40] or "chat"

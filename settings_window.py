@@ -100,7 +100,8 @@ TABS = [
         ("WHISPER_COMPUTE", "計算の細かさ", "choice", "分からなければ int8（軽い標準の設定）のまま",
          [("int8", "int8（軽い・標準）"), ("float16", "float16（GPU向け）"),
           ("float32", "float32（最も細かい・重い）")]),
-        ("LANGUAGE", "言語コード（話す言語）", "str", "ja = 日本語、en = 英語"),
+        ("LANGUAGE", "言語コード（話す言語・AIが答える言語）", "str",
+         "ja = 日本語、en = 英語 など。声の聞き取りと、AIの返事の言葉の両方に使います"),
         ("—", "常時待ち受けの感度"),
         ("VAD_THRESHOLD", "音量しきい値（声とみなす音の大きさ）", "float", "雑音を拾うなら大きく、声を拾わないなら小さく"),
         ("VAD_SILENCE_SEC", "話し終わりの判定（無音の秒数）", "float", "この秒数だけ静かになったら1回の発言として区切る"),
@@ -112,6 +113,9 @@ TABS = [
         ("PERSONA", "AIの性格・話し方", "persona",
          "例:「兄弟のようにタメ口で」「関西弁で明るく」「結論から短く答える」。下の型から選んで書き足すこともできます。"
          "会話の中で「関西弁で話して」「話し方を元に戻して」と言っても変えられます"),
+        ("—", "記憶"),
+        ("MEMORY", "AIが覚えていること", "lines",
+         "1行に1つ。会話で「〜を覚えておいて」と言うと増え、「〜を忘れて」で消えます。ここで直接書き直すこともできます"),
         ("—", "AIの頭脳"),
         ("OLLAMA_MODEL", "AIモデル（使う頭脳の種類）", "model",
          "一覧から選ぶか名前を入力。変えるときはサイズを確認してから、保存でダウンロードします"),
@@ -164,6 +168,8 @@ def parse(kind, raw):
         return float(raw)
     if kind == "list":
         return [w.strip() for w in raw.replace("、", ",").split(",") if w.strip()]
+    if kind == "lines":
+        return [w.strip() for w in raw.splitlines() if w.strip()]
     return raw.strip() if isinstance(raw, str) else raw
 
 
@@ -363,6 +369,18 @@ class SettingsWindow(ctk.CTkToplevel):
                     lab["特徴"].configure(text=good)
                     lab["注意"].configure(text=warn)
                 var.trace_add("write", describe)
+            elif kind == "lines":
+                var = ctk.StringVar()
+                box = ctk.CTkTextbox(row, height=86, fg_color=T.BG, border_color=T.BORDER, border_width=1,
+                                     font=T.font(11), text_color=T.TEXT, wrap="char")
+                box.grid(**ctl)
+
+                def sync_lines(*_, b=box, v=var):
+                    if b.get("1.0", "end-1c") != v.get():
+                        b.delete("1.0", "end")
+                        b.insert("1.0", v.get())
+                var.trace_add("write", sync_lines)
+                box.bind("<KeyRelease>", lambda e, b=box, v=var: v.set(b.get("1.0", "end-1c")), add="+")
             elif kind == "persona":
                 import persona
                 var = ctk.StringVar()
@@ -689,6 +707,8 @@ class SettingsWindow(ctk.CTkToplevel):
                              next(iter(self._choices[key]))))
             elif kind == "bool":
                 var.set(v)
+            elif kind == "lines":
+                var.set("\n".join(v))
             else:
                 var.set(", ".join(v) if kind == "list" else str(v))
 

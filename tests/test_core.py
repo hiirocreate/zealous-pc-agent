@@ -452,3 +452,29 @@ def test_speaker_plays_continuously_and_stops(monkeypatch):
     sp.stop()
     _t.sleep(0.2)
     assert sum(len(w) for w in written) < 24000 * 10
+
+
+def test_memory_and_context(monkeypatch):
+    import memory
+    assert memory.parse("私の誕生日は5月3日だって覚えておいて") == ("remember", "私の誕生日は5月3日")
+    assert memory.parse("会社名は株式会社才、覚えといて") == ("remember", "会社名は株式会社才")
+    assert memory.parse("誕生日のことは忘れて") == ("forget", "誕生日")
+    assert memory.parse("明日の予定を教えて") is None
+    assert memory.apply(["誕生日は5月3日", "好きな色は青"], ("forget", "誕生日")) == ["好きな色は青"]
+    sent = []
+    monkeypatch.setattr(llm, "_chat", lambda m, use_tools=True, **kw: (sent.append(m), {"content": "はい"})[1])
+    monkeypatch.setattr(config, "QUICK_ROUTE", False)
+    llm.ask("それは何色？", history=[("好きな色を当てて", "青ですか？")], summary="ユーザーは色の話をしている",
+            memory=["好きな色は青"])
+    msgs = sent[0]
+    assert "好きな色は青" in msgs[0]["content"]  # 覚えていることは指示文に
+    assert any(m["role"] == "system" and "色の話" in m["content"] for m in msgs[1:])  # 要約
+    assert msgs[-1]["content"] == "それは何色？" and msgs[-2]["content"] == "青ですか？"  # 直前のやりとり
+
+
+def test_export_text():
+    import threads
+    t = threads.new()
+    t["messages"] = [{"role": "user", "text": "こんにちは", "time": 0}, {"role": "ai", "text": "やあ", "time": 0}]
+    out = threads.export_text(t, "Zealous")
+    assert "**あなた**" in out and "こんにちは" in out and "**Zealous**" in out
