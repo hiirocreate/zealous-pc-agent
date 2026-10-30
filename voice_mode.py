@@ -68,6 +68,8 @@ class VoiceMode(ctk.CTkToplevel):
         for ms in (10, 250):  # 開いた直後にも、いちばん手前へ
             self.after(ms, lambda: self.winfo_exists() and (self.lift(), self.focus_force()))
         self._tick()
+        import dropfiles  # 音声会話画面へのドラッグ＆ドロップでも添付できる
+        self.after(400, lambda: self.winfo_exists() and dropfiles.enable(self, app._add_attachments))
 
     # ---- 状態 ----
     def mode(self):

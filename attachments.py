@@ -66,6 +66,10 @@ def read_file(path, limit=12000):
         return f"{name}: 読み取れませんでした"
     head = f"【ファイル: {name}】({_size(size)}・{path})"
     try:
+        if ext == ".zip":
+            return read_zip(path, limit)
+        if ext in (".7z", ".rar", ".tar", ".gz", ".tgz", ".lzh"):
+            return head + "\n(この形式の圧縮ファイルは開けません。ZIP にするか、展開したフォルダを添付してください)"
         if ext in (".csv", ".tsv"):
             import csv
             text = tools.file_text(path, limit=3_000_000)
@@ -152,6 +156,71 @@ def read_folder(path, limit=16000):
         text += "\n\n" + part
         left -= len(part)
     return text
+
+
+# ZIP: 中の一覧はすべて見せ、読む分だけを一時フォルダへ取り出す(極端に大きいもの・パスの怪しいものは取り出さない)
+_ZIP_MAX_FILES, _ZIP_MAX_ONE, _ZIP_MAX_TOTAL = 300, 5_000_000, 50_000_000
+
+
+def read_zip(path, limit=16000):
+    """ZIP の中身: 一覧と種類・大きさの集計、主なファイルの中身。暗号化・危険なパス・圧縮爆弾は取り出さない。"""
+    import shutil
+    import tempfile
+    import zipfile
+    name = os.path.basename(path)
+    try:
+        z = zipfile.ZipFile(path)
+    except zipfile.BadZipFile:
+        return f"【ZIP: {name}】\n(ZIP ファイルとして読み取れませんでした。壊れているか、別の形式です)"
+    with z:
+        infos = [i for i in z.infolist() if not i.is_dir()]
+        total = sum(i.file_size for i in infos)
+        kinds = {}
+        for i in infos:
+            ext = os.path.splitext(i.filename)[1].lower() or "(拡張子なし)"
+            kinds[ext] = kinds.get(ext, 0) + 1
+        top = "、".join(f"{k} {v}件" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])[:10])
+        lines = [f"【ZIP: {name}】({_size(os.path.getsize(path))}・展開すると {_size(total)}・{path})",
+                 f"ファイル {len(infos)}件・種類: {top}", "中身:"]
+        lines += [f"  {_fix_name(i)} ({_size(i.file_size)})" + ("（暗号化）" if i.flag_bits & 0x1 else "")
+                  for i in infos[:250]]
+        if len(infos) > 250:
+            lines.append(f"  …(ほか {len(infos) - 250} 件)")
+        text = "\n".join(lines)
+        tmp = tempfile.mkdtemp(prefix="zealous_zip_")
+        try:
+            used = 0
+            for i in infos[:_ZIP_MAX_FILES]:
+                inner = _fix_name(i)
+                safe = os.path.normpath(inner)
+                ratio = i.file_size / max(1, i.compress_size)
+                if (i.flag_bits & 0x1 or safe.startswith(("..", os.sep)) or os.path.isabs(safe) or ":" in safe
+                        or i.file_size > _ZIP_MAX_ONE or used + i.file_size > _ZIP_MAX_TOTAL or ratio > 200):
+                    continue  # 暗号化・外へ出るパス・大きすぎ・異常に縮んだもの(圧縮爆弾)は取り出さない
+                ext = os.path.splitext(safe)[1].lower()
+                if ext not in TEXT and ext not in OFFICE and ext != ".zip":
+                    continue
+                dest = os.path.join(tmp, safe)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with z.open(i) as src, open(dest, "wb") as out:
+                    out.write(src.read(_ZIP_MAX_ONE + 1)[:_ZIP_MAX_ONE])
+                used += i.file_size
+            inside = read_folder(tmp, max(2000, limit - len(text)))
+            # 一覧は上に出したので、取り出したファイルの中身の部分だけを足す
+            body = inside.split("\n\n", 1)[1] if "\n\n" in inside else ""
+            return text + ("\n\n" + body.replace(tmp + os.sep, "").replace(tmp, name) if body else "")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _fix_name(info):
+    """Windows で作った日本語名の ZIP(Shift_JIS)を正しく読む。"""
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:
+        return info.filename.encode("cp437").decode("cp932")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return info.filename
 
 
 def material(paths, limit=18000):

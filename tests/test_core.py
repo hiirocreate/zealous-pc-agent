@@ -872,3 +872,18 @@ def test_office_interview_before_making(monkeypatch, tmp_path):
     assert made[-1]["source"] == "web" and made[-1]["design"] == "" and made[-1]["kind"] == "xlsx"
     import officedoc
     assert officedoc.theme_of("緑系で") == "green" and officedoc.theme_of("おまかせ") is None
+
+
+def test_zip_attachment(tmp_path):
+    import zipfile
+    import attachments
+    p = tmp_path / "proj.zip"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("proj/README.md", "# 在庫管理\n商品の在庫を数える")
+        z.writestr("proj/data.csv", "月,売上\n4月,100\n5月,300\n")
+        z.writestr("../evil.txt", "外へ出るパス")
+        z.writestr("proj/big.txt", "あ" * 10)
+    text = attachments.material([str(p)])
+    assert "【ZIP: proj.zip】" in text and "在庫管理" in text and "合計 400" in text
+    assert "外へ出るパス" not in text and "../evil.txt" in text  # 一覧には出すが、外へ出るパスは取り出さない
+    assert not (tmp_path.parent / "evil.txt").exists()

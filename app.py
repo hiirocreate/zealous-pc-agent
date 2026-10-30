@@ -1051,7 +1051,7 @@ class App(ctk.CTk):
         if self.thread["messages"]:
             threads.save(self.thread)
         self._paint_attachments()
-        if not self._expanded:
+        if not self._expanded and self._voice_win is None:
             self._show_panel()
         self._toast(f"{len(paths)}件を添付しました。添付について質問できます")
         self._focus_entry()

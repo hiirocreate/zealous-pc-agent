@@ -232,6 +232,21 @@ def run(out):
             left = on_main(lambda: len(app.thread.get("attachments", [])))
             import dropfiles
             note(f"添付: {'OK' if chips == 2 and left == 0 and dropfiles._keep else 'NG'} (札={chips}, 外した後={left})")
+            # ドラッグ＆ドロップ: エクスプローラーと同じ知らせを窓へ送り、添付されること(ZIP も読めること)
+            import zipfile
+            zpath = os.path.join(out, "drop_test.zip")
+            with zipfile.ZipFile(zpath, "w") as z:
+                z.writestr("project/README.md", "# テスト用のプロジェクト\nドロップで添付できるか確かめる")
+                z.writestr("project/main.py", "print('hello')\n")
+            sent = dropfiles.simulate_drop(dropfiles._hwnds[0], [zpath]) if dropfiles._hwnds else False
+            time.sleep(1.5)
+            got = on_main(lambda: list(app.thread.get("attachments", [])))
+            shot("6f_dropped")
+            note(f"ドラッグ＆ドロップで添付: {'OK' if sent and zpath in got else 'NG'} (送信={sent}, 添付={got})")
+            import attachments as _att
+            text = _att.material([zpath])
+            note(f"ZIP の読み取り: {'OK' if 'テスト用のプロジェクト' in text and 'main.py' in text else 'NG'}")
+            on_main(lambda: [app._remove_attachment(p) for p in list(app.thread.get("attachments", []))])
             import attachments
             note("添付の読み取り: " + ("OK" if "シート" in attachments.material([os.path.join(out, "office_test.xlsx")])
                                      else "NG"))
