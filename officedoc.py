@@ -21,8 +21,8 @@ import os
 import re
 import unicodedata
 
-FONT = "Yu Gothic UI"   # Windows 8.1 以降に標準で入っている書体
-FONT_DOC = "Yu Gothic"
+FONT = "Yu Gothic UI"   # 見出しの書体(use_fonts で変える。Windows 8.1 以降に標準で入っている書体が既定)
+FONT_DOC = "Yu Gothic"  # 本文の書体
 MONO = "Consolas"
 NAVY = (0x1F, 0x2A, 0x44)
 ACCENT = (0x2F, 0x6F, 0xEB)
@@ -32,6 +32,12 @@ LIGHT = (0xF3, 0xF6, 0xFB)
 WHITE = (0xFF, 0xFF, 0xFF)
 LINE = (0xC9, 0xD3, 0xE6)
 _SOURCES = re.compile(r"出典|参考(?:文献|資料|URL|サイト)?$|sources?|references?", re.I)
+
+
+def use_fonts(head, body):
+    """見出しと本文の書体を決める(このPCに入っているものだけを渡すこと。fonts.pick で選ぶ)。"""
+    global FONT, FONT_DOC
+    FONT, FONT_DOC = head, body
 
 
 # ---------------- 中身の読み取りと整え ----------------
@@ -262,9 +268,10 @@ def attach_images(doc, folder, limit=3):
 
 
 # ---------------- PowerPoint ----------------
-def _ea_font(run, name=FONT):
-    """日本語の文字にも書体を指定する(指定しないと、日本語だけ別の書体になる)。"""
+def _ea_font(run, name=None):
+    """日本語の文字にも書体を指定する(指定しないと、日本語だけ別の書体になる)。太字は見出しの書体。"""
     from pptx.oxml.ns import qn
+    name = name or (FONT if run.font.bold else FONT_DOC)
     rpr = run._r.get_or_add_rPr()
     for tag in ("a:latin", "a:ea"):
         el = rpr.find(qn(tag))
@@ -372,6 +379,7 @@ class _Deck:
         self.prs, self.doc = prs, doc
         self.W, self.H = prs.slide_width, prs.slide_height
         self.blank = prs.slide_layouts[6]
+        self.titled = prs.slide_layouts[5]  # 「タイトルのみ」: 題名を本物のタイトル欄に入れる(アウトラインや一覧に出て、編集しやすい)
         self.margin = Inches(0.75)
         self.pages = []  # ページ番号を最後に入れるため
 
@@ -385,9 +393,8 @@ class _Deck:
                   f"{i} / {total}", 10, GRAY, align=PP_ALIGN.RIGHT)
 
     def cover(self):
-        from pptx.enum.text import MSO_ANCHOR
         from pptx.util import Emu, Inches
-        s = self.prs.slides.add_slide(self.blank)
+        s = self.prs.slides.add_slide(self.titled)
         _rect(s, 0, 0, self.W, self.H, NAVY)
         # 最初の写真は表紙に使う(同じ写真を二度使わない。Word など、ほかの形で作るときのために中身は変えない)
         pic = next((b for sec in self.doc["sections"] for k, b in sec["blocks"] if k == "picture"), None)
@@ -401,25 +408,41 @@ class _Deck:
         # 1行に収まるいちばん大きい大きさ(32以上)。無理なら2行に収まる大きさ
         size = next((z for z in (44, 40, 36, 32) if _lines(title, tw, z) == 1), None) or \
             next((z for z in (40, 36, 32, 28, 24) if _lines(title, tw, z) <= 2), 22)
-        _text(_box(s, self.margin, Inches(1.4), text_w, Inches(2.4), MSO_ANCHOR.BOTTOM), self.doc["title"], size, WHITE,
-              bold=True)
+        _text(self._title(s, self.margin, Inches(1.4), text_w, Inches(2.4)), self.doc["title"], size, WHITE, bold=True)
         _rect(s, self.margin, Inches(4.0), Inches(1.1), Emu(54000), ACCENT)
         if self.doc["subtitle"]:
             _text(_box(s, self.margin, Inches(4.3), text_w, Inches(1.6)), self.doc["subtitle"], 18, (0xC9, 0xD3, 0xE6))
 
     def page(self, title, dark=False):
-        from pptx.enum.text import MSO_ANCHOR
         from pptx.util import Emu, Inches
-        s = self.prs.slides.add_slide(self.blank)
+        s = self.prs.slides.add_slide(self.titled)
         if dark:
             _rect(s, 0, 0, self.W, self.H, NAVY)
         _rect(s, 0, 0, Inches(0.16), self.H, ACCENT)
         size = 30 if _units(title) <= 24 else 26 if _units(title) <= 34 else 22
-        _text(_box(s, self.margin, Inches(0.45), self.W - self.margin * 2, Inches(0.85), MSO_ANCHOR.BOTTOM), title,
+        _text(self._title(s, self.margin, Inches(0.45), self.W - self.margin * 2, Inches(0.85)), title,
               size, WHITE if dark else NAVY, bold=True)
         _rect(s, self.margin, Inches(1.42), Inches(0.9), Emu(36000), ACCENT)
         self.pages.append(s)
         return s
+
+    @staticmethod
+    def _title(s, x, y, w, h):
+        """スライドのタイトル欄を、決めた場所・左寄せ・下ぞろえにして、その文字の枠を返す。"""
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Emu
+        ph = s.shapes.title
+        ph.left, ph.top, ph.width, ph.height = int(x), int(y), int(w), int(h)
+        sp = ph._element  # 背景の図形より手前に
+        tree = sp.getparent()
+        tree.remove(sp)
+        tree.append(sp)
+        tf = ph.text_frame
+        tf.word_wrap = True
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(0)
+        tf.vertical_anchor = MSO_ANCHOR.BOTTOM
+        tf.paragraphs[0].alignment = PP_ALIGN.LEFT
+        return tf
 
     # 本文の場所
     @property
@@ -676,7 +699,7 @@ class _Deck:
                     chart.legend.position = XL_LEGEND_POSITION.BOTTOM
                     chart.legend.include_in_layout = False
                 chart.font.size = Pt(11)
-                chart.font.name = FONT
+                chart.font.name = FONT_DOC
                 chart.value_axis.has_major_gridlines = True
                 chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(*LINE)
                 chart.value_axis.format.line.fill.background()
@@ -736,8 +759,9 @@ def _pptx_table(slide, rows, x, y, w, h):
 
 
 # ---------------- Word ----------------
-def _doc_font(style_or_run, name=FONT_DOC):
+def _doc_font(style_or_run, name=None):
     from docx.oxml.ns import qn
+    name = name or FONT_DOC
     rpr = style_or_run.element.get_or_add_rPr()
     fonts = rpr.find(qn("w:rFonts"))
     if fonts is None:
@@ -749,6 +773,7 @@ def _doc_font(style_or_run, name=FONT_DOC):
 
 def _add_runs(p, s, size=None, color=None, bold=None):
     from docx.shared import Pt, RGBColor
+    heading = p.style is not None and p.style.name.startswith(("Heading", "Title"))
     for part, b in _runs(s):
         r = p.add_run(part)
         r.bold = True if (b or bold) else None
@@ -756,7 +781,7 @@ def _add_runs(p, s, size=None, color=None, bold=None):
             r.font.size = Pt(size)
         if color:
             r.font.color.rgb = RGBColor(*color)
-        _doc_font(r)
+        _doc_font(r, FONT if heading else None)
     return p
 
 
@@ -784,7 +809,7 @@ def make_docx(doc, path):
         st.font.size = Pt(size)
         st.font.bold = True
         st.font.color.rgb = RGBColor(*color)
-        _doc_font(st)
+        _doc_font(st, FONT)
         st.paragraph_format.space_before = Pt(before)
         st.paragraph_format.space_after = Pt(6)
         st.paragraph_format.keep_with_next = True  # 見出しだけがページの最後に残らないように
@@ -1015,7 +1040,7 @@ def make_xlsx(doc, path):
                 if k == "picture":
                     continue
                 text = b[1] if isinstance(b, tuple) else b
-                ws.cell(row=row, column=1, value=_plain(text)).font = Font(name=FONT, size=10, color=hx(GRAY))
+                ws.cell(row=row, column=1, value=_plain(text)).font = Font(name=FONT_DOC, size=10, color=hx(GRAY))
                 row += 1
                 continue
             cols = max(len(r) for r in b)
@@ -1043,7 +1068,8 @@ def make_xlsx(doc, path):
                         cell.font = Font(name=FONT, size=10, bold=True, color="FFFFFF")
                         cell.fill = PatternFill("solid", fgColor=hx(NAVY))
                     else:
-                        cell.font = Font(name=FONT, size=10, color=hx(NAVY), bold=bool(re.match(r"合計|計$|total", raw, re.I)))
+                        cell.font = Font(name=FONT_DOC, size=10, color=hx(NAVY),
+                                         bold=bool(re.match(r"合計|計$|total", raw, re.I)))
                         if r % 2 == 0:
                             cell.fill = PatternFill("solid", fgColor=hx(LIGHT))
                     widths[c] = max(widths.get(c, 0), min(_width(raw), 40))
@@ -1082,10 +1108,59 @@ def make_xlsx(doc, path):
         ws["A1"] = "出典"
         ws["A1"].font = Font(name=FONT, size=15, bold=True, color=hx(NAVY))
         for i, src in enumerate(doc["sources"], 1):
-            ws.cell(row=i + 2, column=1, value=f"[{i}] {src}").font = Font(name=FONT, size=10, color=hx(GRAY))
+            ws.cell(row=i + 2, column=1, value=f"[{i}] {src}").font = Font(name=FONT_DOC, size=10, color=hx(GRAY))
         ws.column_dimensions["A"].width = 100
     wb.save(path)
     return len([s for s in wb.sheetnames if s != "出典"])
 
 
 MAKERS = {"pptx": make_pptx, "docx": make_docx, "xlsx": make_xlsx}
+
+
+# ---------------- PDF(頼まれたときだけ。元の Word・PowerPoint・Excel も編集用に残す) ----------------
+_PDF_PS = {
+    ".docx": "$a = New-Object -ComObject Word.Application; $a.Visible = $false; $a.DisplayAlerts = 0;"
+             "$d = $a.Documents.Open($src, $false, $true); $d.ExportAsFixedFormat($dst, 17); $d.Close($false); $a.Quit()",
+    ".pptx": "$a = New-Object -ComObject PowerPoint.Application;"
+             "$d = $a.Presentations.Open($src, $true, $false, $false); $d.SaveAs($dst, 32); $d.Close(); $a.Quit()",
+    ".xlsx": "$a = New-Object -ComObject Excel.Application; $a.Visible = $false; $a.DisplayAlerts = $false;"
+             "$d = $a.Workbooks.Open($src); $d.ExportAsFixedFormat(0, $dst); $d.Close($false); $a.Quit()",
+}
+
+
+def _soffice():
+    import shutil
+    for p in (shutil.which("soffice"), os.path.join(os.environ.get("ProgramFiles", ""), "LibreOffice", "program", "soffice.exe"),
+              os.path.join(os.environ.get("ProgramFiles(x86)", ""), "LibreOffice", "program", "soffice.exe")):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def to_pdf(path):
+    """Word・PowerPoint・Excel のファイルを PDF にする。PCの Microsoft Office、無ければ LibreOffice を使う。
+    できたら PDF のパス、どちらも無ければ None。"""
+    import subprocess
+    ext = os.path.splitext(path)[1].lower()
+    dst = os.path.splitext(path)[0] + ".pdf"
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if os.name == "nt" and ext in _PDF_PS:
+        q = lambda s: "'" + s.replace("'", "''") + "'"  # noqa: E731
+        script = f"$ErrorActionPreference='Stop'; $src={q(path)}; $dst={q(dst)}; " + _PDF_PS[ext]
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                           timeout=180, creationflags=flags)
+        except Exception:
+            pass
+        if os.path.exists(dst):
+            return dst
+    office = _soffice()
+    if office:
+        try:
+            subprocess.run([office, "--headless", "--convert-to", "pdf", "--outdir", os.path.dirname(path), path],
+                           capture_output=True, timeout=180, creationflags=flags)
+        except Exception:
+            pass
+        if os.path.exists(dst):
+            return dst
+    return None

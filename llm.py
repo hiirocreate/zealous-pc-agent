@@ -49,6 +49,8 @@ _streamed = False    # 直前の問い合わせで、返事を画面と読み上
 _tech = False        # テクニカルモード(コード・サーバーなど技術的な作業の補助)
 TECH_TOOLS = ("read_text_file", "find_files", "find_in_files", "search_summary", "create_text_file", "open_file",
               "make_office_file")
+_attached = ""       # チャットに添付されたファイル・フォルダの中身(読み取って要約したもの)
+_attach_key = ()
 _choice = None       # どれにするか聞いている候補 {"tool", "arg", "options", "labels", "args"}
 
 
@@ -168,6 +170,10 @@ def _context():
     if time.monotonic() - _last > config.CONTEXT_RESET_MIN * 60:
         _history.clear()
     msgs = []
+    if _attached:  # 添付されたファイル・フォルダ(この中身をもとに答える)
+        msgs.append({"role": "system", "content": "【添付されたファイル・フォルダの内容】\n" + _attached +
+                     "\n\n添付についての質問には、この内容だけを根拠に、具体的に答えてください。"
+                     "書かれていないことは推測せず、分からないと伝えてください。"})
     if _summary:  # 古いやりとりは要約で(新しいやりとりは下にそのまま)
         msgs.append({"role": "system", "content": f"【この会話のこれまでの要約】\n{_summary}"})
     for user, reply in _history:
@@ -270,6 +276,7 @@ _ABOUT_CHAT = re.compile(r"今の|この(?:内容|会話|話|回答|返事)|さ�
 def doc_topic(request):
     """「〇〇についての提案資料をパワポで作って」→「〇〇についての提案資料」(調べる言葉)"""
     t = _OFFICE.split(request)[0] if _OFFICE.search(request) else request
+    t = re.sub(r"(?:明朝|ゴシック|教科書|ポップ|丸ゴシック|UD)体?(?:の書体)?で[、\s]*", "", t)
     return re.sub(r"(?:を|の|で|に)$", "", t.strip(" 、,。")).strip() or request
 
 
@@ -469,11 +476,26 @@ def visible(content):
     return content[:m.start()].rstrip() if m else content
 
 
-def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=0, mode=""):
+def attach(paths):
+    """添付されたファイル・フォルダを読み取る(同じ添付なら読み直さない)。"""
+    global _attached, _attach_key
+    key = tuple(paths or ())
+    if key != _attach_key:
+        _attach_key = key
+        if key:
+            _status("添付されたファイルを読んでいます…")
+            import attachments
+            _attached = attachments.material(list(key))
+        else:
+            _attached = ""
+
+
+def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=0, mode="", attachments=None):
     """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。
     summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと
     full: スレッドの会話をすべて参照する(長すぎれば古い部分を圧縮。tid・base はその保存用)"""
     global _last, _summary, _memory, _full, _tech
+    attach(attachments)
     _full = bool(full)
     _tech = mode == "tech"
     if _full and history is not None:
@@ -651,15 +673,20 @@ def content_route(t):
 
 # 「〇〇についてのプレゼン資料をパワポで作って」「今の内容をWordにして」「売上表をExcelで作って」
 _OFFICE = re.compile(
-    r"(?P<kind>パワポ|パワーポイント|powerpoint|pptx|スライド|プレゼン(?:資料)?|ワード|word|docx|エクセル|excel|xlsx)"
+    r"(?P<kind>パワポ|パワーポイント|powerpoint|pptx|スライド|プレゼン(?:資料)?|ワード|word|docx|エクセル|excel|xlsx|pdf|ＰＤＦ)"
     r"(?:の?ファイル|形式|資料)?(?:で|に|として|へ)?[、\s]*(?:作って|作成して|まとめて|出力して|保存して|書き出して|して|にして|"
     r"作ってください|ください)", re.I)
 OFFICE_KINDS = {"パワポ": "pptx", "パワーポイント": "pptx", "powerpoint": "pptx", "pptx": "pptx", "スライド": "pptx",
                 "プレゼン": "pptx", "プレゼン資料": "pptx", "ワード": "docx", "word": "docx", "docx": "docx",
-                "エクセル": "xlsx", "excel": "xlsx", "xlsx": "xlsx"}
+                "エクセル": "xlsx", "excel": "xlsx", "xlsx": "xlsx", "pdf": "pdf", "ｐｄｆ": "pdf"}
+# 「報告書.docx をPDFにして」: いまあるファイルを PDF にする
+_TO_PDF = re.compile(r"^(?P<q>.+?\.(?:docx|pptx|xlsx))\s*を?\s*(?:pdf|ＰＤＦ)(?:に|へ)(?:変換して|して|保存して)", re.I)
 
 
 def office_route(t):
+    m = _TO_PDF.match(t)
+    if m:
+        return "convert_to_pdf", {"name": m.group("q").strip(" 、「」")}
     m = _OFFICE.search(t)
     if not m:
         return None
@@ -937,6 +964,13 @@ def _ask(text):
             return _run(choice["tool"], args)
     if _tech:
         return _ask_tech(text)
+    if _attached:  # 添付があるとき: 資料づくり以外は、添付の内容をもとに答える(サイトを開くなどの決まった操作はしない)
+        route = office_route(text.strip())
+        if route:
+            return _run(*route)
+        messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]
+        return (_chat_on_track(messages, text).get("content") or "").strip() or \
+            "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
     route = quick_route(text)
     if route:
         return _run(*route)

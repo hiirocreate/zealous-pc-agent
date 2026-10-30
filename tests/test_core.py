@@ -803,3 +803,26 @@ def test_document_research_review_and_images(monkeypatch, tmp_path):
     doc = officedoc.parse("# T\n## A\n- a\n!画像: cat")
     officedoc.attach_images(doc, str(tmp_path))
     assert all(k != "image" for k, _ in doc["sections"][0]["blocks"])
+
+
+def test_attachments_read_and_answer(monkeypatch, tmp_path):
+    import attachments
+    import officedoc
+    (tmp_path / "proj").mkdir()
+    (tmp_path / "proj" / "README.md").write_text("# 在庫管理ツール\n商品の在庫を数える", encoding="utf-8")
+    (tmp_path / "proj" / "main.py").write_text("def count(items):\n    return len(items)\n", encoding="utf-8")
+    (tmp_path / "sales.csv").write_text("月,売上\n4月,100\n5月,300\n", encoding="utf-8")
+    doc = officedoc.parse("# 報告\n## 結果\n- 売上は増えた")
+    officedoc.make_docx(doc, str(tmp_path / "rep.docx"))
+    officedoc.make_xlsx(officedoc.parse("# 表\n## 売上\n| 月 | 売上 |\n|---|---|\n| 4月 | 100 |\n| 5月 | 300 |"),
+                        str(tmp_path / "t.xlsx"))
+    text = attachments.material([str(tmp_path / "proj"), str(tmp_path / "sales.csv"), str(tmp_path / "rep.docx"),
+                                 str(tmp_path / "t.xlsx")])
+    assert "【フォルダ: proj/】" in text and "README.md" in text and "在庫管理ツール" in text and "def count" in text
+    assert "2行 × 2列" in text and "合計 400" in text and "売上は増えた" in text and "シート「売上」" in text
+    seen = []
+    monkeypatch.setattr(llm, "_chat_on_track", lambda m, q, use_tools=False: seen.append(m) or {"content": "合計は400です"})
+    monkeypatch.setattr(config, "QUICK_ROUTE", True)
+    assert llm.ask("売上の合計は？", history=[], attachments=[str(tmp_path / "sales.csv")]) == "合計は400です"
+    assert "合計 400" in seen[0][1]["content"]  # 添付の中身をもとに答える
+    llm.attach([])

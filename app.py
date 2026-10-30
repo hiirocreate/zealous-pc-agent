@@ -378,11 +378,14 @@ class App(ctk.CTk):
         box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
         box.grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 6))
         box.grid_columnconfigure(1, weight=1)
+        self._input_box = box
+        # 添付したファイル・フォルダ(入力欄の上に、名前の札を並べる。×で外す)
+        self.attach_bar = ctk.CTkFrame(box, fg_color="transparent")
         self.mic = self._mic(box, 32)
-        self.mic.grid(row=0, column=0, padx=4, pady=4, sticky="s")
+        self.mic.grid(row=1, column=0, padx=4, pady=4, sticky="s")
         self.entry = ctk.CTkTextbox(box, border_width=0, fg_color="transparent", font=T.font(12),
                                     text_color=T.TEXT, height=30, wrap="char", activate_scrollbars=False)
-        self.entry.grid(row=0, column=1, sticky="ew", padx=2, pady=4)
+        self.entry.grid(row=1, column=1, sticky="ew", padx=2, pady=4)
         self.entry.bind("<Return>", self._on_return)
         import ime  # 日本語の変換中の文字を、この入力欄の中に表示させる
         self._ime = ime.attach(self.entry._textbox, T.FONT, round(12 * 96 / 72 * self._scaling()))
@@ -391,6 +394,7 @@ class App(ctk.CTk):
         self.entry.bind("<FocusIn>", lambda e: self._fit_input())
         self.entry.bind("<FocusOut>", lambda e: self._fit_input())
         self.hint = ctk.CTkLabel(box, text="", font=T.font(12), text_color=T.SUB, height=20)
+        self.entry.bind("<Control-v>", self._paste_files, add="+")  # エクスプローラーでコピーしたファイルを貼り付けて添付
         # 入力欄のどこをクリックしても(「〜にメッセージ…」の文字の上や余白でも)、文字を打てる状態にする
         def bind_all(w):
             if isinstance(w, RoundButton):
@@ -399,12 +403,21 @@ class App(ctk.CTk):
             for c in w.winfo_children():
                 bind_all(c)
         bind_all(box)
+        # ファイル・フォルダを添付するボタン
+        clip = ctk.CTkButton(box, text="＋", width=34, height=34, corner_radius=17, font=T.font(16, "bold"),
+                             fg_color="transparent", hover_color=T.RAISED, text_color=T.SUB,
+                             command=lambda: self._attach_menu())
+        clip.grid(row=1, column=2, padx=(3, 0), pady=3, sticky="s")
+        import tooltip
+        tooltip.tip(clip, "ファイル・フォルダを添付（ドラッグ＆ドロップ・貼り付けでも）")
         # 音声会話画面へ切り替えるボタン(声の波の印)
         self._round(box, 34, icons.waves(17, icons.INK), self.open_voice_mode, fg=T.BORDER, hover=T.RAISED,
                     tip="音声で会話する").grid(
-            row=0, column=2, padx=(3, 0), pady=3, sticky="s")
+            row=1, column=3, padx=(3, 0), pady=3, sticky="s")
         self._round(box, 34, icons.send(18), self._send_entry, fg=T.ACCENT, hover=T.ACCENT_HOVER, tip="送信（Enter）").grid(
-            row=0, column=3, padx=3, pady=3, sticky="s")
+            row=1, column=4, padx=3, pady=3, sticky="s")
+        import dropfiles
+        self.after(500, lambda: dropfiles.enable(self, self._add_attachments))
         self.tip = ctk.CTkLabel(p, text="", font=T.font(9), text_color=T.SUB, height=12)
         self.tip.grid(row=3, column=0, sticky="w", padx=22)
 
@@ -917,6 +930,7 @@ class App(ctk.CTk):
             self._clear_chat()
             self._refresh_threads()
         self._paint_tech()
+        self._paint_attachments()
         self.entry.focus_set()
 
     def _open_thread(self, tid):
@@ -927,6 +941,7 @@ class App(ctk.CTk):
         self.thread = t
         self._clear_chat()
         self._paint_tech()
+        self._paint_attachments()
         for m in t["messages"]:
             if m["role"] in ("user", "ai"):
                 self._log(m["text"], m["role"])
@@ -951,6 +966,76 @@ class App(ctk.CTk):
         self.typing.grid_remove()
 
     # ================= 会話表示: kind = user / ai / sys =================
+    # ================= 添付(ファイル・フォルダ) =================
+    def _attach_menu(self):
+        x, y = self.winfo_pointerx(), self.winfo_pointery()
+
+        class E:  # メニューを出す位置
+            x_root, y_root = x, y
+        self._menu(E, [("ファイルを添付…", self._pick_files), ("フォルダを添付…", self._pick_folder)])
+
+    def _pick_files(self):
+        from tkinter import filedialog
+        paths = filedialog.askopenfilenames(parent=self, title="添付するファイルを選ぶ")
+        if paths:
+            self._add_attachments(list(paths))
+
+    def _pick_folder(self):
+        from tkinter import filedialog
+        path = filedialog.askdirectory(parent=self, title="添付するフォルダを選ぶ")
+        if path:
+            self._add_attachments([path])
+
+    def _paste_files(self, e=None):
+        import dropfiles
+        files = dropfiles.clipboard_files()
+        if not files:
+            return None  # ふつうの文字の貼り付け
+        self._add_attachments(files)
+        return "break"
+
+    def _add_attachments(self, paths):
+        """添付を足す(このチャットに覚えておき、外すまで質問のたびに使う)。"""
+        import os as _os
+        have = self.thread.setdefault("attachments", [])
+        for p in paths:
+            p = _os.path.abspath(p)
+            if _os.path.exists(p) and p not in have:
+                have.append(p)
+        del have[12:]  # 多すぎると読み取りに時間がかかるので、12個まで
+        if self.thread["messages"]:
+            threads.save(self.thread)
+        self._paint_attachments()
+        if not self._expanded:
+            self._show_panel()
+        self._toast(f"{len(paths)}件を添付しました。添付について質問できます")
+        self._focus_entry()
+
+    def _remove_attachment(self, path):
+        have = self.thread.get("attachments", [])
+        if path in have:
+            have.remove(path)
+            if self.thread["messages"]:
+                threads.save(self.thread)
+        self._paint_attachments()
+
+    def _paint_attachments(self):
+        import attachments
+        for w in self.attach_bar.winfo_children():
+            w.destroy()
+        items = self.thread.get("attachments", [])
+        if not items:
+            self.attach_bar.grid_forget()
+            return
+        for p in items:
+            chip = ctk.CTkButton(self.attach_bar, text=f"{attachments.label(p)}  ✕", height=24, corner_radius=12,
+                                 font=T.font(10), fg_color=T.BG, hover_color=T.BORDER, text_color=T.TEXT,
+                                 command=lambda p=p: self._remove_attachment(p))
+            chip.pack(side="left", padx=(0, 4), pady=(2, 0))
+            import tooltip
+            tooltip.tip(chip, f"{p}\n押すと添付を外します")
+        self.attach_bar.grid(row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(6, 0))
+
     # ================= テクニカルモード =================
     def _tech_on(self):
         return self.thread.get("mode") == "tech"
@@ -1213,7 +1298,7 @@ class App(ctk.CTk):
         self.entry.configure(height=12 + n * 18)
         empty = not self.entry.get("1.0", "end").strip()
         if empty and self.focus_get() is not tb:
-            self.hint.grid(row=0, column=1, sticky="w", padx=8)
+            self.hint.grid(row=1, column=1, sticky="w", padx=8)
         else:
             self.hint.grid_remove()
 
@@ -1278,6 +1363,7 @@ class App(ctk.CTk):
         else:
             history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
             extra = {"summary": self.thread.get("summary", ""), "memory": list(config.MEMORY)}
+        extra["attachments"] = list(self.thread.get("attachments", []))  # 添付したファイル・フォルダ(外すまで使う)
         threads.add(self.thread, "user", text)
         self._pending_tid = self.thread["id"]
         self.worker.submit(text, history, by_voice=by_voice, extra=extra)

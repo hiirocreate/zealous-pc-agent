@@ -9,3 +9,4 @@ pillow
 python-docx
 python-pptx
 openpyxl
+pypdf

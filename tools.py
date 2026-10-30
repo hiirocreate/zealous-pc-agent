@@ -1,5 +1,6 @@
 """AIが呼び出せるPC操作関数(Tool Call)。重いライブラリは関数内で読み込む。"""
 import os
+import re
 import time
 import subprocess
 import urllib.parse
@@ -971,18 +972,27 @@ def read_text_file(name, path=""):
 _OFFICE_UNIT = {"pptx": "スライド{n}枚", "docx": "{n}章", "xlsx": "{n}シート"}
 
 
-@tool("Word(.docx)・PowerPoint(.pptx)・Excel(.xlsx)のファイルを、頼まれた内容で作って開く。"
+@tool("Word(.docx)・PowerPoint(.pptx)・Excel(.xlsx)のファイルを、頼まれた内容で作って開く(作ったファイルは自由に編集できる)。"
+      "PDF は、はっきり「PDFで」と頼まれたときだけ kind=pdf にする。"
       "例:「新サービスの提案資料をパワポで作って」「今の内容をWordにまとめて」「月別の売上表をExcelで作って」",
-      kind=("string", "pptx(PowerPoint) / docx(Word) / xlsx(Excel)", True),
+      kind=("string", "pptx(PowerPoint) / docx(Word) / xlsx(Excel) / pdf(頼まれたときだけ)", True),
       request=("string", "どんな資料にするか(頼まれた文をそのまま)", True),
       name=("string", "ファイル名(省略すると資料の題名)", False),
-      path=("string", "保存する場所(省略するとデスクトップ)", False))
-def make_office_file(kind, request, name="", path=""):
+      path=("string", "保存する場所(省略するとデスクトップ)", False),
+      font=("string", "書体: ゴシック体 / 明朝体 / 教科書体 / ポップ体 / 丸ゴシック体 / UDゴシック(省略すると設定のもの)", False))
+def make_office_file(kind, request, name="", path="", font=""):
+    import fonts
     import llm
     import officedoc
     kind = llm.OFFICE_KINDS.get(str(kind).lower().lstrip("."), str(kind).lower().lstrip("."))
+    pdf = kind == "pdf"
+    if pdf:  # PDF は、編集できる元のファイル(スライドなら PowerPoint、ほかは Word)を作ってから変換する
+        kind = "pptx" if re.search(r"スライド|プレゼン|パワポ|パワーポイント|発表", request) else "docx"
     if kind not in officedoc.MAKERS:
-        return "作れるのは Word・PowerPoint・Excel のファイルです"
+        return "作れるのは Word・PowerPoint・Excel(と PDF)のファイルです"
+    style = fonts.style_of(f"{font} {request}", getattr(config, "OFFICE_FONT", "gothic"))
+    head, body, font_note = fonts.pick(style)  # このPCに入っている書体だけを使う
+    officedoc.use_fonts(head, body)
     doc = officedoc.parse(llm.write_document(kind, request))
     if not doc["sections"]:
         return "資料の中身をうまく作れませんでした。何についての資料か、もう少し詳しく教えてください"
@@ -995,14 +1005,38 @@ def make_office_file(kind, request, name="", path=""):
     folder = _guard(_base(path))
     p = officedoc.save_path(folder, os.path.splitext(name)[0] if name else doc["title"], "." + kind)
     count = officedoc.MAKERS[kind](doc, p)
+    made = f"「{os.path.basename(p)}」"
+    if pdf:
+        out = officedoc.to_pdf(p)
+        if out:
+            made = f"「{os.path.basename(out)}」(編集用に{made}も保存)"
+            p = out
+        else:
+            made += "（PDF にするには Microsoft Office か LibreOffice が必要なため、編集できる形で保存しました）"
     opened = "作って開きました"
     if os.name == "nt":
         try:
             os.startfile(p)
         except OSError:  # Office などの開くアプリが無い
             opened = "作りました"
-    return (f"「{os.path.basename(p)}」を{opened}（{folder}・{_OFFICE_UNIT[kind].format(n=count)}）。"
-            "直したいところがあれば言ってください")
+    note = f"。{font_note}" if font_note else ""
+    return (f"{made}を{opened}（{folder}・{_OFFICE_UNIT[kind].format(n=count)}・書体: {head}）{note}。"
+            "自由に編集できます。直したいところがあれば言ってください")
+
+
+@tool("Word・PowerPoint・Excel のファイルを PDF にする(PDF にしてと頼まれたときだけ)",
+      name=("string", "ファイル名またはパス", True), path=("string", "ある場所(分かれば)", False))
+def convert_to_pdf(name, path=""):
+    import officedoc
+    p, reply = _locate(name, path, "convert_to_pdf", {})
+    if reply:
+        return reply
+    if os.path.splitext(p)[1].lower() not in (".docx", ".pptx", ".xlsx"):
+        return "PDF にできるのは Word・PowerPoint・Excel のファイルです"
+    out = officedoc.to_pdf(_guard(p))
+    if not out:
+        return "PDF にするには、このPCに Microsoft Office か LibreOffice が必要です"
+    return f"「{os.path.basename(out)}」を作りました（{os.path.dirname(out)}）。元のファイルもそのまま残しています"
 
 
 # ---------------- ファイルの中身で探す ----------------

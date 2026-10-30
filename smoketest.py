@@ -192,6 +192,21 @@ def run(out):
                 make(officedoc.parse(sample), p)
                 made.append(f"{kind}={os.path.getsize(p)}")
             note(f"Office のファイル作成: OK ({', '.join(made)})")
+            import fonts
+            picked = {k: fonts.pick(k)[:2] for k in fonts.STYLES}
+            note(f"書体(このPCにあるもの): {picked} / 全{len(fonts.installed())}件")
+            # 添付: 札が出て、×で外せること。ドラッグ＆ドロップを受け取る準備ができていること
+            on_main(lambda: app._add_attachments([os.path.join(out, "office_test.xlsx"), out]))
+            time.sleep(0.8)
+            chips = on_main(lambda: len(app.attach_bar.winfo_children()))
+            shot("6c_attach")
+            on_main(lambda: [app._remove_attachment(p) for p in list(app.thread.get("attachments", []))])
+            left = on_main(lambda: len(app.thread.get("attachments", [])))
+            import dropfiles
+            note(f"添付: {'OK' if chips == 2 and left == 0 and dropfiles._keep else 'NG'} (札={chips}, 外した後={left})")
+            import attachments
+            note("添付の読み取り: " + ("OK" if "シート" in attachments.material([os.path.join(out, "office_test.xlsx")])
+                                     else "NG"))
 
             # 待機表示に戻し、マイクから音声会話画面を開いて閉じる
             on_main(lambda: app._show_pill())

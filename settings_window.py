@@ -179,6 +179,12 @@ _SOURCE = [
          "ONなら古いやりとりを要約（圧縮）して参照し続けます。OFFなら上限を超えた古い部分は参照しません"),
     ]),
     ("資料づくり", [
+        ("OFFICE_FONT", "書体（フォント）", "choice",
+         "資料の文字の書体。「明朝体で」「ポップ体で」のように頼んだときは、そちらを使います。"
+         "PCに入っていない書体は使わず、代わりにゴシック体にします（ポップ体・丸ゴシック体は Microsoft Office に付いてくる書体）",
+         [("gothic", "ゴシック体（游ゴシック）"), ("mincho", "明朝体（本文は游明朝・見出しはゴシック）"),
+          ("kyokasho", "教科書体（UDデジタル教科書体）"), ("pop", "ポップ体（HG創英角ポップ体）"),
+          ("maru", "丸ゴシック体（HG丸ゴシックM-PRO）"), ("ud", "UDゴシック（BIZ UDPゴシック・読みやすさ重視）")]),
         ("OFFICE_RESEARCH", "事実を調べてから書き、出典を付ける", "bool",
          "数字・制度・会社名などは、ネットで調べた内容だけを根拠にして書き、参考にしたページを最後に「出典」として載せます。"
          "「今の内容をWordにして」のように会話の内容から作るときは調べません"),
@@ -230,7 +236,7 @@ LAYOUT = [
             "SCREEN_ALLOW_SCROLL", "SCREEN_ALLOW_WINDOWS", "SCREEN_WAIT_IDLE",
             "—ファイル・フォルダ", "FOLDER_OPS_ENABLED", "FOLDER_DELETE_ENABLED", "—確認", "CONFIRM_VOICE_DANGER",
             "+DRY_RUN"]),
-    ("資料づくり", ["—Word・PowerPoint・Excel", "OFFICE_RESEARCH", "OFFICE_REVIEW", "OFFICE_IMAGES"]),
+    ("資料づくり", ["—Word・PowerPoint・Excel", "OFFICE_FONT", "OFFICE_RESEARCH", "OFFICE_REVIEW", "OFFICE_IMAGES"]),
     ("ブラウザ・検索", ["—Webページの操作", "WEB_CONTROL_ENABLED", "WEB_CONFIRM_RISKY", "BROWSER",
                  "—調べものの返事", "SAFE_SITES_ONLY", "SOURCE_COUNT", "SEARCH_IMAGE_COUNT", "IMAGE_COUNT",
                  "+SEARCH_URL"]),
