@@ -65,6 +65,10 @@ FULL_ON = re.compile(r"(?:会話|チャット|やりとり|やり取り|履歴)(
                      r"(?:して)?(?:答えて|回答して|話して|ね|ください)|全部参照モード(?:に|を)?(?:して|オン|ON)")
 FULL_OFF = re.compile(r"(?:全部|ぜんぶ|すべて|全て)(?:参照|覚えて)(?:する|るの|するの)?(?:のを|を)?(?:やめて|止めて|オフ|OFF)|"
                       r"全部参照モード(?:を)?(?:やめて|終わって|オフ|OFF|解除)")
+# 「テクニカルモードにして」「通常モードに戻して」
+TECH_ON = re.compile(r"(?:テクニカル|技術|開発|エンジニア)モード(?:に|へ)?(?:して|切り替えて|変えて|オン|ON|で)")
+TECH_OFF = re.compile(r"(?:通常|普通|ふつう|いつも)の?モード(?:に|へ)?(?:戻して|もどして|して|切り替えて)|"
+                      r"(?:テクニカル|技術|開発)モード(?:を)?(?:終わ|おわ|やめ|オフ|OFF|解除)")
 STANDBY = re.compile(r"(?:もう|じゃあ|では|ちょっと|いったん|一旦)?(?:"
                      r"(?:待機|たいき|スタンバイ)(?:モード|状態)?(?:に)?(?:して|しといて|しておいて|戻って|入って|"
                      r"なって|して(?:ください|くれる|くれ|ね))?(?:ください)?|"
@@ -341,6 +345,12 @@ class App(ctk.CTk):
         self.head_spin = DotSpinner(row2, dot=5, gap=3)
         buttons = ctk.CTkFrame(head, fg_color="transparent")
         buttons.grid(row=0, column=3, rowspan=2)
+        self.tech_btn = ctk.CTkButton(buttons, text="</>", width=30, height=30, corner_radius=15, font=("Consolas", 11, "bold"),
+                                      fg_color="transparent", hover_color=T.SURFACE, text_color=T.SUB,
+                                      command=lambda: self._set_tech(not self._tech_on(), announce=True))
+        self.tech_btn.pack(side="left")
+        import tooltip
+        tooltip.tip(self.tech_btn, "テクニカルモード（コードの添削・作成、サーバー・IT の相談）")
         self._round(buttons, 30, icons.export(15), lambda: self._export_thread(self.thread), tip="このチャットを書き出す").pack(side="left")
         self._round(buttons, 30, icons.plus(15), self._new_thread, tip="新しいチャット").pack(side="left")
         self.max_btn = self._round(buttons, 30, icons.maximize(14), self._toggle_max, tip="全画面にする")
@@ -857,6 +867,8 @@ class App(ctk.CTk):
         for w in self._bubbles:
             if getattr(w, "_bubble", False):
                 w.configure(wraplength=wrap)
+            for lab in getattr(w, "_labels", []):
+                lab.configure(wraplength=wrap)
 
     # ================= スレッド =================
     def _refresh_threads(self):
@@ -904,6 +916,7 @@ class App(ctk.CTk):
             self.thread = threads.new()
             self._clear_chat()
             self._refresh_threads()
+        self._paint_tech()
         self.entry.focus_set()
 
     def _open_thread(self, tid):
@@ -913,6 +926,7 @@ class App(ctk.CTk):
             return
         self.thread = t
         self._clear_chat()
+        self._paint_tech()
         for m in t["messages"]:
             if m["role"] in ("user", "ai"):
                 self._log(m["text"], m["role"])
@@ -937,7 +951,66 @@ class App(ctk.CTk):
         self.typing.grid_remove()
 
     # ================= 会話表示: kind = user / ai / sys =================
+    # ================= テクニカルモード =================
+    def _tech_on(self):
+        return self.thread.get("mode") == "tech"
+
+    def _set_tech(self, on, announce=False):
+        """このチャットをテクニカルモードにする / 戻す(チャットごとに覚える)。"""
+        if on:
+            self.thread["mode"] = "tech"
+        else:
+            self.thread.pop("mode", None)
+        if self.thread["messages"]:
+            threads.save(self.thread)
+        self._paint_tech()
+        if announce:
+            self._toast("テクニカルモードにしました" if on else "通常モードに戻しました")
+
+    def _paint_tech(self):
+        if getattr(self, "tech_btn", None) is not None:
+            on = self._tech_on()
+            self.tech_btn.configure(fg_color=T.ACCENT if on else "transparent", text_color="white" if on else T.SUB,
+                                    hover_color=T.ACCENT_LIGHT if on else T.SURFACE)
+
+    def _log_code(self, text):
+        """コード(``` で囲んだ部分)のある返事: 文はふつうに、コードは等幅の枠に入れ、コピーのボタンを付ける。"""
+        row = len(self._bubbles)
+        box = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
+        box.grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        box._labels = []
+        parts = re.split(r"```([^\n`]*)\n?(.*?)(?:```|$)", text, flags=re.S)
+        for i in range(0, len(parts), 3):
+            prose = parts[i].strip()
+            if prose:
+                lab = ctk.CTkLabel(box, text=prose, font=T.font(12), wraplength=self._wrap, justify="left",
+                                   text_color=T.TEXT, anchor="w")
+                lab.pack(anchor="w", padx=10, pady=(6, 2))
+                lab.bind("<Button-3>", lambda e, b=lab: self._bubble_menu(e, b))
+                box._labels.append(lab)
+            if i + 2 < len(parts):
+                lang, code = parts[i + 1].strip() or "code", parts[i + 2].rstrip()
+                frame = ctk.CTkFrame(box, fg_color=T.BG, corner_radius=8)
+                frame.pack(fill="x", padx=8, pady=4)
+                bar = ctk.CTkFrame(frame, fg_color="transparent")
+                bar.pack(fill="x", padx=6, pady=(4, 0))
+                ctk.CTkLabel(bar, text=lang, font=T.font(9), text_color=T.SUB).pack(side="left")
+                ctk.CTkButton(bar, text="コピー", width=52, height=20, corner_radius=10, font=T.font(9),
+                              fg_color="transparent", border_width=1, border_color=T.BORDER, hover_color=T.SURFACE,
+                              text_color=T.TEXT, command=lambda c=code: self._copy(c)).pack(side="right")
+                lines = code.count("\n") + 1
+                tb = ctk.CTkTextbox(frame, font=("Consolas", 11), wrap="none", fg_color=T.BG, text_color=T.TEXT,
+                                    height=min(22, lines) * 17 + 12, activate_scrollbars=lines > 22)
+                tb.insert("1.0", code)
+                tb.configure(state="disabled")
+                tb.pack(fill="x", padx=4, pady=(0, 4))
+        box._bubble_text = text
+        self._add_widget(box, None)
+        return box
+
     def _log(self, text, kind="sys"):
+        if kind == "ai" and "```" in text:
+            return self._log_code(text)
         row = len(self._bubbles)
         if kind == "sys":
             w = ctk.CTkLabel(self.chat, text=text, font=T.font(10), text_color=T.SUB, wraplength=self._wrap)
@@ -978,8 +1051,15 @@ class App(ctk.CTk):
     def _showing_pending(self):
         return self._pending_tid == self.thread["id"]
 
+    def _speakable(self, piece):
+        """読み上げる部分(``` で囲んだコードは読まない)。"""
+        if self._stream is None:  # 新しい返事の書き始め
+            import tts
+            self._code_filter = tts.CodeFilter()
+        return self._code_filter.feed(piece)
+
     def _on_delta(self, piece):
-        self.speaker.feed(piece)  # 一文になったところから話し始める
+        self.speaker.feed(self._speakable(piece))  # 一文になったところから話し始める(コードは読まない)
         if self._voice_win is not None:
             self._voice_win.reply_piece(piece)
         if not self._showing_pending():
@@ -1006,13 +1086,17 @@ class App(ctk.CTk):
         if streamed:
             self.speaker.flush()  # 句点で終わっていない最後の部分も読む
         else:
-            self.speaker.say(body)  # 出典(URL)や画像は読み上げない
+            # 出典(URL)や画像、コードは読み上げない
+            self.speaker.say(re.sub(r"```.*?(?:```|$)", "（コードは画面に表示しました）", body, flags=re.S))
         # 返事は、質問したスレッドに保存する(途中で別のスレッドを開いていても)
         target = self.thread if self._showing_pending() else threads.load(self._pending_tid)
         if target is not None:
             threads.add(target, "ai", body, sources, images)
         if self._showing_pending():
-            if streamed:
+            if streamed and "```" in body:  # コードのある返事は、最後に見やすい形に作り直す
+                self._remove_widget(self._stream[0])
+                self._log(body, "ai")
+            elif streamed:
                 self._stream[0].configure(text=body)
             else:
                 self._log(body, "ai")
@@ -1160,6 +1244,22 @@ class App(ctk.CTk):
             self.speaker.say(reply)
             self._refresh_threads()
             return
+        tech = True if TECH_ON.search(text) else False if TECH_OFF.search(text) else None
+        if tech is not None and len(text) <= 40:  # 「テクニカルモードにして」「通常モードに戻して」
+            self._log(text, "user")
+            threads.add(self.thread, "user", text)
+            self._set_tech(tech)
+            reply = ("テクニカルモードにしました。コードの添削・作成、サーバーやネットワークの設定などを、くわしくお手伝いします。"
+                     if tech else "通常モードに戻しました。")
+            self._log(reply, "ai")
+            threads.add(self.thread, "ai", reply)
+            self.speaker.say(reply)
+            self._refresh_threads()
+            return
+        import llm
+        if not self._tech_on() and getattr(config, "TECH_AUTO", True) and llm.looks_technical(text):
+            self._set_tech(True)  # 技術的な話: テクニカルモードに切り替えてから答える
+            self._log("技術的な内容なので、テクニカルモードに切り替えました（「通常モードに戻して」で戻ります）", "sys")
         if STANDBY.fullmatch(re.sub(r"[\s。、！!？?…]", "", text)):  # 「待機して」など: 小さくして待機する
             self._standby()
             return
@@ -1170,10 +1270,11 @@ class App(ctk.CTk):
             self._log("声を選ぶ画面を開きます。試聴して選んでください。", "ai")
             self.open_voice_picker()
             return
-        if getattr(config, "FULL_CONTEXT", False):  # このスレッドの会話をすべて参照する(長すぎる分は圧縮)
+        if getattr(config, "FULL_CONTEXT", False) or self._tech_on():
+            # 会話をすべて参照する(長すぎる分は圧縮)。テクニカルモードは、コードの話が続くので いつもこちら
             history, summary, base = threads.full_history(self.thread)
             extra = {"summary": summary, "memory": list(config.MEMORY), "full": True,
-                     "tid": self.thread["id"], "base": base}
+                     "tid": self.thread["id"], "base": base, "mode": "tech" if self._tech_on() else ""}
         else:
             history = threads.history(self.thread, config.CONTEXT_TURNS)  # このスレッドの直前のやりとり
             extra = {"summary": self.thread.get("summary", ""), "memory": list(config.MEMORY)}

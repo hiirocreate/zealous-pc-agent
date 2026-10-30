@@ -35,7 +35,9 @@ SCREEN_TOOLS = set()  # 画面を直接操作する関数(設定で許可した�
 WEB_TOOLS = set()     # ゼラス用ブラウザのページの中を操作する関数(ブラウザを開いている間だけ AI に見せる)
 
 
-def schemas():
+def schemas(only=None):
+    if only is not None:  # テクニカルモードなど: 決まった関数だけ
+        return [s for name, (_, s) in TOOLS.items() if name in only]
     hide = set() if getattr(config, "SCREEN_CONTROL_ENABLED", False) else set(SCREEN_TOOLS)
     import browser
     if not (browser.enabled() and browser.running()):
@@ -948,6 +950,21 @@ def mail_rename_folder(folder, new_name):
 def mail_folders():
     import mail
     return mail.listing() if mail.backend() else mail.NOT_READY
+
+
+# ---------------- ファイルを読む(テクニカルモードのコードの添削など) ----------------
+@tool("テキストファイル(プログラムのコード・設定ファイル・ログなど)の中身を読む",
+      name=("string", "ファイル名またはパス", True), path=("string", "ある場所(分かれば)", False))
+def read_text_file(name, path=""):
+    p, reply = _locate(name, path, "read_text_file", {})
+    if reply:
+        return reply
+    if os.path.isdir(p):
+        return f"{p} はフォルダです"
+    text = file_text(p, limit=400_000)
+    limit = 16000
+    note = f"\n…（長いので最初の{limit}文字だけ読みました）" if len(text) > limit else ""
+    return f"{p} の中身:\n{text[:limit]}{note}"
 
 
 # ---------------- ファイルの中身で探す ----------------

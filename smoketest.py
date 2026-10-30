@@ -172,6 +172,16 @@ def run(out):
             shot("6_sent")
             note("送信: OK")
 
+            # テクニカルモード: ボタンの色が変わり、コードは等幅の枠(コピーのボタン付き)で表示されること
+            on_main(lambda: app._set_tech(True))
+            box = on_main(lambda: app._log("括弧が閉じていません。\n```python\nprint('hi')\n```\n以上です。", "ai"))
+            time.sleep(1)
+            shot("6b_code")
+            has_code = on_main(lambda: any(w.__class__.__name__ == "CTkTextbox" for w in _walk(box)))
+            color = on_main(lambda: app.tech_btn.cget("fg_color"))
+            note(f"テクニカルモード: {'OK' if has_code and color != 'transparent' else 'NG'} (コード枠={has_code}, ボタン={color})")
+            on_main(lambda: app._set_tech(False))
+
             # 待機表示に戻し、マイクから音声会話画面を開いて閉じる
             on_main(lambda: app._show_pill())
             time.sleep(1.5)

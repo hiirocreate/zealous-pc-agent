@@ -33,6 +33,10 @@ def backend():
         return "imap"
     if kind in ("outlook", "auto") and _has_outlook():
         return "outlook"
+    if kind in ("thunderbird", "auto"):
+        import mail_ui
+        if mail_ui.exe():
+            return "thunderbird"  # 設定なし: Thunderbird の画面を、画面の外で操作する(既読にするだけ)
     return None
 
 
@@ -48,7 +52,7 @@ def _has_outlook():
         return False
 
 
-NOT_READY = ("メールの設定がまだです。設定の「メール」タブで、使っているメールのサーバー（例: imap.gmail.com）と"
+NOT_READY = ("メールの設定がまだです（Thunderbird・Outlook も見つかりませんでした）。設定の「メール」タブで、使っているメールのサーバー（例: imap.gmail.com）と"
              "アカウント、アプリパスワードを登録してください（Outlook を使っている場合は登録不要です）。")
 
 
@@ -222,7 +226,14 @@ def resolve(query, tool, args):
 
 
 # ---------------- 操作 ----------------
+_UI_ONLY = ("この操作は、メールの設定（設定の「メール」タブで IMAP のアカウントを登録）をすると使えます。"
+            "設定なしでできるのは、Thunderbird で「〜を全部既読にして」だけです。")
+
+
 def mark_read(query):
+    if backend() == "thunderbird":
+        import mail_ui
+        return mail_ui.mark_read(query)
     folder, reply = resolve(query, "mail_mark_read", {})
     if reply:
         return reply
@@ -243,6 +254,8 @@ def mark_read(query):
 
 
 def unread(query=""):
+    if backend() == "thunderbird":
+        return _UI_ONLY
     folder, reply = resolve(query or "受信", "mail_unread", {})
     if reply:
         return reply
@@ -260,6 +273,8 @@ def rename(query, new_name):
     new_name = str(new_name).strip().strip("「」『』\"'")
     if not new_name or re.search(r'[\\/"*?<>|]', new_name):
         return "その名前はフォルダの名前に使えません"
+    if backend() == "thunderbird":
+        return _UI_ONLY
     folder, reply = resolve(query, "mail_rename_folder", {"new_name": new_name})
     if reply:
         return reply
@@ -279,5 +294,7 @@ def rename(query, new_name):
 
 
 def listing():
+    if backend() == "thunderbird":
+        return _UI_ONLY
     found = folders()
     return "メールのフォルダ: " + "、".join(f["path"] for f in found[:40])

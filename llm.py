@@ -45,6 +45,8 @@ on_summary = None    # 長い会話の古い部分を圧縮したときに知ら
 _full = False        # このスレッドの会話をすべて参照するモード
 on_retract = None    # 書き始めた返事を取り消す関数(返事の途中で操作を始めたとき。「開きます」などを話さないように)
 _streamed = False    # 直前の問い合わせで、返事を画面と読み上げへ流したか
+_tech = False        # テクニカルモード(コード・サーバーなど技術的な作業の補助)
+TECH_TOOLS = ("read_text_file", "find_files", "find_in_files", "search_summary", "create_text_file", "open_file")
 _choice = None       # どれにするか聞いている候補 {"tool", "arg", "options", "labels", "args"}
 
 
@@ -106,6 +108,46 @@ def system_prompt():
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
             "「それ」「さっきの」などは、直前の会話を指していると考える。"
             + user_rule() + memory_rule() + persona_rule())
+
+
+def tech_prompt():
+    return (f"あなたは、経験豊富なソフトウェアエンジニア兼インフラエンジニアとして働くアシスタント「{config.AI_NAME}」です。"
+            "いまはテクニカルモードです。プログラミング・コードの添削・Web制作・サーバー・ネットワーク・クラウド・"
+            "データベース・セキュリティなど、IT の技術的な作業を手伝います。\n"
+            "【必ず守ること】\n"
+            f"・{answer_language()}で答える(コード・コマンド・エラーメッセージはそのまま)。\n"
+            "・コード・コマンド・設定ファイルは、必ず ``` で囲み、言語名を付ける(例: ```python、```bash、```nginx)。\n"
+            "・まず結論、次に理由と手順。長くなるときは見出しや箇条書きで整理する。\n"
+            "・コードの添削は「問題点 → 直したコード → 変えた理由」の順。直した箇所が分かるようにする。\n"
+            "・存在しない関数・オプション・コマンドを推測で作らない。確かでないことは、確かでないと書く。\n"
+            "・削除・上書き・本番環境の変更・ポートの開放など、危ない操作には注意点と元に戻す方法を書く。\n"
+            "・パスワード・APIキー・秘密鍵は、会話に貼らずに伏せるよう伝える。\n"
+            "・PCのファイルの中身が必要なら read_text_file で読み、最新の情報や公式ドキュメントは search_summary で調べる。"
+            "書いたコードを保存するよう頼まれたら create_text_file を使う。"
+            + user_rule() + memory_rule())
+
+
+# 技術的な話題(この言葉と、頼み方・たずね方の両方があればテクニカルモードへ)
+_TECH_TOPIC = re.compile(
+    r"コード|プログラム|スクリプト|関数|クラス|変数|配列|バグ|デバッグ|例外|コンパイル|ビルド|デプロイ|リファクタ|"
+    r"サーバー|サーバ|nginx|apache|docker|コンテナ|kubernetes|k8s|linux|ubuntu|centos|ssh|dns|ssl|tls|証明書|"
+    r"ファイアウォール|ポート|データベース|sql|mysql|postgres|mongodb|redis|api|rest|graphql|git|github|"
+    r"python|パイソン|javascript|ジャバスクリプト|typescript|java\b|ジャバ|c\+\+|c#|php|ruby|rust|golang|go言語|"
+    r"html|css|react|vue|next\.js|node|npm|pip|aws|gcp|azure|lambda|正規表現|json|yaml|wordpress|"
+    r"ドメイン|インフラ|ネットワーク|ip ?アドレス|vpn|ルーター|cron|シェル|bash|powershell|コマンド|ターミナル|"
+    r"vscode|エンジニア|プログラミング|アルゴリズム|フレームワーク|ライブラリ|traceback|stack ?trace|"
+    r"エラー(?:コード|メッセージ|が出|になる)", re.I)
+_TECH_ASK = re.compile(r"書いて|作って|直して|添削|レビュー|教えて|どう|方法|設定|原因|なぜ|使い方|違い|手順|"
+                       r"解決|意味|説明|おすすめ|できる|したい|[?？]")
+_CODE_LIKE = re.compile(r"```|Traceback \(most recent|^\s*(?:def |class |import |from \S+ import|function |const |"
+                        r"let |var |public |#include|<\?php|<html|SELECT |server \{)|[;{}]\s*$", re.M)
+
+
+def looks_technical(text):
+    """コード・サーバーなど、技術的な作業の話か。"""
+    if _CODE_LIKE.search(text) and text.count("\n") >= 1:
+        return True
+    return bool(_TECH_TOPIC.search(text) and _TECH_ASK.search(text))
 
 
 def _remember(text, reply):
@@ -216,10 +258,11 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
     """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
     関数呼び出し(JSON)らしい返事は画面に出さない。
     guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
-    body = {"model": config.OLLAMA_MODEL, "messages": messages, "stream": True,
-            "options": {"temperature": 0, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
+    model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
+    body = {"model": model, "messages": messages, "stream": True,
+            "options": {"temperature": 0.2 if _tech else 0, "num_ctx": num_ctx(messages)}, "keep_alive": "30m"}
     if use_tools:
-        body["tools"] = tools.schemas()
+        body["tools"] = tools.schemas(TECH_TOOLS if _tech else None)
     import models
     if models.thinks(config.OLLAMA_MODEL):
         body["think"] = False  # 考える過程を書かせない(書かせると、話し始めるまでが遅くなる)
@@ -243,7 +286,7 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
                     raise OffTrack(content[:40])
                 else:
                     guard = None
-            if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
+            if stream_out and on_delta and not calls and not content.lstrip().startswith(("{",) if _tech else ("{", "`")):
                 ok = visible(content)
                 if len(ok) > shown:
                     on_delta(ok[shown:])
@@ -251,7 +294,7 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None):
                     _streamed = True
     if guard is not None and not calls and off_track(guard, content):
         raise OffTrack(content[:40])
-    if stream_out and on_delta and not calls and not content.lstrip().startswith(("{", "`")):
+    if stream_out and on_delta and not calls and not content.lstrip().startswith(("{",) if _tech else ("{", "`")):
         ok = visible(content)
         if len(ok) > shown:
             on_delta(ok[shown:])  # 短い返事(待っている間に書き終わった分)
@@ -318,18 +361,22 @@ _TOOL_TEXT = re.compile(r"\[Tools?\]|<tool_call>|\{\s*\"(?:type|name|function)\"
                         + "|".join(re.escape(n) for n in tools.TOOLS) + r")\s*[\(\"「]")
 
 
+_TOOL_TEXT_TECH = re.compile(r"\[Tools?\]|<tool_call>|^\s*\{\s*\"(?:name|function)\"\s*:")  # コードの ``` は出してよい
+
+
 def visible(content):
     """画面と読み上げに出してよい部分(関数の呼び出しらしい書き出しより前)。"""
-    m = _TOOL_TEXT.search(content)
+    m = (_TOOL_TEXT_TECH if _tech else _TOOL_TEXT).search(content)
     return content[:m.start()].rstrip() if m else content
 
 
-def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=0):
+def ask(text, history=None, summary="", memory=None, full=False, tid=None, base=0, mode=""):
     """history を渡すとその会話の続きとして答える(チャットのスレッドごとの記憶)。
     summary: 古いやりとりの要約 / memory: ユーザーについてずっと覚えておくこと
     full: スレッドの会話をすべて参照する(長すぎれば古い部分を圧縮。tid・base はその保存用)"""
-    global _last, _summary, _memory, _full
+    global _last, _summary, _memory, _full, _tech
     _full = bool(full)
+    _tech = mode == "tech"
     if _full and history is not None:
         history, summary = _fit(list(history), summary or "", tid, base)
     _summary, _memory = summary or "", list(memory or [])
@@ -727,6 +774,38 @@ def _run(name, args):
     return res
 
 
+def _ask_tech(text):
+    """テクニカルモード: 技術的な質問に、コードや手順を添えてくわしく答える(関数はファイルを読む・調べるなどだけ)。"""
+    messages = [{"role": "system", "content": tech_prompt()}, *_context(), {"role": "user", "content": text}]
+    for step in range(max(2, config.MAX_TOOL_STEPS)):
+        try:
+            msg = _chat(messages, use_tools=True, stream_out=True)
+        except requests.HTTPError as e:
+            model = getattr(config, "TECH_MODEL", "")
+            if not (model and "404" in str(e)):
+                raise
+            # コード向けのモデルがまだ無い: 裏でダウンロードを始め、今回はいつものモデルで答える
+            import threading
+            import services
+            threading.Thread(target=lambda: services.pull_model(lambda s: None, model), daemon=True).start()
+            config.TECH_MODEL = ""
+            if on_delta:
+                on_delta(f"（コード向けのAI「{model}」を準備し始めました。準備ができるまでは、いつものAIで答えます）\n\n")
+            msg = _chat(messages, use_tools=True, stream_out=True)
+        calls = [(n, a) for n, a in parse_tool_calls(msg) if n in TECH_TOOLS]
+        if not calls:
+            return visible(msg.get("content") or "").strip() or "うまく答えをまとめられませんでした。もう少し詳しく教えてください。"
+        if _streamed and on_retract:
+            on_retract()
+        messages.append(msg)
+        for name, args in calls:
+            res = _run(name, args)
+            if tools.CONFIRM in res or _choice:
+                return res
+            messages.append({"role": "tool", "content": res.partition(SOURCES)[0][:16000]})
+    return (_chat(messages, use_tools=False, stream_out=True).get("content") or "").strip()
+
+
 def _ask(text):
     global _choice
     if _choice:  # 「どれにしますか？」への答え
@@ -737,6 +816,8 @@ def _ask(text):
         if k is not None:
             args = dict(choice["args"], **{choice["arg"]: choice["options"][k]})
             return _run(choice["tool"], args)
+    if _tech:
+        return _ask_tech(text)
     route = quick_route(text)
     if route:
         return _run(*route)

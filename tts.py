@@ -275,3 +275,24 @@ def split_sentences(text):
         buf = buf[m.end():]
     out.append(buf)
     return [s for s in (x.strip() for x in out) if s]
+
+
+class CodeFilter:
+    """少しずつ届く返事から、読み上げる部分だけを取り出す(``` で囲んだコードは読まない)。"""
+
+    def __init__(self):
+        self.in_code, self.tail = False, ""
+
+    def feed(self, piece):
+        text, self.tail, out = self.tail + piece, "", []
+        if text.endswith("`") and not text.endswith("```"):  # ``` が分かれて届いたとき: 次とつなげて判断する
+            cut = len(text) - len(text.rstrip("`"))
+            text, self.tail = text[:-cut], text[-cut:]
+        for i, part in enumerate(text.split("```")):
+            if i:
+                self.in_code = not self.in_code
+                if self.in_code:
+                    out.append("（コードは画面に表示します）")
+            if not self.in_code:
+                out.append(part)
+        return "".join(out)

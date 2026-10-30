@@ -31,9 +31,9 @@ def check_voicevox():
         return False, "VOICEVOX（読み上げソフト）が起動していません"
 
 
-def pull_model(on_progress):
+def pull_model(on_progress, model=None):
     """モデルをダウンロードする。on_progress(文字列) で進捗を通知。"""
-    body = json.dumps({"model": config.OLLAMA_MODEL, "stream": True}).encode()
+    body = json.dumps({"model": model or config.OLLAMA_MODEL, "stream": True}).encode()
     req = urllib.request.Request(ollama_base() + "/api/pull", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=3600) as r:

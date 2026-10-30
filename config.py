@@ -67,6 +67,8 @@ DEFAULTS = {
     "WEB_CONTROL_ENABLED": True,     # サイトはゼラス用ブラウザで開き、ページの中の操作(押す・入力・スクロールなど)もする
     "WEB_CONFIRM_RISKY": True,       #   購入・送信・削除などのボタンは、押す前に確かめる
     "CONTEXT_RESET_MIN": 10,
+    "TECH_AUTO": True,               # コード・サーバーなど技術的な質問は、テクニカルモードに自動で切り替える
+    "TECH_MODEL": "",                # テクニカルモードで使うAIモデル(空なら通常と同じ。例: qwen2.5-coder:3b)
     # ---- メール(画面を使わずに裏側で操作) ----
     "MAIL_SERVICE": "auto",          # auto / imap / outlook
     "MAIL_IMAP_HOST": "",            # 例: imap.gmail.com

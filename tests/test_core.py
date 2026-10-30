@@ -724,3 +724,31 @@ def test_voice_names_ask_spelling(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "QUICK_ROUTE", False)
     llm._ask("3番")
     assert (tmp_path / "才コンサル").is_dir()
+
+
+def test_technical_mode(monkeypatch, tmp_path):
+    assert llm.looks_technical("nginxのリバースプロキシの設定方法は？")
+    assert llm.looks_technical("def f():\n    return 1\nこれ直して")
+    assert not llm.looks_technical("明日の天気は？") and not llm.looks_technical("コマンドプロンプトを開いて")
+    src = tmp_path / "app.py"
+    src.write_text("print('hi'", encoding="utf-8")
+    seen = []
+
+    def fake_chat(messages, use_tools=True, **kw):
+        seen.append((messages[0]["content"][:30], [m["role"] for m in messages]))
+        if messages[-1]["role"] == "user":  # まずファイルを読む
+            return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_text_file", "arguments": {"name": str(src)}}}]}
+        assert "print('hi'" in messages[-1]["content"]
+        return {"content": "括弧が閉じていません。\n```python\nprint('hi')\n```"}
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    reply = llm.ask(f"{src} を添削して", history=[], mode="tech", full=True)
+    assert reply.endswith("```") and "```python" in reply  # コードはそのまま残す
+    assert "テクニカルモード" in seen[0][0] or "エンジニア" in seen[0][0]
+    llm._tech = False
+
+
+def test_speech_skips_code():
+    import tts
+    f = tts.CodeFilter()
+    out = f.feed("直しました。\n``") + f.feed("`python\nprint(1)\n``") + f.feed("`\n以上です。")
+    assert "print" not in out and out.startswith("直しました。") and out.endswith("以上です。")
