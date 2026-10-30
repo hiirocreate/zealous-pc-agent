@@ -451,10 +451,10 @@ def run(out):
                 note(f"Kokoro: NG {e!r}")
             try:
                 import audiogate
-                import numpy as np
+                import numpy as _np  # この関数の中の np(上で使っている)と名前がぶつからないように
                 net = audiogate.wakenet("hey_jarvis")
-                score = max(net.push(np.zeros(1600, np.float32)) for _ in range(20))
-                prob = audiogate.vad().prob(np.zeros(1600, np.float32))
+                score = max(net.push(_np.zeros(1600, _np.float32)) for _ in range(20))
+                prob = audiogate.vad().prob(_np.zeros(1600, _np.float32))
                 note(f"openWakeWord / Silero VAD: OK (無音の点数 {score:.2f} / {prob:.2f})")
             except Exception as e:
                 note(f"openWakeWord / Silero VAD: NG {e!r}")
