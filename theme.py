@@ -31,6 +31,8 @@ NAME = config.UI_THEME if config.UI_THEME in THEMES else "midnight"
 globals().update(THEMES[NAME])
 
 CYAN = "#22d3ee"
+TECH = "#10b981"          # テクニカルモードの色(どの配色でも同じ緑。ひと目でテクニカルモードと分かるように)
+TECH_HOVER = "#0e9f6e"
 OK = "#34d399"
 WARN = "#fbbf24"
 DANGER = "#ef4444"

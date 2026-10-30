@@ -62,7 +62,8 @@ REQUIRE_CONFIRM = False  # いまの依頼が声によるものか(作業プロ�
 CONFIRM = "\n\n確認:\n"  # 返事のうち、これより後ろは「確認待ちの操作」(画面用。読み上げない)
 
 
-CHOICE = "\n\n選択:\n"  # 返事のうち、これより後ろは「どれにするか選んでもらう」候補(画面用。読み上げない)
+CHOICE = "\n\n選択:\n"
+FILES = "\n\nファイル:\n"  # 返事のうち、これより後ろは作ったファイルの一覧(JSON)。チャットに「開く・保存」の札を出す  # 返事のうち、これより後ろは「どれにするか選んでもらう」候補(画面用。読み上げない)
 
 
 def ask_choice(question, tool_name, arg, options, labels=None, args=None):
@@ -979,8 +980,10 @@ _OFFICE_UNIT = {"pptx": "スライド{n}枚", "docx": "{n}章", "xlsx": "{n}シ�
       request=("string", "どんな資料にするか(頼まれた文をそのまま)", True),
       name=("string", "ファイル名(省略すると資料の題名)", False),
       path=("string", "保存する場所(省略するとデスクトップ)", False),
-      font=("string", "書体: ゴシック体 / 明朝体 / 教科書体 / ポップ体 / 丸ゴシック体 / UDゴシック(省略すると設定のもの)", False))
-def make_office_file(kind, request, name="", path="", font=""):
+      font=("string", "書体: ゴシック体 / 明朝体 / 教科書体 / ポップ体 / 丸ゴシック体 / UDゴシック(省略すると設定のもの)", False),
+      source=("string", "中身の材料: web(ネットで調べる) / attach(添付) / user(伝えられた内容) / chat(会話の内容)", False),
+      design=("string", "デザインの希望(色・書体・枚数・雰囲気など)", False))
+def make_office_file(kind, request, name="", path="", font="", source="", design=""):
     import fonts
     import llm
     import officedoc
@@ -990,10 +993,14 @@ def make_office_file(kind, request, name="", path="", font=""):
         kind = "pptx" if re.search(r"スライド|プレゼン|パワポ|パワーポイント|発表", request) else "docx"
     if kind not in officedoc.MAKERS:
         return "作れるのは Word・PowerPoint・Excel(と PDF)のファイルです"
-    style = fonts.style_of(f"{font} {request}", getattr(config, "OFFICE_FONT", "gothic"))
+    llm._status("@office")  # 画面に「作成中」の表示を出す
+    wish = f"{font} {design} {request}"
+    style = fonts.style_of(wish, "") or ("pop" if re.search(r"ポップ|かわいい|楽しい", design or "") else "") \
+        or getattr(config, "OFFICE_FONT", "gothic")
     head, body, font_note = fonts.pick(style)  # このPCに入っている書体だけを使う
     officedoc.use_fonts(head, body)
-    doc = officedoc.parse(llm.write_document(kind, request))
+    officedoc.use_theme(officedoc.theme_of(design))  # 「青系で」「緑で」など(無ければ標準の紺と青)
+    doc = officedoc.parse(llm.write_document(kind, request, source))
     if not doc["sections"]:
         return "資料の中身をうまく作れませんでした。何についての資料か、もう少し詳しく教えてください"
     if getattr(config, "OFFICE_IMAGES", True) and kind != "xlsx":
@@ -1020,8 +1027,10 @@ def make_office_file(kind, request, name="", path="", font=""):
         except OSError:  # Office などの開くアプリが無い
             opened = "作りました"
     note = f"。{font_note}" if font_note else ""
+    import json
+    files = [p] + ([os.path.splitext(p)[0] + "." + kind] if pdf and p.endswith(".pdf") else [])
     return (f"{made}を{opened}（{folder}・{_OFFICE_UNIT[kind].format(n=count)}・書体: {head}）{note}。"
-            "自由に編集できます。直したいところがあれば言ってください")
+            "自由に編集できます。直したいところがあれば言ってください" + FILES + json.dumps(files, ensure_ascii=False))
 
 
 @tool("Word・PowerPoint・Excel のファイルを PDF にする(PDF にしてと頼まれたときだけ)",
@@ -1036,7 +1045,9 @@ def convert_to_pdf(name, path=""):
     out = officedoc.to_pdf(_guard(p))
     if not out:
         return "PDF にするには、このPCに Microsoft Office か LibreOffice が必要です"
-    return f"「{os.path.basename(out)}」を作りました（{os.path.dirname(out)}）。元のファイルもそのまま残しています"
+    import json
+    return (f"「{os.path.basename(out)}」を作りました（{os.path.dirname(out)}）。元のファイルもそのまま残しています"
+            + FILES + json.dumps([out], ensure_ascii=False))
 
 
 # ---------------- ファイルの中身で探す ----------------

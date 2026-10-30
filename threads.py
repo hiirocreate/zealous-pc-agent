@@ -63,9 +63,11 @@ def delete_all():
             pass
 
 
-def add(thread, role, text, sources="", images=None):
-    """メッセージを足して保存する。最初の発言をスレッド名にする。"""
+def add(thread, role, text, sources="", images=None, files=None):
+    """メッセージを足して保存する。最初の発言をスレッド名にする。files: 作ったファイルのパス"""
     msg = {"role": role, "text": text, "time": time.time()}
+    if files:
+        msg["files"] = list(files)
     if sources:
         msg["sources"] = sources
     if images:

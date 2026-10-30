@@ -36,6 +36,10 @@ class VoiceMode(ctk.CTkToplevel):
 
         self.state_label = ctk.CTkLabel(self, text="", font=T.font(14, "bold"), text_color=T.TEXT)
         self.state_label.pack()
+        self.note = ""  # 考え中の途中経過(「調べています…」など)
+        # 資料(ファイル)を作っている間だけ出す、流れる帯
+        self.making = ctk.CTkProgressBar(self, mode="indeterminate", width=200, height=6, corner_radius=3,
+                                         progress_color=T.ACCENT, fg_color=T.SURFACE)
         self.user_label = ctk.CTkLabel(self, text="", font=T.font(11), text_color=T.SUB, wraplength=310,
                                        justify="center")
         self.user_label.pack(padx=20, pady=(10, 2))
@@ -85,7 +89,9 @@ class VoiceMode(ctk.CTkToplevel):
         else:
             look, level = mode, 0.0
         self.photo.paste(self.orb.frame(time.monotonic(), look, level))
-        self.state_label.configure(text=LABELS[mode])
+        self.state_label.configure(text=self.note if mode == "think" and self.note else LABELS[mode])
+        if mode != "think" and self.making.winfo_ismapped():
+            self.office_done()
         self.after(33, self._tick)  # 30コマ/秒
 
     # ---- 会話の表示 ----
@@ -101,7 +107,29 @@ class VoiceMode(ctk.CTkToplevel):
 
     def reply_done(self, body):
         self.ai_text = body
+        self.note = ""
         self.ai_label.configure(text=_tail(body, 120))
+
+    def status(self, text):
+        """途中経過を出す。「@office」は資料づくりの始まり(流れる帯を出す)。"""
+        if text == "@office":
+            self.note = "資料を作っています…"
+            self.making.pack(after=self.state_label, pady=(6, 0))
+            self.making.start()
+        else:
+            self.note = text
+
+    def office_done(self):
+        self.making.stop()
+        self.making.pack_forget()
+
+    def show_files(self, files, on_done=None):
+        """作ったファイルの札(開く・保存)を、文の下に並べる。"""
+        import filecard
+        self.clear_images()
+        for p in files[:3]:
+            filecard.card(self.pics, p, wrap=300, on_done=on_done, compact=True).pack(fill="x", pady=3)
+        self.pics.pack(pady=(12, 0), padx=16, fill="x")
 
     def show_images(self, images):
         """返事に画像があれば、文の下に4枚まで並べる。押すと一覧(大きく見られる)を開く。"""

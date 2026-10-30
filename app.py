@@ -124,6 +124,24 @@ class DotSpinner(ctk.CTkLabel):
             self.configure(image=self._frames[t])
 
 
+class CodeSpinner(ctk.CTkLabel):
+    """テクニカルモードのローディング表示: 角かっこの中を四角が行き来する(等幅の文字なので軽い)。"""
+
+    FRAMES = [f"[{'·' * i}■{'·' * (5 - i)}]" for i in list(range(6)) + list(range(4, 0, -1))]
+    PERIOD = 0.9
+
+    def __init__(self, master):
+        super().__init__(master, text=self.FRAMES[0], font=("Consolas", 15, "bold"), text_color=T.TECH,
+                         fg_color="transparent")
+        self._t = -1
+
+    def tick(self):
+        t = int((time.monotonic() % self.PERIOD) / self.PERIOD * len(self.FRAMES))
+        if t != self._t:
+            self._t = t
+            self.configure(text=self.FRAMES[t])
+
+
 class App(ctk.CTk):
     # 合図の言葉で始めた音声の会話(起動中の _show_pill からも参照されるので、最初から用意しておく)
     _voice_session = False
@@ -234,7 +252,7 @@ class App(ctk.CTk):
         # 標準(横長): マイク | ロゴと状態 | チャット
         self.pill_mic = self._round(self.pill, PILL_H - 12, icons.mic((PILL_H - 12) * 9 // 20), self.open_voice_mode,
                                     fg=T.ACCENT, hover=T.ACCENT_LIGHT, tip="音声で会話する")
-        self.pill_chat = self._round(self.pill, PILL_H - 12, icons.chat(18), self._show_panel, fg=T.SURFACE,
+        self.pill_chat = self._round(self.pill, PILL_H - 12, icons.chat(18, icons.INK), self._show_panel, fg=T.SURFACE,
                                      hover=T.BORDER, tip="チャットを開く")
         # アップデートがあるときに会話ボタンの右上に出す印
         self.badge = ctk.CTkLabel(self.pill, text="", image=icons.dot(T.CYAN, 9), width=9, height=9)
@@ -255,7 +273,7 @@ class App(ctk.CTk):
         self.sq_buttons = ctk.CTkFrame(self.pill, fg_color="transparent")
         self._round(self.sq_buttons, 30, icons.mic(14), self.open_voice_mode, fg=T.ACCENT,
                     hover=T.ACCENT_LIGHT, tip="音声で会話する").pack(side="left", padx=4)
-        self._round(self.sq_buttons, 30, icons.chat(14), self._show_panel, fg=T.SURFACE,
+        self._round(self.sq_buttons, 30, icons.chat(14, icons.INK), self._show_panel, fg=T.SURFACE,
                     hover=T.BORDER, tip="チャットを開く").pack(side="left", padx=4)
 
         self.pill_busy = ctk.CTkFrame(self.pill, fg_color="transparent")
@@ -343,6 +361,8 @@ class App(ctk.CTk):
         row2, self.dot, self.status = self._status_row(head)
         row2.grid(row=1, column=2, sticky="nw", pady=(3, 0))
         self.head_spin = DotSpinner(row2, dot=5, gap=3)
+        self.tech_badge = ctk.CTkLabel(row2, text=" TECH ", font=("Consolas", 9, "bold"), fg_color=T.TECH,
+                                       text_color="#04130d", corner_radius=6, height=16)
         buttons = ctk.CTkFrame(head, fg_color="transparent")
         buttons.grid(row=0, column=3, rowspan=2)
         self.tech_btn = ctk.CTkButton(buttons, text="</>", width=30, height=30, corner_radius=15, font=("Consolas", 11, "bold"),
@@ -373,6 +393,27 @@ class App(ctk.CTk):
         self.typing = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
         self.typing_spin = DotSpinner(self.typing, dot=7, gap=5)
         self.typing_spin.pack(padx=14, pady=10)
+        self.code_spin = CodeSpinner(self.typing)  # テクニカルモードのときは、こちらを出す
+        # 資料(ファイル)を作っている間だけ出す札: 書類の印・途中経過・流れる帯
+        self.office_card = ctk.CTkFrame(self.chat, fg_color=T.SURFACE, corner_radius=14)
+        ctk.CTkLabel(self.office_card, text="資料", width=40, height=40, corner_radius=8, fg_color=T.ACCENT,
+                     text_color="white", font=T.font(10, "bold")).grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12)
+        self.office_text = ctk.CTkLabel(self.office_card, text="資料を作っています…", font=T.font(11, "bold"),
+                                        text_color=T.TEXT, anchor="w")
+        self.office_text.grid(row=0, column=1, sticky="sw", padx=(0, 14), pady=(12, 2))
+        self.office_bar = ctk.CTkProgressBar(self.office_card, mode="indeterminate", width=170, height=6, corner_radius=3,
+                                             progress_color=T.ACCENT, fg_color=T.BG)
+        self.office_bar.grid(row=1, column=1, sticky="nw", padx=(0, 14), pady=(4, 14))
+        # 複数選択してコピーするときの帯
+        self.select_bar = ctk.CTkFrame(p, fg_color=T.RAISED, corner_radius=18)
+        self.select_text = ctk.CTkLabel(self.select_bar, text="", font=T.font(11, "bold"), text_color=T.TEXT)
+        self.select_text.pack(side="left", padx=(14, 8), pady=6)
+        ctk.CTkButton(self.select_bar, text="コピー", width=70, height=28, corner_radius=14, font=T.font(11, "bold"),
+                      fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, command=self._copy_selected).pack(side="left", pady=6)
+        ctk.CTkButton(self.select_bar, text="やめる", width=64, height=28, corner_radius=14, font=T.font(11),
+                      fg_color="transparent", border_width=1, border_color=T.BORDER, text_color=T.TEXT,
+                      hover_color=T.BORDER, command=self._end_select).pack(side="left", padx=(6, 8), pady=6)
+        self._selected = None  # 複数選択中なら、選んだ吹き出しの集まり
 
         # 1行のときの高さ(ボタン32 + 上下の余白4×2 = 40)のちょうど半分の丸みにして、両端をきれいな半円にする
         box = ctk.CTkFrame(p, fg_color=T.SURFACE, corner_radius=20)
@@ -949,6 +990,8 @@ class App(ctk.CTk):
                 self._log_images(m["images"], auto_open=False)
             if m.get("sources"):
                 self._log_sources(m["sources"])
+            if m.get("files"):
+                self._log_files(m["files"])
         self._refresh_threads()
 
     def _delete_thread(self, tid):
@@ -960,6 +1003,8 @@ class App(ctk.CTk):
 
     def _clear_chat(self):
         self._stream = None
+        if self._selected is not None:
+            self._end_select()
         for w in self._bubbles:
             w.destroy()
         self._bubbles.clear()
@@ -1055,10 +1100,16 @@ class App(ctk.CTk):
             self._toast("テクニカルモードにしました" if on else "通常モードに戻しました")
 
     def _paint_tech(self):
+        """テクニカルモードの見た目: ボタン・見出しの「TECH」の札・入力欄の緑の縁。"""
         if getattr(self, "tech_btn", None) is not None:
             on = self._tech_on()
-            self.tech_btn.configure(fg_color=T.ACCENT if on else "transparent", text_color="white" if on else T.SUB,
-                                    hover_color=T.ACCENT_LIGHT if on else T.SURFACE)
+            self.tech_btn.configure(fg_color=T.TECH if on else "transparent", text_color="white" if on else T.SUB,
+                                    hover_color=T.TECH_HOVER if on else T.SURFACE)
+            if on:
+                self.tech_badge.pack(side="left", padx=(6, 0))
+            else:
+                self.tech_badge.pack_forget()
+            self._input_box.configure(border_width=2 if on else 0, border_color=T.TECH)
 
     def _log_code(self, text):
         """コード(``` で囲んだ部分)のある返事: 文はふつうに、コードは等幅の枠に入れ、コピーのボタンを付ける。"""
@@ -1073,7 +1124,7 @@ class App(ctk.CTk):
                 lab = ctk.CTkLabel(box, text=prose, font=T.font(12), wraplength=self._wrap, justify="left",
                                    text_color=T.TEXT, anchor="w")
                 lab.pack(anchor="w", padx=10, pady=(6, 2))
-                lab.bind("<Button-3>", lambda e, b=lab: self._bubble_menu(e, b))
+                lab.bind("<Button-3>", lambda e, b=box: self._bubble_menu(e, b))
                 box._labels.append(lab)
             if i + 2 < len(parts):
                 lang, code = parts[i + 1].strip() or "code", parts[i + 2].rstrip()
@@ -1092,6 +1143,8 @@ class App(ctk.CTk):
                 tb.configure(state="disabled")
                 tb.pack(fill="x", padx=4, pady=(0, 4))
         box._bubble_text = text
+        box._role = "ai"
+        box.bind("<Button-3>", lambda e, b=box: self._bubble_menu(e, b))
         self._add_widget(box, None)
         return box
 
@@ -1109,6 +1162,9 @@ class App(ctk.CTk):
                              corner_radius=14, padx=10, pady=6)
             w.grid(row=row, column=0, sticky="e" if user else "w", padx=4, pady=3)
             w.bind("<Button-3>", lambda e, b=w: self._bubble_menu(e, b))  # 右クリック: コピー・書き出し
+            w._role, w._base_color = kind, (T.ACCENT if user else T.SURFACE)
+            if self._selected is not None:
+                self._bind_select(w)
         w._bubble = True
         self._add_widget(w, None)
         return w
@@ -1163,11 +1219,15 @@ class App(ctk.CTk):
         text, confirm = llm.take_confirm(text)
         if confirm:
             self.after(1, lambda: self._ask_confirm(confirm))
+        text, files = llm.take_files(text)
+        self._office_done()
         body, sources, images = split_reply(text)
         if self._voice_win is not None:
             self._voice_win.reply_done(body)
             if images:
                 self._voice_win.show_images(images)
+            if files:
+                self._voice_win.show_files(files, on_done=self._toast)
         config.VOICE_CONTEXT = (getattr(config, "VOICE_CONTEXT", "") + " " + body)[-200:]
         streamed = self._stream is not None
         if streamed:
@@ -1178,7 +1238,7 @@ class App(ctk.CTk):
         # 返事は、質問したスレッドに保存する(途中で別のスレッドを開いていても)
         target = self.thread if self._showing_pending() else threads.load(self._pending_tid)
         if target is not None:
-            threads.add(target, "ai", body, sources, images)
+            threads.add(target, "ai", body, sources, images, files)
         if self._showing_pending():
             if streamed and "```" in body:  # コードのある返事は、最後に見やすい形に作り直す
                 self._remove_widget(self._stream[0])
@@ -1191,11 +1251,91 @@ class App(ctk.CTk):
                 self._log_images(images, auto_open=self._voice_win is None)
             if sources:
                 self._log_sources(sources)
+            if files:
+                self._log_files(files)
         self._stream = None
         self._refresh_threads()
         if self._voice_session:  # 声で会話しているときは、読み上げが終わったらまた聞き取る
             self.after(300, self._start_follow)
         self.after(2500, self._summarize_later)  # 手が空いたら、古いやりとりを要約しておく
+
+    def _log_files(self, files):
+        """作ったファイルの札(開く・保存・場所を開く)を、チャットに並べる。"""
+        import filecard
+        box = ctk.CTkFrame(self.chat, fg_color="transparent")
+        for p in files:
+            filecard.card(box, p, wrap=max(260, self._wrap), on_done=self._toast).pack(anchor="w", pady=2, fill="x")
+        self._add_widget(box, "w")
+
+    def _office_start(self):
+        """資料づくりの間だけ出す札(ほかのローディング表示の代わり)。"""
+        if not self._showing_pending():
+            return
+        self.typing.grid_remove()
+        self.office_text.configure(text="資料を作っています…")
+        self.office_card.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
+        self.office_bar.start()
+        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+
+    def _office_done(self):
+        if self.office_card.winfo_ismapped():
+            self.office_bar.stop()
+            self.office_card.grid_remove()
+        if self._voice_win is not None:
+            self._voice_win.office_done()
+
+    # ---- 複数選択してコピー ----
+    def _start_select(self, first=None):
+        self._selected = []
+        self.select_bar.place(in_=self.chat._parent_frame, relx=0.5, rely=1.0, y=-10, anchor="s")
+        self.select_bar.lift()
+        for w in self._bubbles:
+            if getattr(w, "_role", None):
+                self._bind_select(w)
+        if first is not None:
+            self._toggle_select(first)
+        self._paint_select()
+
+    def _bind_select(self, w):
+        targets = [w] + list(getattr(w, "_labels", []))
+        for t in targets:
+            t.bind("<Button-1>", lambda e, b=w: self._toggle_select(b) if self._selected is not None else None, add="+")
+
+    def _toggle_select(self, w):
+        if self._selected is None:
+            return
+        if w in self._selected:
+            self._selected.remove(w)
+            w.configure(border_width=0) if isinstance(w, ctk.CTkFrame) else w.configure(fg_color=w._base_color)
+        else:
+            self._selected.append(w)
+            if isinstance(w, ctk.CTkFrame):
+                w.configure(border_width=2, border_color=T.CYAN)
+            else:
+                w.configure(fg_color=T.CYAN if w._role == "user" else T.RAISED)
+        self._paint_select()
+
+    def _paint_select(self):
+        n = len(self._selected or [])
+        self.select_text.configure(text=f"{n}件を選択中（吹き出しを押して選ぶ）" if n else "コピーする吹き出しを押して選んでください")
+
+    def _copy_selected(self):
+        """選んだ発言だけを、会話の順に「名前: 発言」でまとめてコピーする。"""
+        chosen = [w for w in self._bubbles if w in (self._selected or [])]
+        if not chosen:
+            self._toast("吹き出しを選んでください")
+            return
+        name = config.AI_NAME
+        lines = [f"{'あなた' if w._role == 'user' else name}: {getattr(w, '_bubble_text', None) or w.cget('text')}"
+                 for w in chosen]
+        self._copy("\n\n".join(lines))
+        self._end_select()
+
+    def _end_select(self):
+        for w in self._selected or []:
+            w.configure(border_width=0) if isinstance(w, ctk.CTkFrame) else w.configure(fg_color=w._base_color)
+        self._selected = None
+        self.select_bar.place_forget()
 
     def _log_sources(self, sources):
         """検索の出典を、クリックでブラウザが開くリンクとして並べる。"""
@@ -1244,7 +1384,10 @@ class App(ctk.CTk):
             self.panel_stop.grid(row=0, column=0, sticky="ew")
             self.dot.pack_forget()
             self.head_spin.pack(side="left", padx=(0, 5), before=self.status)
-            if self._showing_pending():
+            if self._showing_pending() and not self.office_card.winfo_ismapped():
+                tech = self._tech_on()  # テクニカルモードは、ローディングの見た目も変える
+                (self.typing_spin if tech else self.code_spin).pack_forget()
+                (self.code_spin if tech else self.typing_spin).pack(padx=14, pady=10 if not tech else 6)
                 self.typing.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
                 self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
         else:
@@ -1254,13 +1397,14 @@ class App(ctk.CTk):
             self.head_spin.pack_forget()
             self.dot.pack(side="left", padx=(0, 5), before=self.status)
             self.typing.grid_remove()
+            self._office_done()
 
     def _spin(self):
         """ローディングのドットを 60 コマ/秒 で動かす(処理中だけ)。"""
         if self._state not in BUSY:
             self._spinning = False
             return
-        for sp in (self.pill_spin, self.head_spin, self.typing_spin):
+        for sp in (self.pill_spin, self.head_spin, self.typing_spin, self.code_spin):
             if sp.winfo_ismapped():
                 sp.tick()
         self.after(16, self._spin)
@@ -1536,7 +1680,8 @@ class App(ctk.CTk):
             m.grab_release()
 
     def _bubble_menu(self, e, widget):
-        self._menu(e, [("この発言をコピー", lambda: self._copy(widget.cget("text"))),
+        self._menu(e, [("この発言をコピー", lambda: self._copy(getattr(widget, "_bubble_text", None) or widget.cget("text"))),
+                       ("複数選択してコピー…", lambda: self._start_select(widget)),
                        ("チャット全体をコピー", lambda: self._copy(threads.export_text(self.thread, config.AI_NAME))),
                        None,
                        ("このチャットを書き出す…", lambda: self._export_thread(self.thread))])
@@ -1865,9 +2010,15 @@ class App(ctk.CTk):
             elif kind == "reply":
                 self._on_reply(text)
             elif kind == "status":  # 時間のかかる作業の途中経過(「調べています…」など)
-                if self._state == "think":
+                if self._voice_win is not None:
+                    self._voice_win.status(text)
+                if text == "@office":  # 資料づくりの始まり: 作成中の札を出す
+                    self._office_start()
+                elif self._state == "think":
                     for t in (self.status, self.pill_status, self.cmp_status):
                         t.configure(text=text)
+                    if self.office_card.winfo_ismapped():
+                        self.office_text.configure(text=text)
             elif kind == "retract":  # 返事の途中で操作を始めた: 書いた分(「開きます」など)を消し、話すのもやめる
                 self.speaker.stop()
                 if self._stream is not None:

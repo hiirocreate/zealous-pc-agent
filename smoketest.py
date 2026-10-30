@@ -1,6 +1,7 @@
 """実際の Windows で本体を動かして確かめる(ビルド時に GitHub Actions の Windows で実行)。
 本物のマウス・キーボード操作で、表示・文字入力・端のドラッグ・音声認識・送信を試し、
 結果を results.txt に、画面写真を PNG に書き出す。強制終了した場合は results.txt が残らない。"""
+import json
 import os
 import queue
 import sys
@@ -180,7 +181,34 @@ def run(out):
             has_code = on_main(lambda: any(w.__class__.__name__ == "CTkTextbox" for w in _walk(box)))
             color = on_main(lambda: app.tech_btn.cget("fg_color"))
             note(f"テクニカルモード: {'OK' if has_code and color != 'transparent' else 'NG'} (コード枠={has_code}, ボタン={color})")
+            badge = on_main(lambda: app.tech_badge.winfo_ismapped())
+            border = on_main(lambda: app._input_box.cget("border_width"))
             on_main(lambda: app._set_tech(False))
+            note(f"テクニカルモードの見た目: {'OK' if badge and border == 2 else 'NG'} (札={badge}, 縁={border})")
+            # 資料づくりの札 → できたファイルの札(開く・保存)、複数選択コピー
+            import tools
+            on_main(lambda: setattr(app, "_pending_tid", app.thread["id"]))
+            on_main(lambda: app._office_start())
+            time.sleep(0.8)
+            shot("6d_office_loading")
+            loading = on_main(lambda: app.office_card.winfo_ismapped())
+            sample_file = os.path.join(out, "office_test_card.docx")
+            with open(sample_file, "wb") as f:
+                f.write(b"x")
+            on_main(lambda: app._on_reply("作りました" + tools.FILES + json.dumps([sample_file])))
+            time.sleep(0.8)
+            shot("6e_file_card")
+            gone = on_main(lambda: not app.office_card.winfo_ismapped())
+            saved = on_main(lambda: app.thread["messages"][-1].get("files"))
+            note(f"資料づくりの表示とファイルの札: {'OK' if loading and gone and saved == [sample_file] else 'NG'}")
+            on_main(lambda: app._log("一つ目", "user"))
+            b2 = on_main(lambda: app._log("二つ目", "ai"))
+            on_main(lambda: app._start_select(b2))
+            on_main(lambda: app._toggle_select(app._bubbles[-2]))
+            on_main(lambda: app._copy_selected())
+            clip = on_main(lambda: app.clipboard_get())
+            want = "あなた: 一つ目\n\n" + config.AI_NAME + ": 二つ目"
+            note(f"複数選択コピー: {'OK' if clip == want else 'NG'} ({clip!r})")
 
             # Word・PowerPoint・Excel のファイルを作れること(exe の中に部品と雛形が入っているか)
             import officedoc

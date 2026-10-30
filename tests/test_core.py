@@ -762,7 +762,7 @@ def test_office_files(monkeypatch, tmp_path):
     doc = officedoc.parse(text)
     assert doc["title"] == "提案書" and doc["subtitle"] == "概要です" and len(doc["sections"]) == 3
     assert doc["sections"][1]["blocks"][0][0] == "table" and doc["sections"][0]["notes"] == ["メモ"]
-    monkeypatch.setattr(llm, "write_document", lambda kind, request: text)
+    monkeypatch.setattr(llm, "write_document", lambda kind, request, source="": text)
     monkeypatch.setattr(config, "DESKTOP", str(tmp_path))
     for kind, unit in (("pptx", "スライド4枚"), ("docx", "3章"), ("xlsx", "1シート")):
         reply = tools.run_tool("make_office_file", {"kind": kind, "request": "提案書を作って"})
@@ -844,3 +844,31 @@ def test_tech_model_only_in_tech_mode(monkeypatch):
     monkeypatch.setattr(llm, "_ask", lambda text: "ok")
     llm.ask("こんにちは", history=[], mode="")  # テクニカルモードを抜けたら、すぐメモリから外す
     assert released == [1] and llm._tech is False
+
+
+def test_office_interview_before_making(monkeypatch, tmp_path):
+    made = []
+    monkeypatch.setattr(tools, "make_office_file", lambda **kw: made.append(kw) or "作りました")
+    tools.TOOLS["make_office_file"] = (tools.make_office_file, tools.TOOLS["make_office_file"][1])
+    monkeypatch.setattr(config, "QUICK_ROUTE", True)
+    llm._office = None
+    llm.attach([])
+    q = llm.ask("新サービスの提案資料をパワポで作って", history=[])
+    assert "「新サービスの提案資料」" in q and "1. インターネットで調べて作る" in q and not made
+    q = llm.ask("3番、料金は月額3000円、サポート付き", history=[])
+    assert "デザインの希望" in q  # その場で内容も言ったので、内容の質問は飛ばす
+    assert llm.ask("緑系で明朝体、5枚くらい", history=[]) == "作りました"
+    kw = made[0]
+    assert kw["kind"] == "pptx" and kw["source"] == "user" and kw["design"] == "緑系で明朝体、5枚くらい"
+    assert "料金は月額3000円" in kw["request"] and "【デザインの希望】" in kw["request"]
+    # 内容がはっきりしないときは、まず何の資料かを聞く。やめることもできる
+    q = llm.ask("ワードで資料作って", history=[])
+    assert "どんな内容" in q
+    assert llm.ask("やめて", history=[]) == "わかりました。資料づくりはやめておきます。" and llm._office is None
+    # ネットで調べる・おまかせ
+    llm.ask("会社紹介をエクセルで作って", history=[])
+    llm.ask("ネットで調べて", history=[])
+    llm.ask("おまかせ", history=[])
+    assert made[-1]["source"] == "web" and made[-1]["design"] == "" and made[-1]["kind"] == "xlsx"
+    import officedoc
+    assert officedoc.theme_of("緑系で") == "green" and officedoc.theme_of("おまかせ") is None

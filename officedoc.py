@@ -31,6 +31,41 @@ GRAY = (0x5B, 0x64, 0x72)
 LIGHT = (0xF3, 0xF6, 0xFB)
 WHITE = (0xFF, 0xFF, 0xFF)
 LINE = (0xC9, 0xD3, 0xE6)
+ON_DARK = (0xC9, 0xD3, 0xE6)     # 濃い背景の上の、控えめな文字
+ACCENT_ON_DARK = (0x9C, 0xBC, 0xFF)
+ACCENT_2 = (0x7F, 0xA7, 0xF5)    # グラフの3つ目の色
+
+# 色の組み合わせ(頼まれた色の名前 → 濃い色, 目立たせる色)。文字と背景の明るさの差が十分にとれる組だけ
+THEMES = {
+    "blue": ((0x1F, 0x2A, 0x44), (0x2F, 0x6F, 0xEB)), "navy": ((0x14, 0x1E, 0x38), (0x3B, 0x5B, 0xA9)),
+    "green": ((0x14, 0x35, 0x2B), (0x0F, 0x8F, 0x6A)), "teal": ((0x0F, 0x34, 0x38), (0x0E, 0x93, 0x93)),
+    "red": ((0x3B, 0x15, 0x18), (0xD0, 0x31, 0x3A)), "orange": ((0x3A, 0x24, 0x12), (0xE0, 0x7A, 0x10)),
+    "purple": ((0x2A, 0x1F, 0x4A), (0x6D, 0x4D, 0xE6)), "pink": ((0x3D, 0x18, 0x30), (0xD9, 0x46, 0x84)),
+    "brown": ((0x3B, 0x2A, 0x1E), (0x9C, 0x62, 0x34)), "mono": ((0x1F, 0x1F, 0x22), (0x4B, 0x55, 0x63)),
+}
+COLOR_WORDS = [("紺", "navy"), ("ネイビー", "navy"), ("青", "blue"), ("ブルー", "blue"), ("水色", "teal"),
+               ("ティール", "teal"), ("緑", "green"), ("グリーン", "green"), ("赤", "red"), ("レッド", "red"),
+               ("オレンジ", "orange"), ("橙", "orange"), ("紫", "purple"), ("パープル", "purple"), ("ピンク", "pink"),
+               ("桃", "pink"), ("茶", "brown"), ("ブラウン", "brown"), ("黒", "mono"), ("モノクロ", "mono"),
+               ("白黒", "mono"), ("グレー", "mono"), ("灰", "mono")]
+
+
+def theme_of(text):
+    """頼まれた文から色の組み合わせの名前(無ければ None)。"""
+    return next((name for word, name in COLOR_WORDS if word in str(text)), None)
+
+
+def _mix(c, other, t):
+    return tuple(round(a + (b - a) * t) for a, b in zip(c, other))
+
+
+def use_theme(name):
+    """色の組み合わせを決める(薄い色は、目立たせる色を白に混ぜて作る)。"""
+    global NAVY, ACCENT, ACCENT_SOFT, LIGHT, LINE, ON_DARK, ACCENT_ON_DARK, ACCENT_2
+    dark, accent = THEMES.get(name or "blue", THEMES["blue"])
+    NAVY, ACCENT = dark, accent
+    ACCENT_SOFT, LIGHT, LINE = _mix(accent, WHITE, 0.85), _mix(accent, WHITE, 0.95), _mix(accent, WHITE, 0.72)
+    ON_DARK, ACCENT_ON_DARK, ACCENT_2 = _mix(dark, WHITE, 0.78), _mix(accent, WHITE, 0.5), _mix(accent, WHITE, 0.45)
 _SOURCES = re.compile(r"出典|参考(?:文献|資料|URL|サイト)?$|sources?|references?", re.I)
 
 
@@ -281,9 +316,10 @@ def _ea_font(run, name=None):
         el.set("typeface", name)
 
 
-def _text(frame, s, size, color=NAVY, bold=False, first=True, level=0, align=None, space=None):
+def _text(frame, s, size, color=None, bold=False, first=True, level=0, align=None, space=None):
     from pptx.dml.color import RGBColor
     from pptx.util import Pt
+    color = color or NAVY
     p = frame.paragraphs[0] if first else frame.add_paragraph()
     p.level = level
     if align is not None:
@@ -327,7 +363,7 @@ def _rect(slide, x, y, w, h, color, rounded=False):
     return shape
 
 
-def _picture(slide, pic, x, y, w, h, credit_color=GRAY):
+def _picture(slide, pic, x, y, w, h, credit_color=None):
     """写真を枠いっぱいに(縦横比を保って余分を切り取る)入れ、下に作者とライセンスを添える。"""
     from PIL import Image
     from pptx.util import Pt
@@ -342,7 +378,7 @@ def _picture(slide, pic, x, y, w, h, credit_color=GRAY):
         cut = (1 - img / box) / 2
         shape.crop_top = shape.crop_bottom = cut
     tf = _box(slide, x, y + h + Pt(4), w, Pt(14))
-    _text(tf, pic["credit"], 8, credit_color)
+    _text(tf, pic["credit"], 8, credit_color or GRAY)
 
 
 def _fit(items, width_in, height_in, sizes=(24, 22, 20, 18, 16, 15, 14)):
@@ -411,7 +447,7 @@ class _Deck:
         _text(self._title(s, self.margin, Inches(1.4), text_w, Inches(2.4)), self.doc["title"], size, WHITE, bold=True)
         _rect(s, self.margin, Inches(4.0), Inches(1.1), Emu(54000), ACCENT)
         if self.doc["subtitle"]:
-            _text(_box(s, self.margin, Inches(4.3), text_w, Inches(1.6)), self.doc["subtitle"], 18, (0xC9, 0xD3, 0xE6))
+            _text(_box(s, self.margin, Inches(4.3), text_w, Inches(1.6)), self.doc["subtitle"], 18, ON_DARK)
 
     def page(self, title, dark=False):
         from pptx.util import Emu, Inches
@@ -516,11 +552,11 @@ class _Deck:
         y0 = y + max(0, int((h - Emu(int(used * 914400))) * 0.35))  # 少ないときは少し下げて、上だけに寄らないように
         tf = _box(s, x, y0, w, h)
         numbers, first = {}, True
-        fg, sub = (WHITE, (0xC9, 0xD3, 0xE6)) if dark else (NAVY, GRAY)
+        fg, sub = (WHITE, ON_DARK) if dark else (NAVY, GRAY)
         for k, lv, t in items:
             sz = size - 2 * lv
             if k == "h3":
-                _text(tf, t, sz + 2, ACCENT if not dark else (0x9C, 0xBC, 0xFF), bold=True, first=first, space=sz * 0.3)
+                _text(tf, t, sz + 2, ACCENT if not dark else ACCENT_ON_DARK, bold=True, first=first, space=sz * 0.3)
             elif k == "text":
                 _text(tf, t, sz, fg, first=first, space=sz * 0.45)
             else:
@@ -703,7 +739,7 @@ class _Deck:
                 chart.value_axis.has_major_gridlines = True
                 chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(*LINE)
                 chart.value_axis.format.line.fill.background()
-                colors = [ACCENT, NAVY, (0x7F, 0xA7, 0xF5)]
+                colors = [ACCENT, NAVY, ACCENT_2]
                 for i, series in enumerate(chart.plots[0].series):
                     series.format.fill.solid()
                     series.format.fill.fore_color.rgb = RGBColor(*colors[i % 3])
