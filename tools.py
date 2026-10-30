@@ -1,5 +1,6 @@
 """AIが呼び出せるPC操作関数(Tool Call)。重いライブラリは関数内で読み込む。"""
 import os
+import time
 import subprocess
 import urllib.parse
 import urllib.request
@@ -555,6 +556,10 @@ def click_on(label):
     if name:
         return f"「{title}」の「{name}」を押しました(マウスは動かしていません)"
     hit = screen.uia_act(hwnd, label)  # 2. 新しいアプリ: マウスを使わずに押す・選ぶ・開く
+    if not hit and screen.class_name(hwnd).startswith("Chrome_WidgetWin"):
+        # ブラウザ(Chrome・Edge)は、最初に問い合わせたときにページの中身の情報を作り始めるので、少し待ってもう一度
+        time.sleep(1.5)
+        hit = screen.uia_act(hwnd, label)
     if hit and hit[0] == "done":
         return f"「{title}」の「{hit[1]}」を押しました(マウスは動かしていません)"
     if not hit:

@@ -51,7 +51,9 @@ def focus(hwnd):
     """相手の窓を手前に出して、キー入力を受け取れるようにする。"""
     import pyautogui
     u = _user32()
-    pyautogui.press("alt")  # (Windows は、別のアプリが勝手に窓を手前に出すのを止めるため、合図を送ってから)
+    # Windows は、別のアプリが勝手に窓を手前に出すのを止めるため、キーの合図を送ってから出す。
+    # (Alt だとメモ帳などのメニューが開いてしまうので、何も起きない Shift を使う)
+    pyautogui.press("shift")
     u.SetForegroundWindow(hwnd)
     time.sleep(0.25)
 
