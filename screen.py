@@ -63,16 +63,44 @@ def _ps(script, timeout=20):
     return (r.stdout or "").strip()
 
 
-_UIA = ("Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes;"
+# UIAutomationClientsideProviders: 昔ながらの Windows のボタンやメニューを見つけるための部品(これが無いと見えない)
+_UIA = ("Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,UIAutomationClientsideProviders;"
         "$A=[System.Windows.Automation.AutomationElement];"
         "$w=$A::FromHandle([IntPtr]{hwnd});"
         "$all=$w.FindAll([System.Windows.Automation.TreeScope]::Descendants,"
         "[System.Windows.Automation.Condition]::TrueCondition);")
 
 
+def _child_windows(hwnd):
+    """窓の中の小さな窓(昔ながらのボタンや入力欄)を (名前, 中心x, 中心y) で返す。"""
+    from ctypes import wintypes
+    u = ctypes.WinDLL("user32")
+    out = []
+    PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def each(h, _):
+        n = u.GetWindowTextLengthW(h)
+        if n and u.IsWindowVisible(h):
+            buf = ctypes.create_unicode_buffer(n + 1)
+            u.GetWindowTextW(h, buf, n + 1)
+            r = wintypes.RECT()
+            u.GetWindowRect(h, ctypes.byref(r))
+            if r.right > r.left and r.bottom > r.top:
+                out.append((buf.value.replace("&", ""), (r.left + r.right) // 2, (r.top + r.bottom) // 2))
+        return True
+    u.EnumChildWindows(wintypes.HWND(hwnd), PROC(each), 0)
+    return out
+
+
 def find_control(hwnd, label):
     """窓の中から、名前に label を含むボタンなどを探し、その真ん中の位置 (x, y, 名前) を返す。
     名前がぴったり同じものを優先し、無ければ名前に含むもののうち短い名前のものを選ぶ。"""
+    # 1. 昔ながらのボタンなど(窓の中の小さな窓)から探す(速い)
+    kids = [k for k in _child_windows(hwnd) if label.lower() in k[0].lower()]
+    if kids:
+        best = min(kids, key=lambda k: (k[0].lower() != label.lower(), len(k[0])))
+        return best[1], best[2], best[0]
+    # 2. 画面の部品の情報(UI Automation)から探す(新しいアプリのボタンやメニューも見つかる)
     name = label.replace("'", "''")
     script = _UIA.format(hwnd=int(hwnd)) + (
         "$hits=@(); foreach($e in $all){ try { $n=$e.Current.Name; $r=$e.Current.BoundingRectangle;"
