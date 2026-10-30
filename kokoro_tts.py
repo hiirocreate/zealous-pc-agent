@@ -43,10 +43,20 @@ def prepare(progress=lambda text: None):
                 urllib.request.urlretrieve(URL.format(f), dest + ".part")
                 os.replace(dest + ".part", dest)
         from kokoro_onnx import Kokoro
-        from misaki import ja
-        _g2p = ja.JAG2P()
+        _g2p = japanese_g2p()
         _model = Kokoro(os.path.join(folder(), FILES[0]), os.path.join(folder(), FILES[1]))
         zlog.note("Kokoro の読み込み完了")
+
+
+def japanese_g2p():
+    """日本語の文 → 発音記号(misaki)。辞書(unidic-lite)の場所をはっきり渡す
+    (exe にまとめたときは、辞書を自動では見つけられないため)。"""
+    import fugashi
+    import unidic_lite
+    from misaki import ja
+    rc = os.path.join(unidic_lite.DICDIR, "mecabrc")
+    ja.Tagger = lambda *a, **k: fugashi.Tagger(f'-r "{rc}" -d "{unidic_lite.DICDIR}"')
+    return ja.JAG2P()
 
 
 def synth(text, voice="jf_alpha", speed=1.0):

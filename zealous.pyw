@@ -42,7 +42,7 @@ def selftest(out):
     # 読み込めるだけでなく、実際に動くか(辞書・モデルのファイルが同梱されているか)
     checks = [
         ("声の判定AI(Silero VAD)", lambda: __import__("audiogate").vad() is not None or 1 / 0),
-        ("日本語の読み(Kokoro 用)", lambda: __import__("misaki.ja", fromlist=["JAG2P"]).JAG2P()("テスト")),
+        ("日本語の読み(Kokoro 用)", lambda: __import__("kokoro_tts").japanese_g2p()("テスト")),
         ("sqlite-vec", lambda: __import__("semantic")._open()[1] or 1 / 0),
         ("MarkItDown", lambda: __import__("markitdown").MarkItDown(enable_plugins=False)),
     ]
