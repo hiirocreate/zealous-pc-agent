@@ -198,7 +198,7 @@ def warm():
     import time
 
     def run():
-        time.sleep(2)  # 起動の直後は避ける(ほかの準備を先に)
+        time.sleep(12)  # 起動の直後は避ける(ほかの準備を先に。起動時のPCの負担を分散する)
         tech(), document(), bar()
     threading.Thread(target=run, daemon=True).start()
 

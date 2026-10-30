@@ -160,6 +160,8 @@ class App(ctk.CTk):
 
     def __init__(self):
         ctk.set_appearance_mode(T.MODE)
+        # 画面の拡大率の変化を確かめる間隔(既定の 0.1 秒ごとは、窓が多いと負担になる)
+        ctk.ScalingTracker.update_loop_interval = 1000
         super().__init__(fg_color=T.KEY)
         self._events = queue.Queue()  # 他スレッド -> UIスレッドへの処理依頼
         self._recording = False
@@ -1428,7 +1430,7 @@ class App(ctk.CTk):
             self._spin()
         _, color, blink = STATES[self._state]
         self._blink = (self._blink + 1) % 16
-        if blink:
+        if blink and self._blink in (0, 8):  # 色が切り替わるときだけ描き直す
             c = T.BORDER if self._blink >= 8 else color
             for d in (self.dot, self.pill_dot, self.cmp_dot):
                 d.configure(image=icons.dot(c))
@@ -2018,12 +2020,15 @@ class App(ctk.CTk):
 
     # ================= ループ =================
     def _pump(self):
+        busy = False
         while True:
             try:
                 self._events.get_nowait()()
+                busy = True
             except queue.Empty:
                 break
         for kind, text in self.worker.poll():
+            busy = True
             if kind == "delta":
                 self._on_delta(text)
             elif kind == "reply":
@@ -2058,11 +2063,20 @@ class App(ctk.CTk):
                 self._on_reply(llm.friendly(text))
         if self._state == "think" and not self.worker.pending:
             self._set_state("idle")
-        self._animate()
+        moving = time.monotonic() < getattr(self, "_quiet_until", 0)
+        if not moving:  # 設定画面などを動かしている間は、見た目の更新を休む(動きを軽くする)
+            self._animate()
         self._ticks = getattr(self, "_ticks", 0) + 1
-        if self._ticks % 40 == 0:  # 2秒ごとに、モニターからはみ出していないか確かめる
+        if self._ticks % 20 == 0 and not moving:  # ときどき、モニターからはみ出していないか確かめる
             self._fit_on_screen()
-        self.after(50, self._pump)
+        # 何も起きていないときは間をあけて、PCの負担を減らす(返事の途中・処理中・声の聞き取り中はすぐ反応する)
+        self._idle_ticks = 0 if busy or self._state != "idle" or self.worker.pending else \
+            getattr(self, "_idle_ticks", 0) + 1
+        self.after(50 if self._idle_ticks < 10 else 150, self._pump)
+
+    def quiet(self, sec=0.4):
+        """しばらく見た目の更新を休む(ほかの窓を動かしている間に呼ぶ)。"""
+        self._quiet_until = time.monotonic() + sec
 
     def report_callback_exception(self, exc, val, tb):
         """画面の処理で起きたエラーは記録して続ける(1つのエラーで全体が止まらないように)。"""

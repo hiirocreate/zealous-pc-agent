@@ -384,6 +384,17 @@ class SettingsWindow(ctk.CTkToplevel):
             var.trace_add("write", lambda *_: self._dirty_later())
         self._refresh_dirty()
         self.protocol("WM_DELETE_WINDOW", self._close)
+        # この窓を動かしている間は、常駐の画面の見た目の更新を休ませて、動きを軽くする
+        self._where = None
+        quiet = getattr(master, "quiet", None)
+
+        def moved(e):
+            if e.widget is self and quiet:
+                where = (self.winfo_x(), self.winfo_y())
+                if where != self._where:
+                    self._where = where
+                    quiet()
+        self.bind("<Configure>", moved, add="+")
         # 日本語入力の変換中の文字を、チャット欄と同じように入力欄の中に表示する
         import ime
         ime.attach_all(self, T.FONT, 15)
