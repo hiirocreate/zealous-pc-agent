@@ -203,7 +203,7 @@ LAYOUT = [
     ("基本", ["—名前と呼びかけ", "AI_NAME", "USER_CALL", "HOME_PLACE", "—起動", "AUTOSTART"]),
     ("見た目", ["—待機中の表示", "PILL_STYLE", "—画面", "UI_THEME", "UI_FONT", "UI_FONT_SCALE",
              "+IME_INLINE", "+SMOOTH_FRAME"]),
-    ("マイク", ["—マイクテスト", "＊mic_test", "—マイク", "MIC_DEVICE", "INPUT_MODE", "PTT_ENABLED", "PTT_KEY",
+    ("マイク", ["＊mic_test", "—マイク", "MIC_DEVICE", "INPUT_MODE", "PTT_ENABLED", "PTT_KEY",
              "—呼びかけ（合図の言葉）", "WAKE_ENABLED", "WAKE_WORDS",
              "—聞き取りの正確さ", "VOICE_WORDS", "VOICE_REPLACE", "VOICE_SPELL_CHECK", "COMMAND_WHISPER_MODEL",
              "+AI_NAME_ALIASES", "+WHISPER_MODEL", "+LANGUAGE", "+VAD_THRESHOLD", "+VAD_SILENCE_SEC", "+VAD_MIN_SEC",
@@ -355,10 +355,10 @@ class SettingsWindow(ctk.CTkToplevel):
                       command=self._save).grid(row=0, column=2)
 
         self._fill(config.current())
-        self._filter("")  # 詳細設定は閉じた状態で見せる
         self._select(TABS[0][0])
         # 変更した項目を目立たせ、保存していない変更の数を出す
         self._save_btn = self._foot.winfo_children()[-1]
+        self._filter("")  # 詳細設定は閉じた状態で見せる
         for _, var in self._vars.values():
             var.trace_add("write", lambda *_: self._dirty_later())
         self._refresh_dirty()
@@ -818,11 +818,11 @@ class SettingsWindow(ctk.CTkToplevel):
             row=0, column=0, sticky="w", padx=12, pady=(9, 0))
         ctk.CTkLabel(row, text="「テスト開始」を押して、5秒ほど普段どおりに話してください。声の大きさと雑音を確かめ、"
                                "聞き取れた言葉を表示して、録音した声を再生します（下で選んでいるマイクを使います）",
-                     font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=330).grid(
-            row=1, column=0, sticky="w", padx=12)
-        self.mic_btn = ctk.CTkButton(row, text="テスト開始", width=110, height=34, corner_radius=17, fg_color=T.ACCENT,
+                     font=T.font(10), text_color=T.SUB, anchor="w", justify="left", wraplength=440).grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=12)
+        self.mic_btn = ctk.CTkButton(row, text="テスト開始", width=110, height=32, corner_radius=16, fg_color=T.ACCENT,
                                      hover_color=T.ACCENT_HOVER, font=T.font(12, "bold"), command=self._mic_test)
-        self.mic_btn.grid(row=0, column=1, rowspan=2, padx=12, pady=8)
+        self.mic_btn.grid(row=0, column=1, padx=12, pady=(8, 2))
         self.mic_bar = ctk.CTkProgressBar(row, height=10, corner_radius=5, progress_color=T.OK, fg_color=T.BG)
         self.mic_bar.set(0)
         self.mic_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 2))
@@ -853,8 +853,15 @@ class SettingsWindow(ctk.CTkToplevel):
         def level(v):
             self._mic_level = max(v, self._mic_level * 0.8)
 
-        def meter():
-            if self._mic_busy and self.winfo_exists():
+        import queue
+        self._mic_q = queue.Queue()
+
+        def meter():  # 画面のスレッドで: 音の大きさの表示と、録音側から届いた画面の変更
+            if not self.winfo_exists():
+                return
+            while not self._mic_q.empty():
+                self._mic_q.get()()
+            if self._mic_busy:
                 self.mic_bar.set(self._mic_level)
                 self._mic_level *= 0.85
                 self.after(50, meter)
@@ -880,11 +887,8 @@ class SettingsWindow(ctk.CTkToplevel):
         threading.Thread(target=run, daemon=True).start()
 
     def _ui(self, fn):
-        """別のスレッドから、画面の部品を変える(画面のスレッドで行う)。"""
-        try:
-            self.after(0, lambda: self.winfo_exists() and fn())
-        except RuntimeError:
-            pass
+        """別のスレッドから、画面の部品を変える(画面のスレッドで、順に行う)。"""
+        self._mic_q.put(fn)
 
     def _mic_done(self, result, text):
         import mictest
