@@ -1009,6 +1009,11 @@ def make_office_file(kind, request, name="", path="", font="", source="", design
     else:
         for sec in doc["sections"]:
             sec["blocks"] = [(k, b) for k, b in sec["blocks"] if k != "image"]
+    if officedoc.generic_title(doc["title"]):  # 「資料」のような題名なら、頼まれた内容(「株式会社才」など)を題名にする
+        topic = re.match(r"^(.+?)の(?:" + "|".join(map(re.escape, llm.KIND_NAMES.values())) + ")", request or "")
+        topic = topic.group(1).strip() if topic else llm.office_topic(request)
+        if topic and len(topic) <= 40:
+            doc["title"] = topic
     folder = _guard(_base(path))
     p = officedoc.save_path(folder, os.path.splitext(name)[0] if name else doc["title"], "." + kind)
     count = officedoc.MAKERS[kind](doc, p)

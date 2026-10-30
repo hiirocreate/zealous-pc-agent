@@ -76,15 +76,32 @@ def use_fonts(head, body):
 
 
 # ---------------- 中身の読み取りと整え ----------------
+_GENERIC = re.compile(r"^(?:新しい)?(?:資料|書類|文書|スライド|プレゼン(?:テーション)?|発表資料|報告書|レポート|表|概要|"
+                      r"タイトル|無題|untitled|document|presentation|slides?)$", re.I)
+
+
+_SLIDE_HEAD = re.compile(r"^(?:#{1,3}\s*)?(?:\*\*)?(?:スライド|slide|ページ)\s*\d+\s*(?:枚目)?\s*[:：.．]\s*(.+?)(?:\*\*)?$", re.I)
+_PLACEHOLDER = re.compile(r"^(?:スライド|章|節|段落|セクション)?の?(?:題名|タイトル|見出し)\d*(?:[（(]続き[）)])?$")
+_BULLET = re.compile(r"^(?:[-*]\s+|[・•■□●○◆◇▪▫▶►✓✔]\s*)")
+
+
+def generic_title(title):
+    """題名が「資料」「プレゼンテーション」のように中身を表していないか。"""
+    return not title or bool(_GENERIC.match(re.sub(r"[\s　「」『』]", "", title)))
+
+
 def parse(text):
     """書式つきの文 → {"title", "subtitle", "sections": [{"title", "blocks", "notes"}], "sources": [...]}"""
     text = re.sub(r"^```\w*\n|\n```\s*$", "", text.strip())
-    doc = {"title": "", "subtitle": "", "sections": [], "sources": []}
+    # 出典の URL から、追跡用の飾り(?srsltid=… など)を取る
+    text = re.sub(r"[?&](?:srsltid|utm_\w+|gclid|fbclid|yclid)=[^\s&#)]*", "", text)
+    text = re.sub(r"(https?://\S*?)&", lambda m: m.group(1) + ("?" if "?" not in m.group(1) else "&"), text)
+    doc = {"title": "", "subtitle": "", "sections": [], "sources": [], "key_points": []}
     cur, table = None, None
 
     def section(title):
         nonlocal cur
-        cur = {"title": title, "blocks": [], "notes": []}
+        cur = {"title": title, "blocks": [], "notes": [], "lead": ""}
         doc["sections"].append(cur)
 
     for raw in text.splitlines():
@@ -98,14 +115,28 @@ def parse(text):
         if s.startswith("# ") and not doc["title"]:
             doc["title"] = _clean(s[2:])
             continue
+        # 「スライド2: サービスの特徴」のように、AIが枚ごとの題名を本文に書いたときも、1枚(1節)として分ける
+        m = _SLIDE_HEAD.match(s)
+        if m:
+            section(_clean(m.group(1)))
+            continue
         if s.startswith("## "):
-            section(_clean(s[3:]))
+            title = _clean(s[3:])
+            section("" if _PLACEHOLDER.match(title) else title)  # 「スライドの題名」のような書き方の見本は題名にしない
+            continue
+        m = re.match(r"^!\s*要点\s*[:：]\s*(.+)$", s)
+        if m:  # 文書全体の要点(Word では最初に囲みで見せる)
+            doc["key_points"].append(_clean(m.group(1)))
             continue
         if cur is None:
             if doc["title"] and not doc["subtitle"] and not s.startswith(("-", "*", "|", "#", "!", ">")):
                 doc["subtitle"] = _clean(_plain(s))
                 continue
             section("")
+        m = re.match(r"^!\s*リード\s*[:：]\s*(.+)$", s)
+        if m:  # そのページで一番伝えたいこと(スライドでは題名の下に出す)
+            cur["lead"] = _clean(_plain(m.group(1)))
+            continue
         m = re.match(r"^!\s*(?:画像|image|写真)\s*[:：]\s*(.+)$", s, re.I)
         if m:
             cur["blocks"].append(("image", m.group(1).strip()))
@@ -118,9 +149,9 @@ def parse(text):
             table = (table or []) + [cells]
         elif s.startswith(">"):
             cur["notes"].append(_clean(_plain(s.lstrip("> "))))
-        elif re.match(r"^[-*・•]\s+", s):
+        elif _BULLET.match(s):
             level = min(2, (len(line) - len(line.lstrip(" "))) // 2)
-            cur["blocks"].append(("bullet", (level, _clean(re.sub(r"^[-*・•]\s+", "", s)))))
+            cur["blocks"].append(("bullet", (level, _clean(_BULLET.sub("", s)))))
         elif re.match(r"^\d+[.)．]\s+", s):
             level = min(2, (len(line) - len(line.lstrip(" "))) // 2)
             cur["blocks"].append(("number", (level, _clean(re.sub(r"^\d+[.)．]\s+", "", s)))))
@@ -400,6 +431,8 @@ def make_pptx(doc, path):
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)  # 16:9
     deck = _Deck(prs, doc)
     deck.cover()
+    if sum(1 for sec in doc["sections"] if sec["title"]) >= 4:  # 章が多いときは目次を付ける
+        deck.agenda()
     for sec in doc["sections"]:
         deck.section(sec)
     if doc["sources"]:
@@ -409,57 +442,137 @@ def make_pptx(doc, path):
     return len(prs.slides._sldIdLst)
 
 
+def _split_head(t):
+    """「**見出し**：説明」→ (見出し, 説明)。見出しが無ければ ("", 文)。"""
+    m = re.match(r"^\*\*(.+?)\*\*\s*[:：]?\s*(.*)$", t)
+    if m:
+        return _clean(m.group(1)), _clean(m.group(2))
+    m = re.match(r"^([^:：。、]{1,14})[:：]\s*(.+)$", t)
+    return (_clean(m.group(1)), _clean(m.group(2))) if m else ("", t)
+
+
+def _shape(slide, kind, x, y, w, h, color, line=None):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    s = slide.shapes.add_shape(getattr(MSO_SHAPE, kind), int(x), int(y), int(w), int(h))
+    s.fill.solid()
+    s.fill.fore_color.rgb = RGBColor(*color)
+    if line:
+        s.line.color.rgb = RGBColor(*line)
+        s.line.width = 12700
+    else:
+        s.line.fill.background()
+    s.shadow.inherit = False
+    return s
+
+
+def _size_for(texts, width_in, height_in, sizes, spacing=1.3):
+    """どの文も枠に収まる、いちばん大きい文字の大きさ。"""
+    for size in sizes:
+        if all(_lines(t, width_in, size) * size * spacing / 72 <= height_in for t in texts if t):
+            return size
+    return sizes[-1]
+
+
 class _Deck:
+    """16:9 のスライド。どのページも「小さな見出し(何の話か) + 大きな一文(伝えたいこと)」+ 中身の図、の形にそろえる。"""
+
     def __init__(self, prs, doc):
         from pptx.util import Inches
         self.prs, self.doc = prs, doc
         self.W, self.H = prs.slide_width, prs.slide_height
-        self.blank = prs.slide_layouts[6]
         self.titled = prs.slide_layouts[5]  # 「タイトルのみ」: 題名を本物のタイトル欄に入れる(アウトラインや一覧に出て、編集しやすい)
-        self.margin = Inches(0.75)
+        self.margin = Inches(0.7)
         self.pages = []  # ページ番号を最後に入れるため
+        self.lead = ""
+        self.cover_pic = None
 
     def finish(self):
         from pptx.enum.text import PP_ALIGN
         from pptx.util import Inches
         total = len(self.pages)
-        for i, s in enumerate(self.pages, 1):
-            _text(_box(s, self.margin, self.H - Inches(0.5), Inches(8), Inches(0.3)), self.doc["title"], 10, GRAY)
-            _text(_box(s, self.W - self.margin - Inches(1.2), self.H - Inches(0.5), Inches(1.2), Inches(0.3)),
-                  f"{i} / {total}", 10, GRAY, align=PP_ALIGN.RIGHT)
+        for i, (s, dark) in enumerate(self.pages, 1):
+            col = ON_DARK if dark else GRAY
+            _text(_box(s, self.margin, self.H - Inches(0.45), Inches(8), Inches(0.3)), self.doc["title"], 10, col)
+            _text(_box(s, self.W - self.margin - Inches(1.2), self.H - Inches(0.45), Inches(1.2), Inches(0.3)),
+                  f"{i:02d} / {total:02d}", 10, col, align=PP_ALIGN.RIGHT)
 
+    # ---- 表紙・目次 ----
     def cover(self):
+        import datetime
         from pptx.util import Emu, Inches
         s = self.prs.slides.add_slide(self.titled)
         _rect(s, 0, 0, self.W, self.H, NAVY)
-        # 最初の写真は表紙に使う(同じ写真を二度使わない。Word など、ほかの形で作るときのために中身は変えない)
         pic = next((b for sec in self.doc["sections"] for k, b in sec["blocks"] if k == "picture"), None)
         self.cover_pic = pic
-        text_w = self.W - self.margin * 2
+        text_w = int(self.W * 0.6)
         if pic:  # 写真があれば右に大きく
-            pw = int(self.W * 0.42)
+            pw = int(self.W * 0.4)
             _picture(s, pic, self.W - pw, 0, pw, self.H - Inches(0.3), credit_color=LINE)
-            text_w = self.W - pw - self.margin * 2
+        else:  # 写真が無いときは、色の円を重ねた飾り(右上と右下にはみ出させる)
+            _shape(s, "OVAL", self.W - Inches(4.6), Inches(-1.6), Inches(6.4), Inches(6.4), _mix(NAVY, ACCENT, 0.35))
+            _shape(s, "OVAL", self.W - Inches(2.9), Inches(3.6), Inches(4.4), Inches(4.4), _mix(NAVY, ACCENT, 0.75))
+            _shape(s, "OVAL", self.W - Inches(5.3), Inches(4.4), Inches(1.3), Inches(1.3), ACCENT_ON_DARK)
+        _rect(s, 0, 0, Inches(0.22), self.H, ACCENT)
         title, tw = self.doc["title"], text_w / 914400
-        # 1行に収まるいちばん大きい大きさ(32以上)。無理なら2行に収まる大きさ
-        size = next((z for z in (44, 40, 36, 32) if _lines(title, tw, z) == 1), None) or \
-            next((z for z in (40, 36, 32, 28, 24) if _lines(title, tw, z) <= 2), 22)
-        _text(self._title(s, self.margin, Inches(1.4), text_w, Inches(2.4)), self.doc["title"], size, WHITE, bold=True)
-        _rect(s, self.margin, Inches(4.0), Inches(1.1), Emu(54000), ACCENT)
+        size = next((z for z in (48, 44, 40, 36) if _lines(title, tw, z) == 1), None) or \
+            next((z for z in (44, 40, 36, 32, 28) if _lines(title, tw, z) <= 2), 26)
+        _text(_box(s, self.margin + Inches(0.1), Inches(1.5), text_w, Inches(0.4)), "PRESENTATION", 13,
+              ACCENT_ON_DARK, bold=True)
+        _text(self._title(s, self.margin + Inches(0.1), Inches(1.95), text_w, Inches(2.1)), title, size, WHITE,
+              bold=True)
+        _rect(s, self.margin + Inches(0.1), Inches(4.3), Inches(1.2), Emu(60000), ACCENT_ON_DARK)
         if self.doc["subtitle"]:
-            _text(_box(s, self.margin, Inches(4.3), text_w, Inches(1.6)), self.doc["subtitle"], 18, ON_DARK)
+            _text(_box(s, self.margin + Inches(0.1), Inches(4.55), text_w, Inches(1.2)), self.doc["subtitle"], 20,
+                  ON_DARK)
+        today = datetime.date.today()
+        _text(_box(s, self.margin + Inches(0.1), self.H - Inches(1.0), Inches(5), Inches(0.4)),
+              f"{today.year}年{today.month}月{today.day}日", 14, ON_DARK)
 
+    def agenda(self):
+        """目次: 左に濃い帯、右に番号つきの章の一覧。"""
+        from pptx.enum.text import MSO_ANCHOR
+        from pptx.util import Inches
+        self.lead = ""
+        titles = [sec["title"] for sec in self.doc["sections"] if sec["title"]][:8]
+        s = self.prs.slides.add_slide(self.titled)
+        band = Inches(4.2)
+        _rect(s, 0, 0, band, self.H, NAVY)
+        _text(_box(s, self.margin, Inches(2.6), band - self.margin, Inches(0.4)), "AGENDA", 14, ACCENT_ON_DARK, bold=True)
+        _text(self._title(s, self.margin, Inches(3.0), band - self.margin * 1.5, Inches(0.9)), "目次", 40, WHITE,
+              bold=True)
+        x, w = band + Inches(0.8), self.W - band - Inches(1.6)
+        top, bottom = Inches(0.9), self.H - Inches(0.9)
+        row = min(Inches(0.95), (bottom - top) / len(titles))
+        y = top + ((bottom - top) - row * len(titles)) / 2
+        for i, t in enumerate(titles):
+            cy = y + row * i
+            _text(_box(s, x, cy, Inches(0.9), row, MSO_ANCHOR.MIDDLE), f"{i + 1:02d}", 26, ACCENT, bold=True)
+            _text(_box(s, x + Inches(1.0), cy, w - Inches(1.0), row, MSO_ANCHOR.MIDDLE), t,
+                  22 if _units(t) <= 26 else 18, NAVY, bold=True)
+            if i < len(titles) - 1:
+                _rect(s, x, cy + row - 6350, w, 12700, LINE)
+        self.pages.append((s, False))
+
+    # ---- ページの枠 ----
     def page(self, title, dark=False):
+        """小さな見出し(このページの話題)と、大きな一文(伝えたいこと。無ければ見出しを大きく)。"""
         from pptx.util import Emu, Inches
         s = self.prs.slides.add_slide(self.titled)
         if dark:
             _rect(s, 0, 0, self.W, self.H, NAVY)
-        _rect(s, 0, 0, Inches(0.16), self.H, ACCENT)
-        size = 30 if _units(title) <= 24 else 26 if _units(title) <= 34 else 22
-        _text(self._title(s, self.margin, Inches(0.45), self.W - self.margin * 2, Inches(0.85)), title,
-              size, WHITE if dark else NAVY, bold=True)
-        _rect(s, self.margin, Inches(1.42), Inches(0.9), Emu(36000), ACCENT)
-        self.pages.append(s)
+        _rect(s, 0, 0, Inches(0.14), self.H, ACCENT)
+        fg = WHITE if dark else NAVY
+        w = self.W - self.margin * 2
+        head = self.lead or title
+        if self.lead:  # 見出しは小さく色で、伝えたいことを大きく
+            _text(_box(s, self.margin, Inches(0.45), w, Inches(0.35)), title, 14, ACCENT_ON_DARK if dark else ACCENT,
+                  bold=True)
+        size = next((z for z in (30, 28, 26, 24) if _lines(head, w / 914400, z) == 1), None) or \
+            next((z for z in (26, 24, 22) if _lines(head, w / 914400, z) <= 2), 20)
+        _text(self._title(s, self.margin, Inches(0.8), w, Inches(0.95)), head, size, fg, bold=True)
+        _rect(s, self.margin, Inches(1.88), Inches(0.8), Emu(45000), ACCENT_ON_DARK if dark else ACCENT)
+        self.pages.append((s, dark))
         return s
 
     @staticmethod
@@ -480,53 +593,288 @@ class _Deck:
         tf.paragraphs[0].alignment = PP_ALIGN.LEFT
         return tf
 
-    # 本文の場所
     @property
     def body(self):
+        """中身の場所(見出しの下から、ページ番号の上まで)。"""
         from pptx.util import Inches
-        top = Inches(1.8)
+        top = Inches(2.25)
         return self.margin, top, self.W - self.margin * 2, self.H - top - Inches(0.8)
 
+    # ---- 章ごとに、中身に合う見せ方を選ぶ ----
     def section(self, sec):
         title = sec["title"] or self.doc["title"]
-        blocks = [(k, b) for k, b in sec["blocks"] if not (k == "picture" and b is getattr(self, "cover_pic", None))]
+        self.lead = sec.get("lead", "")
+        blocks = [(k, b) for k, b in sec["blocks"] if not (k == "picture" and b is self.cover_pic)]
         tables = [b for k, b in blocks if k == "table"]
         pics = [b for k, b in blocks if k == "picture"]
         lines = [(k, b) for k, b in blocks if k in ("bullet", "number", "text", "h3")]
         top_items = [b for k, b in lines if k in ("bullet", "number") and b[0] == 0]
         subs = [b for k, b in lines if k in ("bullet", "number") and b[0] > 0]
-        others = [(k, b) for k, b in lines if k in ("text", "h3")]
+        others = [(k, b) for k, b in lines if k == "text"]
+        h3s = [b for k, b in lines if k == "h3"]
         closing = re.search(r"まとめ|おわりに|結論|summary|conclusion", title, re.I) and not tables
         for rows in tables:
-            self.table(title, rows, [(k, b) for k, b in lines])
+            self.table(title, rows, lines)
             lines = []
         if not lines:
             if pics and not tables:
                 self.photo(title, pics[0], [])
             self._notes(sec)
             return
-        short = all(_units(t) <= 46 for _, t in top_items) and not any(k == "h3" for k, _ in others)
-        nums = [t for _, t in top_items if re.search(r"\d", t)]
+        texts = [t for _, t in top_items]
+        heads = [_split_head(t) for t in texts]
+        has_heads = texts and all(h for h, _ in heads)
+        short = all(_units(b) <= 70 for _, b in heads)
+        nums = [t for t in texts if re.match(r"^(?:\*\*)?[¥$]?\d", t)]
         if closing:
-            self.bullets(title, lines, dark=True)
+            self.closing(title, texts or [_plain(b if not isinstance(b, tuple) else b[1]) for _, b in lines])
+        elif 2 <= len(h3s) <= 3 and not others:
+            self.compare(title, lines)
         elif pics:
             self.photo(title, pics[0], lines)
-        elif top_items and not subs and 2 <= len(top_items) <= 6 and short and all(k == "number" for k, _ in lines
-                                                                                    if k in ("bullet", "number")):
-            self.steps(title, [t for _, t in top_items], others)
-        elif top_items and not subs and 2 <= len(top_items) <= 4 and len(nums) == len(top_items) and short:
-            self.stats(title, [t for _, t in top_items], others)
-        elif top_items and not subs and 2 <= len(top_items) <= 6 and short:
-            self.cards(title, [t for _, t in top_items], others)
+        elif top_items and not subs and 2 <= len(texts) <= 6 and short and all(
+                k == "number" for k, _ in lines if k in ("bullet", "number")):
+            self.steps(title, heads, others)
+        elif top_items and not subs and 2 <= len(texts) <= 4 and len(nums) == len(texts) and short:
+            self.stats(title, heads, others)
+        elif top_items and not subs and 2 <= len(texts) <= 6 and short and (has_heads or len(texts) <= 4):
+            self.cards(title, heads, others)
+        elif has_heads and not subs and len(texts) <= 6:
+            self.rows(title, heads, others)
         else:
             self.bullets(title, lines)
         self._notes(sec)
 
     def _notes(self, sec):
         if sec["notes"] and self.pages:
-            self.pages[-1].notes_slide.notes_text_frame.text = "\n".join(sec["notes"])
+            self.pages[-1][0].notes_slide.notes_text_frame.text = "\n".join(sec["notes"])
 
-    # ---- 種類ごとのページ ----
+    def _footer_text(self, s, others, y, h):
+        """図の下に、補足の文を薄い囲みで添える。"""
+        from pptx.util import Inches
+        if not others or h < Inches(0.6):
+            return
+        x, _, w, _ = self.body
+        text = "  ".join(_plain(b if not isinstance(b, tuple) else b[1]) for _, b in others)
+        size = 16 if _lines(text, w / 914400 - 0.6, 16) <= 2 else 14
+        lines = _lines(text, w / 914400 - 0.6, size)
+        bh = min(h, Inches(0.3) + int(lines * size * 1.3 / 72 * 914400))
+        _rect(s, x, y, w, bh, LIGHT, rounded=True)
+        _rect(s, x, y, Inches(0.07), bh, ACCENT)
+        _text(_box(s, x + Inches(0.3), y + Inches(0.15), w - Inches(0.6), bh - Inches(0.2)), text, size, NAVY)
+
+    def _extra(self, others):
+        from pptx.util import Inches
+        return Inches(1.05) if others else 0
+
+    # ---- 見せ方 ----
+    def cards(self, title, heads, others):
+        """要点のカード(3つまでは横1列、4つ以上は2段)。見出しを太く大きく、説明をその下に。"""
+        from pptx.enum.text import MSO_ANCHOR
+        from pptx.util import Emu, Inches
+        s = self.page(title)
+        x, y, w, h = self.body
+        n = len(heads)
+        extra = self._extra(others)
+        per_row = n if n <= 3 else (n + 1) // 2
+        rows = -(-n // per_row)
+        gap = Inches(0.3)
+        cw = (w - gap * (per_row - 1)) / per_row
+        ch = (h - extra - gap * (rows - 1)) / rows
+        tw = cw / 914400 - 0.7
+        hs = _size_for([hd for hd, _ in heads], tw, 0.9, (24, 22, 20, 18, 16))
+        top = 1.4 if rows == 1 else 0.7
+        bs = _size_for([b for _, b in heads], tw, ch / 914400 - top - 1.0, (20, 18, 17, 16, 15, 14))
+        # カードの高さは中身に合わせ(大きすぎる空白を作らない)、まとまりをページの中ほどに置く
+        need = top + 0.5 + max((_lines(hd, tw, hs) * hs * 1.3 / 72 + 0.2 if hd else 0) +
+                               _lines(b, tw, bs if hd else hs) * (bs if hd else hs) * 1.35 / 72 for hd, b in heads)
+        ch = min(ch, max(Inches(need), int((h - extra) * (0.62 if rows == 1 else 0.4))))
+        y += int((h - extra - ch * rows - gap * (rows - 1)) * 0.4)
+        for i, (hd, body) in enumerate(heads):
+            cx, cy = x + (cw + gap) * (i % per_row), y + (ch + gap) * (i // per_row)
+            _rect(s, cx, cy, cw, ch, LIGHT, rounded=True)
+            _rect(s, cx, cy, Emu(60000), ch, ACCENT)
+            if rows == 1:
+                badge = _shape(s, "OVAL", cx + Inches(0.35), cy + Inches(0.4), Inches(0.75), Inches(0.75), ACCENT)
+                badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                from pptx.enum.text import PP_ALIGN
+                _text(badge.text_frame, f"{i + 1:02d}", 16, WHITE, bold=True, align=PP_ALIGN.CENTER)
+                ty = cy + Inches(1.4)
+            else:
+                _text(_box(s, cx + Inches(0.35), cy + Inches(0.25), Inches(1), Inches(0.4)), f"{i + 1:02d}", 16, ACCENT,
+                      bold=True)
+                ty = cy + Inches(0.7)
+            if hd:
+                _text(_box(s, cx + Inches(0.35), ty, cw - Inches(0.7), Inches(0.8)), hd, hs, NAVY, bold=True)
+                hl = _lines(hd, tw, hs) * hs * 1.3 / 72
+                ty += Inches(hl + 0.2)
+                _rect(s, cx + Inches(0.35), ty - Inches(0.1), Inches(0.5), Emu(25400), LINE)
+            _text(_box(s, cx + Inches(0.35), ty, cw - Inches(0.7), cy + ch - ty - Inches(0.2)), body,
+                  bs if hd else hs, GRAY if hd else NAVY)
+        self._footer_text(s, others, y + ch * rows + gap * (rows - 1) + Inches(0.3), extra - Inches(0.25))
+
+    def rows(self, title, heads, others):
+        """見出しつきの要点を、横長の行に(左に見出し、右に説明)。"""
+        from pptx.enum.text import MSO_ANCHOR
+        from pptx.util import Inches
+        s = self.page(title)
+        x, y, w, h = self.body
+        extra = self._extra(others)
+        n = len(heads)
+        gap = Inches(0.18)
+        rh = min(Inches(1.35), (h - extra - gap * (n - 1)) / n)
+        y += int((h - extra - rh * n - gap * (n - 1)) / 2)
+        lw = Inches(3.2)
+        bs = _size_for([b for _, b in heads], (w - lw - Inches(0.8)) / 914400, rh / 914400 - 0.2, (20, 18, 17, 16, 15, 14))
+        for i, (hd, body) in enumerate(heads):
+            cy = y + (rh + gap) * i
+            _rect(s, x, cy, w, rh, LIGHT, rounded=True)
+            _rect(s, x, cy, lw, rh, ACCENT if i % 2 == 0 else NAVY, rounded=True)
+            _rect(s, x + lw - Inches(0.2), cy, Inches(0.2), rh, ACCENT if i % 2 == 0 else NAVY)
+            _text(_box(s, x + Inches(0.3), cy, lw - Inches(0.5), rh, MSO_ANCHOR.MIDDLE), hd,
+                  20 if _units(hd) <= 12 else 17, WHITE, bold=True)
+            _text(_box(s, x + lw + Inches(0.35), cy, w - lw - Inches(0.6), rh, MSO_ANCHOR.MIDDLE), body, bs, NAVY)
+        self._footer_text(s, others, y + h - extra + Inches(0.25), extra - Inches(0.25))
+
+    def stats(self, title, heads, others):
+        """数字が主役: 数字をとても大きく、何の数字かをその下に。"""
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Emu, Inches
+        s = self.page(title)
+        x, y, w, h = self.body
+        n = len(heads)
+        extra = self._extra(others)
+        gap = Inches(0.35)
+        cw = (w - gap * (n - 1)) / n
+        ch = min(Inches(3.9), h - extra)
+        y += int((h - extra - ch) / 2)
+        for i, (hd, body) in enumerate(heads):
+            if not hd:  # 見出しが無い: 文の中の数字を取り出す
+                plain = _plain(body)
+                m = re.search(r"[¥$]?\d[\d,.]*\s*\S{0,4}", plain)
+                hd, body = m.group(0).strip(), (plain[:m.start()] + plain[m.end():]).strip(" 、:：") or plain
+            cx = x + (cw + gap) * i
+            _rect(s, cx, y, cw, ch, LIGHT, rounded=True)
+            _rect(s, cx + cw * 0.3, y, cw * 0.4, Emu(60000), ACCENT)
+            m = re.match(r"^([¥$]?[\d,.]+)\s*(.*)$", hd)
+            num, unit = (m.group(1), m.group(2)) if m else (hd, "")
+            big = 66 if _units(num) <= 4 else 54 if _units(num) <= 6 else 40
+            p = _text(_box(s, cx + Inches(0.2), y + Inches(0.5), cw - Inches(0.4), Inches(1.4)), num, big, ACCENT,
+                      bold=True, align=PP_ALIGN.CENTER)
+            if unit:
+                from pptx.dml.color import RGBColor
+                from pptx.util import Pt
+                r = p.add_run()
+                r.text = unit
+                r.font.size, r.font.bold = Pt(max(20, big // 2.4)), True
+                r.font.color.rgb = RGBColor(*ACCENT)
+                _ea_font(r)
+            _rect(s, cx + cw / 2 - Inches(0.3), y + Inches(2.05), Inches(0.6), Emu(19050), LINE)
+            _text(_box(s, cx + Inches(0.35), y + Inches(2.25), cw - Inches(0.7), ch - Inches(2.4)), body,
+                  _size_for([body], cw / 914400 - 0.7, ch / 914400 - 2.5, (20, 18, 16, 15, 14)), NAVY,
+                  align=PP_ALIGN.CENTER)
+        self._footer_text(s, others, y + ch + Inches(0.3), h - ch - Inches(0.3))
+
+    def steps(self, title, heads, others):
+        """手順: 矢印の形を横に並べ、その下に説明。"""
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Inches
+        s = self.page(title)
+        x, y, w, h = self.body
+        n = len(heads)
+        extra = self._extra(others)
+        aw = w / n
+        ah = Inches(1.05)
+        tw = aw / 914400 - 0.4
+        hs = _size_for([hd or str(i + 1) for i, (hd, _) in enumerate(heads)], tw - 0.4, 0.75, (22, 20, 18, 16, 14))
+        bs = _size_for([b for _, b in heads], tw, 2.4, (22, 20, 18, 17, 16, 15, 14))
+        need = Inches(0.7 + max(_lines(b, tw, bs) for _, b in heads) * bs * 1.35 / 72)
+        y += int((h - extra - ah - need) * 0.4)
+        for i, (hd, body) in enumerate(heads):
+            cx = x + aw * i
+            col = _mix(ACCENT, NAVY, i / max(1, n - 1) * 0.7)
+            arrow = _shape(s, "PENTAGON" if i == 0 else "CHEVRON", cx, y, aw + Inches(0.12), ah, col)
+            if i:
+                arrow.adjustments[0] = 0.28
+            else:
+                arrow.adjustments[0] = 0.28
+            tf = arrow.text_frame
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            tf.margin_left = tf.margin_right = Inches(0.35)
+            tf.word_wrap = True
+            _text(tf, hd or f"STEP {i + 1}", hs, WHITE, bold=True, align=PP_ALIGN.CENTER)
+            _text(_box(s, cx + Inches(0.2), y + ah + Inches(0.3), aw - Inches(0.35), Inches(0.4)), f"STEP {i + 1}", 12,
+                  ACCENT, bold=True)
+            _text(_box(s, cx + Inches(0.2), y + ah + Inches(0.7), aw - Inches(0.35), Inches(2.4)), body, bs, NAVY)
+        self._footer_text(s, others, y + ah + need + Inches(0.3), extra)
+
+    def compare(self, title, lines):
+        """比べ合い: 小見出しごとに列を作る(最後の列を目立たせる)。"""
+        from pptx.enum.text import MSO_ANCHOR
+        from pptx.util import Inches
+        groups = []
+        for k, b in lines:
+            if k == "h3":
+                groups.append((b, []))
+            elif groups:
+                groups[-1][1].append(_plain(b[1] if isinstance(b, tuple) else b))
+        s = self.page(title)
+        x, y, w, h = self.body
+        n = len(groups)
+        gap = Inches(0.35)
+        cw = (w - gap * (n - 1)) / n
+        hh = Inches(0.8)
+        most = max(1, max(len(i) for _, i in groups))
+        size = _size_for([t for _, items in groups for t in items], cw / 914400 - 1.0,
+                         ((h - hh) / 914400 - 0.6) / most - 0.15, (22, 20, 18, 17, 16, 15, 14))
+        need = max(sum(_lines(t, cw / 914400 - 1.0, size) * size * 1.3 / 72 + size * 0.7 / 72 for t in items)
+                   for _, items in groups)
+        col_h = min(h, max(hh + Inches(need + 0.8), int(h * 0.6)))
+        y += int((h - col_h) * 0.4)
+        h = col_h
+        for i, (name, items) in enumerate(groups):
+            cx = x + (cw + gap) * i
+            main = i == n - 1
+            _rect(s, cx, y, cw, h, ACCENT_SOFT if main else LIGHT, rounded=True)
+            head = _rect(s, cx, y, cw, hh, ACCENT if main else GRAY, rounded=True)
+            _rect(s, cx, y + hh - Inches(0.2), cw, Inches(0.2), ACCENT if main else GRAY)
+            head.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+            from pptx.enum.text import PP_ALIGN
+            _text(head.text_frame, name, 20 if _units(name) <= 16 else 17, WHITE, bold=True, align=PP_ALIGN.CENTER)
+            tf = _box(s, cx + Inches(0.4), y + hh + Inches(0.35), cw - Inches(0.8), h - hh - Inches(0.5))
+            for j, t in enumerate(items):
+                p = _text(tf, "", size, NAVY, first=j == 0, space=size * 0.7)
+                self._mark(p, "✓" if main else "–", size, ACCENT if main else GRAY)
+                for part, b in _runs(t):
+                    from pptx.dml.color import RGBColor
+                    from pptx.util import Pt
+                    r = p.add_run()
+                    r.text = part
+                    r.font.size, r.font.bold = Pt(size), b or main
+                    r.font.color.rgb = RGBColor(*NAVY)
+                    _ea_font(r)
+
+    def closing(self, title, texts):
+        """まとめ: 濃い背景に、持ち帰ってほしい要点を番号つきで大きく。"""
+        from pptx.enum.text import MSO_ANCHOR
+        from pptx.util import Inches
+        if not self.lead:
+            name = re.sub(r"^(?:まとめ|おわりに|結論)\s*[:：]\s*", "", title)
+            title, self.lead = ("まとめ", name) if name != title else (title, "")
+        s = self.page(title, dark=True)
+        x, y, w, h = self.body
+        n = len(texts)
+        gap = Inches(0.2)
+        rh = min(Inches(1.15), (h - gap * (n - 1)) / max(1, n))
+        y += int((h - rh * n - gap * (n - 1)) / 2)
+        size = _size_for([_plain(t) for t in texts], w / 914400 - 1.8, rh / 914400 - 0.2, (24, 22, 20, 18, 16))
+        for i, t in enumerate(texts):
+            cy = y + (rh + gap) * i
+            _rect(s, x, cy, w, rh, _mix(NAVY, WHITE, 0.08), rounded=True)
+            _text(_box(s, x + Inches(0.35), cy, Inches(1), rh, MSO_ANCHOR.MIDDLE), f"{i + 1:02d}", 28, ACCENT_ON_DARK,
+                  bold=True)
+            _text(_box(s, x + Inches(1.4), cy, w - Inches(1.7), rh, MSO_ANCHOR.MIDDLE), t, size, WHITE)
+
     def bullets(self, title, lines, dark=False, cont=False):
         """箇条書き: 文字の量から大きさを決める。入りきらなければ2ページに分ける。"""
         from pptx.dml.color import RGBColor
@@ -536,7 +884,7 @@ class _Deck:
         for k, b in lines:
             level, text = b if isinstance(b, tuple) else (0, b)
             items.append((k, level, text))
-        sizes = (28, 26, 24, 22, 20, 18, 16, 15, 14) if len(items) <= 4 else (24, 22, 20, 18, 16, 15, 14)
+        sizes = (26, 24, 22, 20, 18, 16, 15, 14) if len(items) <= 4 else (22, 20, 18, 16, 15, 14)
         size = _fit([(t, lv) for _, lv, t in items], w / 914400, h / 914400, sizes)
         if size is None and len(items) > 1:  # 多すぎる: 半分ずつ2ページに
             half = (len(items) + 1) // 2
@@ -549,7 +897,7 @@ class _Deck:
         s = self.page(title, dark)
         used = sum(_lines(t, w / 914400 - 0.35 * (lv + 1), size - 2 * lv) * (size - 2 * lv) * 1.2 / 72 + (size - 2 * lv)
                    * 0.45 / 72 for _, lv, t in items)
-        y0 = y + max(0, int((h - Emu(int(used * 914400))) * 0.35))  # 少ないときは少し下げて、上だけに寄らないように
+        y0 = y + max(0, int((h - Emu(int(used * 914400))) * 0.3))
         tf = _box(s, x, y0, w, h)
         numbers, first = {}, True
         fg, sub = (WHITE, ON_DARK) if dark else (NAVY, GRAY)
@@ -566,7 +914,7 @@ class _Deck:
                         numbers.pop(deeper)
                 mark = f"{numbers[lv]}." if k == "number" else ("■" if lv == 0 else "–")
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
-                p.level, p.line_spacing, p.space_after = lv, 1.15, Pt(sz * 0.45)
+                p.level, p.line_spacing, p.space_after = lv, 1.15, Pt(sz * 0.6)
                 self._mark(p, mark, sz, ACCENT if lv == 0 and not dark else sub)
                 for part, b in _runs(t):
                     r = p.add_run()
@@ -588,97 +936,6 @@ class _Deck:
         r.font.color.rgb = RGBColor(*color)
         _ea_font(r)
 
-    def _footer_text(self, s, others, y, h):
-        """図の下に、補足の文を薄い囲みで添える。"""
-        from pptx.util import Inches
-        if not others:
-            return
-        x, _, w, _ = self.body
-        text = "  ".join(_plain(b if not isinstance(b, tuple) else b[1]) for _, b in others)
-        size = 16 if _lines(text, w / 914400 - 0.6, 16) <= 2 else 14
-        lines = _lines(text, w / 914400 - 0.6, size)
-        bh = min(h, Inches(0.3) + int(lines * size * 1.25 / 72 * 914400))
-        _rect(s, x, y, w, bh, LIGHT, rounded=True)
-        _rect(s, x, y, Inches(0.07), bh, ACCENT)
-        _text(_box(s, x + Inches(0.3), y + Inches(0.15), w - Inches(0.6), bh - Inches(0.2)), text, size, NAVY)
-
-    def cards(self, title, texts, others):
-        """要点をカードに(3つまでは横1列、4〜6は2段)。"""
-        from pptx.util import Emu, Inches
-        s = self.page(title)
-        x, y, w, h = self.body
-        extra = Inches(1.2) if others else 0
-        per_row = len(texts) if len(texts) <= 3 else (len(texts) + 1) // 2
-        rows = -(-len(texts) // per_row)
-        gap = Inches(0.3)
-        cw = (w - gap * (per_row - 1)) / per_row
-        ch = min(Inches(3.4), (h - extra - gap * (rows - 1)) / rows)
-        size = _fit_cards(texts, cw / 914400 - 0.6, ch / 914400 - 1.0)
-        need = max(_lines(t, cw / 914400 - 0.6, size) for t in texts) * size * 1.3 / 72
-        ch = min(ch, max(Inches(1.2 + need + 0.5), int(h * 0.55) if rows == 1 else 0))  # 文の量に合わせた高さ
-        y += int((h - extra - ch * rows - gap * (rows - 1)) * 0.35)
-        for i, t in enumerate(texts):
-            cx, cy = x + (cw + gap) * (i % per_row), y + (ch + gap) * (i // per_row)
-            _rect(s, cx, cy, cw, ch, LIGHT, rounded=True)
-            _rect(s, cx, cy, cw, Emu(60000), ACCENT)
-            _text(_box(s, cx + Inches(0.3), cy + Inches(0.3), Inches(1), Inches(0.45)), f"{i + 1:02d}", 18, ACCENT,
-                  bold=True)
-            _text(_box(s, cx + Inches(0.3), cy + Inches(0.85), cw - Inches(0.6), ch - Inches(1.0)), t, size, NAVY)
-        self._footer_text(s, others, y + ch * rows + gap * (rows - 1) + Inches(0.3), extra)
-
-    def stats(self, title, texts, others):
-        """数字が主役の項目: 数字を大きく、説明を下に。"""
-        from pptx.enum.text import PP_ALIGN
-        from pptx.util import Inches
-        s = self.page(title)
-        x, y, w, h = self.body
-        gap = Inches(0.3)
-        cw = (w - gap * (len(texts) - 1)) / len(texts)
-        ch = min(Inches(3.4), h - (Inches(1.3) if others else 0))
-        y += int((h - ch - (Inches(1.3) if others else 0)) * 0.35)  # 上だけに寄らないように
-        for i, t in enumerate(texts):
-            cx = x + (cw + gap) * i
-            plain = _plain(t)
-            m = re.search(r"[¥$]?\d[\d,.]*\s*(?:%|％|倍|円|万円|億円|件|人|社|時間|分|日|か月|ヶ月|年|個|台|点|位)?", plain)
-            big = m.group(0).strip()
-            # 数字が文の端にあるときだけ説明から外す(途中なら、文をそのまま説明にする)
-            rest = (plain[:m.start()] + plain[m.end():]).strip(" 、:：") if m.start() == 0 or m.end() == len(plain) \
-                else plain
-            _rect(s, cx, y, cw, ch, LIGHT, rounded=True)
-            size = 54 if _units(big) <= 5 else 40 if _units(big) <= 8 else 30
-            _text(_box(s, cx + Inches(0.2), y + Inches(0.45), cw - Inches(0.4), Inches(1.2)), big, size, ACCENT,
-                  bold=True, align=PP_ALIGN.CENTER)
-            _text(_box(s, cx + Inches(0.3), y + Inches(1.8), cw - Inches(0.6), ch - Inches(1.95)), rest or t,
-                  20 if _units(rest) <= 16 else 17 if _units(rest) <= 30 else 15, NAVY, align=PP_ALIGN.CENTER)
-        self._footer_text(s, others, y + ch + Inches(0.3), h - ch - Inches(0.3))
-
-    def steps(self, title, texts, others):
-        """手順: 番号の丸を線でつなぎ、下に説明。"""
-        from pptx.dml.color import RGBColor
-        from pptx.enum.shapes import MSO_SHAPE
-        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-        from pptx.util import Emu, Inches
-        s = self.page(title)
-        x, y, w, h = self.body
-        n = len(texts)
-        step = w / n
-        d = Inches(0.95)
-        y += int((h - d - Inches(2.3) - (Inches(1.2) if others else 0)) * 0.4)
-        _rect(s, x + step / 2, y + d / 2 - Emu(19000), step * (n - 1), Emu(38000), LINE)
-        size = 18 if all(_lines(t, step / 914400 - 0.3, 18) <= 3 for t in texts) else 15
-        for i, t in enumerate(texts):
-            cx = x + step * i + step / 2
-            dot = s.shapes.add_shape(MSO_SHAPE.OVAL, int(cx - d / 2), int(y), int(d), int(d))
-            dot.fill.solid()
-            dot.fill.fore_color.rgb = RGBColor(*(ACCENT if i == 0 else NAVY))
-            dot.line.fill.background()
-            dot.shadow.inherit = False
-            dot.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-            _text(dot.text_frame, str(i + 1), 26, WHITE, bold=True, align=PP_ALIGN.CENTER)
-            _text(_box(s, cx - step / 2 + Inches(0.15), y + d + Inches(0.3), step - Inches(0.3), Inches(1.8)), t, size,
-                  NAVY, align=PP_ALIGN.CENTER)
-        self._footer_text(s, others, y + d + Inches(2.3), h - d - Inches(2.5))
-
     def photo(self, title, pic, lines):
         """写真つき: 左に文、右に写真(文が無ければ写真を大きく)。"""
         from pptx.util import Inches
@@ -690,14 +947,14 @@ class _Deck:
         x, y, w, h = self.body
         pw = int(w * 0.45)
         items = [(b[1] if isinstance(b, tuple) else b, b[0] if isinstance(b, tuple) else 0) for _, b in lines]
-        size = _fit(items, (w - pw - Inches(0.4)) / 914400, h / 914400) or 14
+        size = _fit(items, (w - pw - Inches(0.4)) / 914400, h / 914400, (22, 20, 18, 16, 15, 14)) or 14
         s = self.page(title)
         tf = _box(s, x, y, w - pw - Inches(0.4), h)
         first = True
         for (k, b), (t, lv) in zip(lines, items):
             prefix = "■  " if k == "bullet" and lv == 0 else "–  " if lv else ""
             _text(tf, prefix + t, size - 2 * lv, NAVY if lv == 0 else GRAY, first=first, level=lv,
-                  space=(size - 2 * lv) * 0.45)
+                  space=(size - 2 * lv) * 0.6)
             first = False
         _picture(s, pic, x + w - pw, y, pw, h - Inches(0.35))
 
@@ -720,7 +977,7 @@ class _Deck:
                 y += Inches(0.75)
                 h -= Inches(0.75)
             tw = int(w * 0.52) if num_cols else w
-            _pptx_table(s, [head] + chunk, x, y, tw, min(h, Inches(0.55) * (len(chunk) + 1)))
+            _pptx_table(s, [head] + chunk, x, y, tw, min(h, Inches(0.75 if len(chunk) <= 5 else 0.55) * (len(chunk) + 1)))
             if num_cols:
                 data = CategoryChartData()
                 data.categories = [_plain(r[0]) for r in chunk]
@@ -747,6 +1004,7 @@ class _Deck:
 
     def sources(self):
         """出典のページ(参考にしたページと、写真の作者・ライセンス)。"""
+        self.lead = ""
         s = self.page("出典")
         x, y, w, h = self.body
         items = self.doc["sources"][:14]
@@ -774,7 +1032,7 @@ def _pptx_table(slide, rows, x, y, w, h):
     lens = [max(4.0, min(24.0, max(_units(r[c]) if c < len(r) else 0 for r in rows))) for c in range(cols)]
     for c in range(cols):
         table.columns[c].width = int(w * lens[c] / sum(lens))
-    size = 16 if len(rows) <= 6 else 14
+    size = 18 if len(rows) <= 6 else 15
     for r, row in enumerate(rows):
         for c in range(cols):
             cell = table.cell(r, c)
@@ -862,6 +1120,8 @@ def make_docx(doc, path):
     date = d.add_paragraph()
     date.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     _add_runs(date, f"{today.year}年{today.month}月{today.day}日", 9.5, GRAY)
+    if doc.get("key_points"):  # この文書の要点: 最初に囲みで見せる(忙しい人はここだけ読めば分かるように)
+        _key_points(d, doc["key_points"])
 
     for sec in doc["sections"]:
         if sec["title"]:
@@ -989,6 +1249,24 @@ def _shade(cell, color):
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:fill"), "%02X%02X%02X" % color)
     cell._tc.get_or_add_tcPr().append(shd)
+
+
+def _key_points(d, points):
+    """「この文書の要点」の囲み(色の帯の見出し + 番号つきの要点)。"""
+    from docx.shared import Pt
+    table = d.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    _shade(cell, LIGHT)
+    p = cell.paragraphs[0]
+    _add_runs(p, "この文書の要点", 11, ACCENT, bold=True)
+    p.paragraph_format.space_after = Pt(4)
+    for i, t in enumerate(points[:4], 1):
+        q = cell.add_paragraph()
+        q.paragraph_format.space_after = Pt(2)
+        _add_runs(q, f"{i}.  ", 10.5, ACCENT, bold=True)
+        _add_runs(q, t, 10.5, NAVY)
+    _border(p, ACCENT, "left")
+    d.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
 def _callout(d, text):

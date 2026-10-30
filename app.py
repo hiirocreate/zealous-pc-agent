@@ -1454,12 +1454,18 @@ class App(ctk.CTk):
         tb = self.entry._textbox
         lines = tb.count("1.0", "end-1c", "displaylines")
         n = max(1, min(INPUT_MAX_LINES, (lines[0] if lines else 0) + 1))
-        self.entry.configure(height=12 + n * 18)
+        # 変わったときだけ描き直す(毎回 configure すると、縁ごと描き直されて入力欄がガタつく)
+        if n != getattr(self, "_input_lines", None):
+            self._input_lines = n
+            self.entry.configure(height=12 + n * 18)
         empty = not self.entry.get("1.0", "end").strip()
-        if empty and self.focus_get() is not tb:
-            self.hint.grid(row=1, column=1, sticky="w", padx=8)
-        else:
-            self.hint.grid_remove()
+        show = empty and self.focus_get() is not tb
+        if show != getattr(self, "_hint_shown", None):
+            self._hint_shown = show
+            if show:
+                self.hint.grid(row=1, column=1, sticky="w", padx=8)
+            else:
+                self.hint.grid_remove()
 
     def _submit(self, text, by_voice=False):
         if self._pending_confirm is not None and self._answer_confirm(text):

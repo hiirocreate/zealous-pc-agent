@@ -911,3 +911,34 @@ def test_office_interview_flexible(monkeypatch):
     q = llm.ask("やっぱりエクセルで、店舗ごとの売上", history=[])
     assert llm._office["kind"] == "xlsx" and "中身はどうしますか" in q
     llm.ask("やめて", history=[])
+
+
+def test_office_plan_to_slides(tmp_path):
+    import json
+    import llm
+    import officedoc
+    plan = {"title": "伝わる資料で成果を変える", "subtitle": "サービスのご紹介",
+            "slides": [{"layout": "cards", "title": "特徴", "message": "3つの強みがあります。",
+                        "items": [{"head": "速い", "text": "最短3日で納品"}, {"head": "安心", "text": "何度でも修正"}]},
+                       {"layout": "steps", "title": "流れ", "message": "相談から納品まで。",
+                        "items": [{"head": "相談", "text": "希望を聞く"}, {"head": "制作", "text": "形にする"}]},
+                       {"layout": "compare", "title": "比較", "message": "違いは明らか。",
+                        "items": [{"head": "自作", "text": "時間がかかる／ばらつく"}, {"head": "依頼", "text": "早い／整う"}]},
+                       {"layout": "stats", "title": "数字", "message": "実績です。",
+                        "items": [{"head": "365日", "text": "サポート"}, {"head": "3営業日", "text": "納品"}]}],
+            "closing": {"title": "次の一歩", "points": ["まず相談", "気軽にどうぞ"]}}
+    doc = officedoc.parse(llm._plan_md("pptx", plan))
+    assert doc["title"] == "伝わる資料で成果を変える"
+    assert doc["sections"][0]["lead"] == "3つの強みがあります。"
+    assert officedoc._split_head(doc["sections"][0]["blocks"][0][1][1]) == ("速い", "最短3日で納品")
+    assert officedoc.make_pptx(doc, str(tmp_path / "a.pptx")) >= 7  # 表紙・目次・4枚・まとめ
+    d = llm._plan_md("docx", {"title": "T", "summary": "S", "key_points": ["要点1"],
+                              "sections": [{"heading": "A", "paragraphs": ["本文"]}]})
+    assert officedoc.parse(d)["key_points"] == ["要点1"]
+
+
+def test_office_answers_and_titles():
+    import officedoc
+    assert officedoc.generic_title("資料") and officedoc.generic_title("") and not officedoc.generic_title("株式会社才")
+    doc = officedoc.parse("## スライドの題名\nスライド1: 会社紹介\n■ 強み\n## 出典\n- a https://x.jp/?srsltid=abc")
+    assert doc["sections"][0]["title"] == "会社紹介" and doc["sources"] == ["a https://x.jp/"]

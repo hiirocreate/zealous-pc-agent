@@ -283,7 +283,7 @@ _DOC_QUALITY = (
     "・写真が理解を助けるページにだけ「!画像: 英語の検索語(例: !画像: solar panels on roof)」を1行入れる(全体で2つまで)。"
     "・前置き・あいさつ・説明・```は書かず、資料の中身だけを書く。")
 _REVIEW = ("次の資料を校正してください。誤字脱字・表記ゆれ・同じ内容の重複・不自然な言い回し・根拠の無い断定を直し、"
-           "見出しや箇条書きの書式(# / ## / ### / - / 1. / 表 / > / !画像:)はそのまま残してください。"
+           "見出しや箇条書きの書式(# / ## / ### / - / 1. / **太字**： / 表 / > / !画像: / !リード: / !要点:)はそのまま残してください。"
            "内容を勝手に増やさず、校正後の資料だけを書いてください。")
 _ABOUT_CHAT = re.compile(r"今の|この(?:内容|会話|話|回答|返事)|さっき|上の|これまで|会話|回答|返事")
 
@@ -300,14 +300,127 @@ def _status(text):
         on_status(text)
 
 
-def _doc_chat(messages, model, temperature):
+def _doc_chat(messages, model, temperature, fmt=None):
     try:
-        return _chat(messages, use_tools=False, model=model, temperature=temperature).get("content") or ""
+        return _chat(messages, use_tools=False, model=model, temperature=temperature, fmt=fmt).get("content") or ""
     except requests.HTTPError as e:
         if model == config.OLLAMA_MODEL or "404" not in str(e):
             raise
         _start_pull(model)  # 資料づくり向けのモデルがまだ無い: 裏で準備し、今回はいつものモデルで
-        return _chat(messages, use_tools=False, model=config.OLLAMA_MODEL, temperature=temperature).get("content") or ""
+        return _chat(messages, use_tools=False, model=config.OLLAMA_MODEL, temperature=temperature,
+                     fmt=fmt).get("content") or ""
+
+
+# 資料の設計図(JSON の形)。題名・各ページの「伝えたいこと」・見せ方まで先に決めてから、ページを組み立てる
+_STR = {"type": "string"}
+_ITEM = {"type": "object", "properties": {"head": _STR, "text": _STR}, "required": ["head", "text"]}
+_PLAN = {
+    "pptx": {"type": "object", "required": ["title", "subtitle", "slides", "closing"], "properties": {
+        "title": _STR, "subtitle": _STR,
+        "slides": {"type": "array", "minItems": 4, "maxItems": 9, "items": {
+            "type": "object", "required": ["layout", "title", "message", "items"], "properties": {
+                "layout": {"type": "string", "enum": ["cards", "steps", "stats", "compare", "table", "points"]},
+                "title": _STR, "message": _STR,
+                "items": {"type": "array", "minItems": 2, "maxItems": 6, "items": _ITEM},
+                "table": {"type": "array", "items": {"type": "array", "items": _STR}},
+                "notes": _STR}}},
+        "closing": {"type": "object", "required": ["title", "points"], "properties": {
+            "title": _STR, "points": {"type": "array", "minItems": 2, "maxItems": 4, "items": _STR}}}}},
+    "docx": {"type": "object", "required": ["title", "summary", "sections"], "properties": {
+        "title": _STR, "summary": _STR,
+        "key_points": {"type": "array", "maxItems": 4, "items": _STR},
+        "sections": {"type": "array", "minItems": 3, "maxItems": 8, "items": {
+            "type": "object", "required": ["heading", "paragraphs"], "properties": {
+                "heading": _STR,
+                "paragraphs": {"type": "array", "minItems": 1, "maxItems": 4, "items": _STR},
+                "points": {"type": "array", "maxItems": 6, "items": _ITEM},
+                "table": {"type": "array", "items": {"type": "array", "items": _STR}}}}}}},
+}
+_PLAN_GUIDE = {
+    "pptx": ("JSON で PowerPoint の設計図を書いてください。"
+             "title: 聞き手を引きつけ、中身が一言で分かる題名(25字以内。「〇〇について」「資料」「プレゼン」とだけ書くのは禁止)。"
+             "subtitle: 誰に何を伝えるかが分かる副題(35字以内)。"
+             "slides: 4〜8枚。流れは「背景・課題 → 中身(特徴・方法・事例・数字) → 次の一歩」のように、話の筋が通る順にする。"
+             "各スライドの title は内容が分かる具体的な見出し(20字以内)、message はそのスライドで一番伝えたい結論を1文(45字以内)。"
+             "items は 2〜4個(手順なら最大6個)。head は12字以内の要点、text はその説明を1〜2文(60字以内)。"
+             "layout は中身に合わせて選ぶ: 特徴・理由・強みは cards、手順・流れ・歴史は steps、"
+             "数字が主役なら stats(head に「30%」のような数字、text に説明)、2つ以上の比べ合いは compare(head に比べるものの名前)、"
+             "細かい比較の一覧は table(table に1行目を見出しにした表)、それ以外は points。同じ layout を3枚続けない。"
+             "notes は話す人向けの補足(任意)。closing はまとめのスライド(title とpoints 2〜4個の要点)。"),
+    "docx": ("JSON で Word 文書の設計図を書いてください。"
+             "title: 中身が一言で分かる題名(30字以内。「〇〇について」「資料」とだけ書くのは禁止)。"
+             "summary: 文書全体の要旨を2〜3文。key_points: 読み手に覚えてほしい要点を3つ(各30字以内)。"
+             "sections: 3〜7章。heading は内容が分かる具体的な見出し、paragraphs はていねいな段落(1段落 80〜200字)、"
+             "points は箇条書きにしたい項目(head と text)、table は比べると分かりやすいときだけ(1行目が見出し)。"
+             "最後の章は「まとめ」や「今後の進め方」にする。"),
+}
+
+
+def _plan_md(kind, plan):
+    """設計図(JSON)→ いつもの書式つきの文(# / ## / - / 1. / 表 / >)。"""
+    clean = lambda s: re.sub(r"\s+", " ", str(s or "")).strip()  # noqa: E731
+    out = [f"# {clean(plan.get('title'))}", clean(plan.get("subtitle") or plan.get("summary")), ""]
+
+    def table(rows):
+        rows = [[clean(c).replace("|", "／") for c in r] for r in rows or [] if r]
+        if len(rows) < 2:
+            return []
+        n = max(len(r) for r in rows)
+        rows = [r + [""] * (n - len(r)) for r in rows]
+        return ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * n] + ["| " + " | ".join(r) + " |" for r in rows[1:]]
+
+    if kind == "pptx":
+        for sl in plan.get("slides") or []:
+            items = [i for i in sl.get("items") or [] if clean(i.get("head")) or clean(i.get("text"))]
+            layout = sl.get("layout")
+            out.append(f"## {clean(sl.get('title'))}")
+            if clean(sl.get("message")):
+                out.append(f"!リード: {clean(sl.get('message'))}")
+            rows = table(sl.get("table")) if layout == "table" else []
+            if rows:
+                out += rows
+            elif layout == "compare" and len(items) >= 2:
+                for i in items:
+                    out += [f"### {clean(i.get('head'))}"] + [f"- {p}" for p in re.split(r"[／/。]\s*", clean(i.get("text"))) if p]
+            else:
+                mark = (lambda n: f"{n}. ") if layout == "steps" else (lambda n: "- ")
+                out += [f"{mark(n)}**{clean(i.get('head'))}**：{clean(i.get('text'))}"
+                        if clean(i.get("head")) else f"{mark(n)}{clean(i.get('text'))}" for n, i in enumerate(items, 1)]
+            if clean(sl.get("notes")):
+                out.append(f"> {clean(sl.get('notes'))}")
+            out.append("")
+        close = plan.get("closing") or {}
+        if close.get("points"):
+            out.append(f"## まとめ：{clean(close.get('title'))}" if clean(close.get("title")) and
+                       "まとめ" not in clean(close.get("title")) else f"## {clean(close.get('title')) or 'まとめ'}")
+            out += [f"- {clean(p)}" for p in close["points"] if clean(p)]
+    else:
+        if plan.get("key_points"):
+            out += [f"!要点: {clean(p)}" for p in plan["key_points"] if clean(p)] + [""]
+        for sec in plan.get("sections") or []:
+            out.append(f"## {clean(sec.get('heading'))}")
+            out += [clean(p) for p in sec.get("paragraphs") or [] if clean(p)]
+            out += [f"- **{clean(i.get('head'))}**：{clean(i.get('text'))}" for i in sec.get("points") or []
+                    if clean(i.get("head"))]
+            out += table(sec.get("table"))
+            out.append("")
+    return "\n".join(out).strip()
+
+
+def _plan(kind, rule, request, model):
+    """設計図を JSON で書かせて、書式つきの文にする。うまくいかなければ None(ふつうの書き方に戻す)。"""
+    if kind not in _PLAN:
+        return None
+    messages = [{"role": "system", "content": rule + "\n\n" + _PLAN_GUIDE[kind]}, *_context(),
+                {"role": "user", "content": request}]
+    try:
+        plan = json.loads(_doc_chat(messages, model, 0.5, fmt=_PLAN[kind]))
+    except Exception:
+        return None
+    body = plan.get("slides") if kind == "pptx" else plan.get("sections")
+    if not isinstance(body, list) or len(body) < 2:
+        return None
+    return _plan_md(kind, plan)
 
 
 def write_document(kind, request, source=""):
@@ -333,10 +446,15 @@ def write_document(kind, request, source=""):
     messages = [{"role": "system", "content": rule}, *_context(), {"role": "user", "content": request}]
     # テクニカルモード用のAIは、テクニカルモードのときだけ使う(ふだんはいつものAIで書く)
     model = (getattr(config, "TECH_MODEL", "") or config.OLLAMA_MODEL) if _tech else config.OLLAMA_MODEL
-    _status("資料の中身を書いています…")
-    draft = _doc_chat(messages, model, 0.4)
+    _status("構成を考えています…")
+    draft = _plan(kind, rule, request, model)
+    planned = draft is not None
+    if not planned:
+        _status("資料の中身を書いています…")
+        draft = _doc_chat(messages, model, 0.4)
     text = draft
-    if getattr(config, "OFFICE_REVIEW", True) and draft.strip():
+    # 設計図から作ったときは形が整っているので、見直しで崩さない(見直しは自由に書いたときだけ)
+    if getattr(config, "OFFICE_REVIEW", True) and draft.strip() and not planned:
         _status("誤字や重複がないか見直しています…")
         import officedoc
         checked = _doc_chat([{"role": "system", "content": _REVIEW}, {"role": "user", "content": draft}], model, 0.1)
@@ -390,7 +508,7 @@ def off_track(question, reply):
     return len(head) >= 12 and letters >= 8 and len(_JA.findall(head)) <= 2
 
 
-def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, temperature=None):
+def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, temperature=None, fmt=None):
     """Ollama に問い合わせる。返事は少しずつ受け取り、stream_out なら届いた分を on_delta へ渡す。
     関数呼び出し(JSON)らしい返事は画面に出さない。
     guard(ユーザーの質問)を渡すと、書き出しを少しだけ見てから流し、質問とかみ合わなければ OffTrack を出す。"""
@@ -402,6 +520,8 @@ def _chat(messages, use_tools=True, stream_out=False, guard=None, model=None, te
             "keep_alive": "10m" if model != config.OLLAMA_MODEL else "30m"}
     if use_tools:
         body["tools"] = tools.schemas(TECH_TOOLS if _tech else None)
+    if fmt:
+        body["format"] = fmt  # 決めた形(JSON)のとおりにだけ書かせる(小さなモデルでも形が崩れない)
     import models
     if models.thinks(config.OLLAMA_MODEL):
         body["think"] = False  # 考える過程を書かせない(書かせると、話し始めるまでが遅くなる)
@@ -941,7 +1061,7 @@ def _pick(text, choice):
 
 # ---------------- 資料づくりの前の聞き取り(形式・内容・材料・デザイン) ----------------
 KIND_NAMES = {"pptx": "PowerPoint の資料", "docx": "Word の文書", "xlsx": "Excel の表", "pdf": "PDF の資料"}
-_SKIP = re.compile(r"おまかせ|お任せ|任せ|特に(?:ない|なし|無い)|^なし|^ない|いらない|大丈夫|そのまま|どれでも|^特には")
+_SKIP = re.compile(r"おまかせ|お任せ|任せ|omakase|makase|(?i:^(?:none|no|nothing|any)$)|特に(?:ない|なし|無い)|^なし|^ない|いらない|大丈夫|そのまま|どれでも|^特には")
 _CANCEL = re.compile(r"^(?:やっぱり)?[、\s]*(?:やめ|キャンセル|中止|作らなくて|いいや|やっぱいい)")
 _NUM = {"1": 1, "一": 1, "いち": 1, "2": 2, "二": 2, "に": 2, "3": 3, "三": 3, "さん": 3}
 _PLAIN_TOPIC = re.compile(r"^(?:資料|文書|書類|表|ファイル|スライド|プレゼン(?:資料)?|報告書|企画書|提案書|何か|なにか|"
@@ -1048,6 +1168,8 @@ def _next_question(lead=""):
 def continue_office(text):
     """聞き取りの答えを受け取り、次の質問か、そろったら資料づくりへ。"""
     global _office, _office_ready
+    import unicodedata
+    text = unicodedata.normalize("NFKC", text)  # 全角の「１」や「ｏｍａｋａｓｅ」も、ふつうの字として読む
     st, t = _office, text.strip().rstrip("。.!！?？")
     if _CANCEL.match(t):
         _office = None
