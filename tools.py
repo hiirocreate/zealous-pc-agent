@@ -1247,3 +1247,129 @@ def open_file(name, path=""):
     else:
         subprocess.Popen(["xdg-open", p])
     return f"{os.path.basename(p)} を開きました（{os.path.dirname(p)}）"
+
+
+# ---------------- 「PCが重い」: 原因を調べて、できることをする ----------------
+# 止めてはいけない Windows の部品や、Zealous が使っているもの(候補に出さない)
+_KEEP_PROCS = {
+    "system", "system idle process", "registry", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+    "services.exe", "lsass.exe", "svchost.exe", "dwm.exe", "explorer.exe", "fontdrvhost.exe", "sihost.exe",
+    "ctfmon.exe", "audiodg.exe", "msmpeng.exe", "searchhost.exe", "startmenuexperiencehost.exe", "taskmgr.exe",
+    "runtimebroker.exe", "shellexperiencehost.exe", "textinputhost.exe", "securityhealthservice.exe",
+    "memory compression", "conhost.exe", "dllhost.exe", "spoolsv.exe", "wudfhost.exe", "zealous.exe",
+    "ollama.exe", "ollama app.exe", "run.exe", "python.exe", "pythonw.exe", "nissrv.exe", "lsaiso.exe",
+}
+
+
+def _proc_usage(seconds=1.0):
+    """[(名前, CPU%(全体に対して), メモリMB)] をアプリごとにまとめて、重い順に。"""
+    import time
+    import psutil
+    procs = list(psutil.process_iter(["name", "username"]))
+    for p in procs:
+        try:
+            p.cpu_percent(None)
+        except Exception:
+            pass
+    time.sleep(seconds)
+    cores = psutil.cpu_count() or 1
+    usage = {}
+    for p in procs:
+        try:
+            name = (p.info["name"] or "").lower()
+            cpu = p.cpu_percent(None) / cores
+            mem = p.memory_info().rss / 2 ** 20
+        except Exception:
+            continue
+        if not name or name in _KEEP_PROCS:
+            continue
+        c, m = usage.get(name, (0.0, 0.0))
+        usage[name] = (c + cpu, m + mem)
+    return sorted(((n, c, m) for n, (c, m) in usage.items()), key=lambda x: -(x[1] * 40 + x[2]))
+
+
+def _clean_temp(days=1):
+    """一時ファイル(1日以上前のもの)を消す。使用中で消せないものは飛ばす。消した大きさ(MB)。"""
+    import time
+    limit = time.time() - days * 86400
+    freed = 0
+    roots = [os.environ.get("TEMP") or os.environ.get("TMP") or "", os.path.join(os.environ.get("WINDIR", ""), "Temp")]
+    for root in [r for r in roots if r and os.path.isdir(r)]:
+        for cur, dirs, files in os.walk(root, topdown=False):
+            for f in files:
+                p = os.path.join(cur, f)
+                try:
+                    st = os.stat(p)
+                    if st.st_mtime < limit:
+                        os.remove(p)
+                        freed += st.st_size
+                except OSError:
+                    pass
+            if cur != root:
+                try:
+                    os.rmdir(cur)  # 空になったフォルダだけ
+                except OSError:
+                    pass
+    return freed / 2 ** 20
+
+
+@tool("PCが重い・遅い・もっさりするときに使う。重くしている原因(CPUやメモリを多く使っているアプリ)を調べ、"
+      "一時ファイルを消し、Zealous 自身の使っていないAIをメモリから外す。止めてよさそうなアプリは、確認してから終了する")
+def speed_up_pc():
+    import json
+    import psutil
+    import llm
+    llm._status("PCを重くしている原因を調べています…")
+    mem = psutil.virtual_memory()
+    cpu = psutil.cpu_percent(interval=0.5)
+    heavy = _proc_usage()
+    freed = _clean_temp()
+    llm.release_tech_model()  # テクニカルモード用のAIなど、いま使っていないものを外す
+    lines = [f"いまの状態: CPU {cpu:.0f}%・メモリ {mem.percent:.0f}%（{mem.used / 2 ** 30:.1f} / {mem.total / 2 ** 30:.0f}GB）"]
+    lines.append(f"一時ファイルを {freed:.0f}MB 消しました。" if freed >= 1 else "消せる一時ファイルはほとんどありませんでした。")
+    top = [(n, c, m) for n, c, m in heavy[:5] if c >= 5 or m >= 500]
+    if top:
+        lines.append("重くしている主なもの: " + "、".join(
+            f"{n.removesuffix('.exe')}（CPU {c:.0f}%・{m / 1024:.1f}GB）" if m >= 1024 else
+            f"{n.removesuffix('.exe')}（CPU {c:.0f}%・{m:.0f}MB）" for n, c, m in top))
+    # 終了を勧めるもの: CPU を食い続けているか、メモリを大きく使っているアプリ(数は3つまで)
+    close = [n for n, c, m in top if c >= 15 or m >= 800][:3]
+    if mem.percent >= 85:
+        lines.append("メモリがかなり足りていません。使っていないアプリやタブを閉じると軽くなります。")
+    if not close:
+        return "\n".join(lines + ["すぐに止めたほうがよさそうなアプリはありませんでした。"])
+    names = "、".join(n.removesuffix(".exe") for n in close)
+    what = f"{names} を終了"
+    return ("\n".join(lines) + f"\n{names} を終了すると軽くなりそうです。終了してよいですか？（保存していない内容は、各アプリが確認します）"
+            + CONFIRM + json.dumps({"tool": "close_apps", "args": {"names": ",".join(close)}, "what": what},
+                                   ensure_ascii=False))
+
+
+@tool("指定したアプリを終了する(ふつうに閉じるので、保存していない内容があればアプリが確認する)。"
+      "names はカンマ区切りの実行ファイル名(例: chrome.exe,Teams.exe)",
+      names=("string", "終了するアプリの実行ファイル名(カンマ区切り)", True))
+def close_apps(names):
+    import time
+    import psutil
+    want = [n.strip().lower() for n in str(names).split(",") if n.strip()]
+    want = [n if n.endswith(".exe") else n + ".exe" for n in want if n not in _KEEP_PROCS]
+    for n in want:  # まずはふつうに閉じる(ウィンドウに「閉じて」と伝える。強制はしない)
+        subprocess.run(["taskkill", "/IM", n], capture_output=True, creationflags=_NO_WINDOW)
+    time.sleep(3)
+    left = {(p.info["name"] or "").lower() for p in psutil.process_iter(["name"])} & set(want)
+    done = [n.removesuffix(".exe") for n in want if n not in left]
+    out = f"{'、'.join(done)} を終了しました。" if done else ""
+    if left:
+        out += f"{'、'.join(n.removesuffix('.exe') for n in left)} は、保存の確認などで閉じていないかもしれません。画面を確認してください。"
+    return out or "終了するアプリが見つかりませんでした"
+
+
+# ---------------- 気分に合わせて曲をかける ----------------
+@tool("気分や状況に合った曲をかける(「落ち込んでるから曲かけて」「集中したいからBGM」「眠れない」など)。"
+      "mood: down(落ち込み・悲しい)/ tired(疲れ)/ sleep(眠れない)/ focus(集中)/ happy(楽しい・テンション)/ calm(イライラ・落ち着きたい)",
+      mood=("string", "気分(down / tired / sleep / focus / happy / calm)", True),
+      style=("string", "down のとき: uplift(前向きな曲) / ballad(寄り添うバラード)。省略すると気分に合わせて選ぶ", False),
+      service=("string", "youtube / spotify(省略すると設定のもの)", False))
+def play_mood_music(mood, style="", service=""):
+    import intent
+    return intent.play_music(mood, style, service)

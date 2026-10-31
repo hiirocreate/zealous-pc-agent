@@ -20,3 +20,4 @@ jaconv
 mojimoji
 markitdown[docx,pptx,pdf]
 sqlite-vec
+psutil

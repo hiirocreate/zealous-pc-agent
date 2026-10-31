@@ -1022,3 +1022,35 @@ def test_searxng_results():
     import websearch
     page = json.dumps({"results": [{"title": "t", "url": "https://a.jp", "content": "c"}]})
     assert websearch._searxng(page) == [{"title": "t", "url": "https://a.jp", "snippet": "c"}]
+
+
+def test_vague_requests_are_understood():
+    import intent
+    assert intent.route("PCが重い") == ("speed_up_pc", {})
+    assert intent.route("なんかパソコン遅いんだけど")[0] == "speed_up_pc"
+    assert intent.route("ページの読み込みが遅い") is None  # ネットの遅さは別の話
+    name, args = intent.route("落ち込んでるから曲かけて")
+    assert name == "play_mood_music" and args["mood"] == "down"
+    assert intent.route("失恋した、バラード聴きたい")[1]["style"] == "ballad"
+    assert intent.route("集中したいから何か流して")[1]["mood"] == "focus"
+    assert intent.route("Spotifyで元気出る曲かけて")[1]["service"] == "spotify"
+
+
+def test_mood_music_speaks_first(monkeypatch):
+    import intent
+    import tools
+    played = []
+    monkeypatch.setattr(tools, "play_video", lambda q, order, count: played.append(q))
+    monkeypatch.setattr(intent.threading, "Timer", lambda wait, fn: type("T", (), {"start": lambda self: fn()})())
+    reply = intent.play_music("down", "ballad", "youtube")
+    assert "バラード" in reply and played and "バラード" in played[0]
+
+
+def test_speed_up_pc_asks_before_closing(monkeypatch):
+    import tools
+    import llm
+    monkeypatch.setattr(llm, "release_tech_model", lambda: None)
+    monkeypatch.setattr(tools, "_clean_temp", lambda days=1: 120.0)
+    monkeypatch.setattr(tools, "_proc_usage", lambda seconds=1.0: [("chrome.exe", 30.0, 2048.0), ("note.exe", 1.0, 50.0)])
+    out = tools.speed_up_pc()
+    assert "120MB" in out and tools.CONFIRM in out and "chrome.exe" in out.split(tools.CONFIRM)[1]

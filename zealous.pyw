@@ -32,7 +32,7 @@ def selftest(out):
     mods = ["app", "setup_wizard", "llm", "tools", "voice", "tts", "stopper", "runtime", "updater", "gallery", "websearch", "apps", "models", "voicevox", "voice_picker", "ime", "winutil", "single_instance", "threads",
             "faster_whisper", "ctranslate2", "sounddevice", "keyboard", "pyautogui", "customtkinter",
             "audiogate", "kokoro_tts", "vision", "semantic", "onnxruntime", "kokoro_onnx", "misaki.ja", "fugashi",
-            "markitdown", "sqlite_vec", "py7zr"]
+            "markitdown", "sqlite_vec", "py7zr", "intent", "psutil"]
     errors = []
     for m in mods:
         try:

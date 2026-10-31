@@ -125,6 +125,9 @@ def system_prompt():
             "・アプリを開く・起動するときは launch_app を使う(click_on は、開いているウィンドウの中のボタンを押すときだけ)。\n"
             "・PCの操作(ファイルを作る・探す・開く・消すなど)は、必ず関数を呼び出して行う。"
             "関数を呼んでいないのに「作成しました」「開きます」などと言わない。できないときは、できないと正直に言う。\n"
+            "・ざっくりした頼み方でも、本当にしたいことを考えて関数を選ぶ。"
+            "例:「PCが重い」は speed_up_pc、「落ち込んでるから曲かけて」「集中したい」「眠れない」は play_mood_music。"
+            "気持ちが込められた頼みには、ひとこと寄り添う言葉を添える。\n"
             "・これまでの会話の流れを踏まえて、いまの質問そのものに答える。"
             "「それ」「さっきの」などは、直前の会話を指していると考える。"
             + user_rule() + memory_rule() + persona_rule())
@@ -1365,7 +1368,8 @@ def _ask(text):
         messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]
         return (_chat_on_track(messages, text).get("content") or "").strip() or \
             "うまく答えをまとめられませんでした。もう少し詳しく聞いてもらえますか？"
-    route = quick_route(text)
+    import intent
+    route = intent.route(text) or quick_route(text)  # ざっくりした頼み方(「PCが重い」「落ち込んでるから曲かけて」)も読み取る
     if route:
         return _run(*route)
     messages = [{"role": "system", "content": system_prompt()}, *_context(), {"role": "user", "content": text}]

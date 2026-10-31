@@ -48,7 +48,8 @@ WIDE = 600             # パネルの幅がこれ以上なら、スレッド一�
 GRIP = 6               # 端をつかんで大きさを変えられる幅
 INPUT_MAX_LINES = 4
 MAX_BUBBLES = 60
-ANIM_FRAMES, ANIM_MS = 6, 8    # 展開・折りたたみの動き(コマ数・1コマの間隔)。全体で約0.1秒
+ANIM_FRAMES, ANIM_MS = 10, 13  # 展開・折りたたみの動き(コマ数・1コマの間隔)。全体で約0.13秒
+FADE_STEPS, FADE_MS = 6, 16     # 中身をふわっと表示する(段階・間隔)。約0.1秒
 
 # 状態 -> (表示, 色, 点滅するか)
 STATES = {
@@ -680,7 +681,7 @@ class App(ctk.CTk):
                 self._shell_hold = False
                 self._apply(*end)
                 self.update_idletasks()
-                self.attributes("-alpha", 1.0)
+                self._fade_in()  # 中身はぱっと出さずに、ふわっと表示する(動きがつながって見える)
                 if self._expanded:
                     self._show_grips()
             else:
@@ -1007,15 +1008,20 @@ class App(ctk.CTk):
         self._clear_chat()
         self._paint_tech()
         self._paint_attachments()
-        for m in t["messages"]:
-            if m["role"] in ("user", "ai"):
-                self._log(m["text"], m["role"])
-            if m.get("images"):
-                self._log_images(m["images"], auto_open=False)
-            if m.get("sources"):
-                self._log_sources(m["sources"])
-            if m.get("files"):
-                self._log_files(m["files"])
+        # 画面に出すのは最近の分だけ(長い会話でも開くのが速く、部品を作りすぎない)。動きも付けずに並べる
+        self._restoring = True
+        try:
+            for m in t["messages"][-MAX_BUBBLES:]:
+                if m["role"] in ("user", "ai"):
+                    self._log(m["text"], m["role"])
+                if m.get("images"):
+                    self._log_images(m["images"], auto_open=False)
+                if m.get("sources"):
+                    self._log_sources(m["sources"])
+                if m.get("files"):
+                    self._log_files(m["files"])
+        finally:
+            self._restoring = False
         self._refresh_threads()
 
     def _delete_thread(self, tid):
@@ -1201,6 +1207,48 @@ class App(ctk.CTk):
         for i, b in enumerate(self._bubbles):
             b.grid_configure(row=i)
 
+    def _fade_in(self, i=1):
+        """窓全体の透明度を少しずつ上げる(Windows では軽い。描き直しは起きない)。"""
+        self.attributes("-alpha", min(1.0, i / FADE_STEPS))
+        if i < FADE_STEPS:
+            self.after(FADE_MS, self._fade_in, i + 1)
+
+    def _scroll_bottom(self):
+        """チャット欄をいちばん下まで、なめらかに動かす(最初は速く、最後はゆっくり)。何度呼ばれても1つにまとめる。"""
+        if getattr(self, "_scroll_job", None):
+            return
+        canvas = self.chat._parent_canvas
+
+        def step(i=1, start=None):
+            self.update_idletasks()
+            start = canvas.yview()[0] if start is None else start
+            target = max(0.0, 1.0 - (canvas.yview()[1] - canvas.yview()[0]))
+            t = i / 8
+            canvas.yview_moveto(start + (target - start) * (1 - (1 - t) ** 3))
+            if i < 8 and abs(target - start) > 0.001:
+                self._scroll_job = self.after(16, step, i + 1, start)
+            else:
+                canvas.yview_moveto(1.0)
+                self._scroll_job = None
+        self._scroll_job = self.after(16, step)
+
+    def _enter(self, w):
+        """新しい吹き出しを、少し下から滑り込ませる(位置だけを動かすので軽い)。"""
+        try:
+            pady = w.grid_info().get("pady", 3)
+        except Exception:
+            return
+        base = int(pady[0] if isinstance(pady, (tuple, list)) else str(pady).split()[0])
+
+        def step(i=0):
+            if not w.winfo_exists():
+                return
+            off = int(14 * (1 - i / 6) ** 2)
+            w.grid_configure(pady=(base + off, max(0, base - off // 2)))
+            if i < 6:
+                self.after(16, step, i + 1)
+        step()
+
     def _add_widget(self, w, sticky):
         """チャット欄の末尾に部品を追加する(sticky 指定時はここで配置)。"""
         if sticky:
@@ -1214,7 +1262,9 @@ class App(ctk.CTk):
             self.typing.grid_configure(row=len(self._bubbles))  # 入力中表示は常に最後尾
         if self.office_card.winfo_manager():
             self.office_card.grid_configure(row=len(self._bubbles))  # 資料づくり中の表示も最後尾
-        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+        if getattr(w, "_role", None) in ("user", "ai") and not getattr(self, "_restoring", False):
+            self._enter(w)
+        self._scroll_bottom()
 
     # ---- 返事を書けた分から表示・読み上げ ----
     def _showing_pending(self):
@@ -1237,8 +1287,15 @@ class App(ctk.CTk):
             self.typing.grid_remove()  # 文字が届き始めたら「入力中」のドットは消す
             self._stream = [self._log("", "ai"), ""]
         self._stream[1] += piece
-        self._stream[0].configure(text=self._stream[1])
-        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+        # 届いた文字は、まとめて約30コマ/秒で描く(1文字ごとに描き直すと重く、表示もガタつく)
+        if not getattr(self, "_stream_job", None):
+            self._stream_job = self.after(33, self._flush_stream)
+
+    def _flush_stream(self):
+        self._stream_job = None
+        if self._stream is not None and self._stream[0].winfo_exists():
+            self._stream[0].configure(text=self._stream[1])
+            self._scroll_bottom()
 
     def _on_reply(self, text):
         import llm
@@ -1300,7 +1357,7 @@ class App(ctk.CTk):
         self.typing.grid_remove()
         self.office_text.configure(text="準備しています…")
         self.office_card.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
-        self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+        self._scroll_bottom()
 
     def _office_done(self):
         if self.office_card.winfo_ismapped():
@@ -1413,7 +1470,7 @@ class App(ctk.CTk):
                 (self.typing_spin if tech else self.code_spin).pack_forget()
                 (self.code_spin if tech else self.typing_spin).pack(padx=14, pady=10 if not tech else 6)
                 self.typing.grid(row=len(self._bubbles), column=0, sticky="w", padx=4, pady=3)
-                self.after(20, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+                self._scroll_bottom()
         else:
             self.pill_busy.grid_remove()
             self.panel_stop.grid_remove()

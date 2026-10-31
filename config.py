@@ -76,7 +76,8 @@ DEFAULTS = {
     "VISION_MODEL": "minicpm-v4.6:1b",  # 画像を理解するAI(添付した画像・画面の説明。空なら使わない。初めて使うときに取得)
     "EMBED_MODEL": "qwen3-embedding:0.6b",  # 意味で探すAI(PCの中の文書を「意味」で検索する。初めて使うときに取得)
     "SEMANTIC_FOLDERS": [],          # 意味で探すフォルダ(空ならドキュメントとデスクトップ)
-    "SEARXNG_URL": "",               # SearXNG(自分で動かす検索エンジン)の URL。空ならいつもの検索
+    "SEARXNG_URL": "",
+    "MUSIC_SERVICE": "youtube",      # 「曲かけて」で使うサービス(youtube / spotify)               # SearXNG(自分で動かす検索エンジン)の URL。空ならいつもの検索
     "TECH_MODEL": "auto",  # テクニカルモードで使うAIモデル(空なら通常と同じ。初めて使うときに自動で取得)
     # ---- メール(画面を使わずに裏側で操作) ----
     "MAIL_SERVICE": "auto",          # auto / imap / outlook
